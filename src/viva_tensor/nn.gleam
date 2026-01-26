@@ -2,15 +2,15 @@ import gleam/result
 import viva_tensor/autograd.{type Tape, type Traced, type Variable, Traced}
 import viva_tensor/tensor
 
-/// Camada Linear (Fully Connected)
+/// Linear Layer (Fully Connected)
 /// y = x @ W.T + b
 pub type Linear {
   Linear(w: Variable, b: Variable)
 }
 
-/// Inicializa uma nova camada Linear
+/// Initializes a new Linear layer
 pub fn linear(tape: Tape, in_features: Int, out_features: Int) -> Traced(Linear) {
-  // Inicialização de pesos (Xavier/Glorot)
+  // Weight initialization (Xavier/Glorot)
   let w_data = tensor.xavier_init(in_features, out_features)
   let b_data = tensor.zeros([out_features])
 
@@ -20,26 +20,26 @@ pub fn linear(tape: Tape, in_features: Int, out_features: Int) -> Traced(Linear)
   Traced(value: Linear(w, b), tape: tape2)
 }
 
-/// Forward pass da camada Linear
+/// Forward pass of the Linear layer
 pub fn linear_forward(
   tape: Tape,
   layer: Linear,
   x: Variable,
 ) -> Result(Traced(Variable), tensor.TensorError) {
-  // 1. Transpor pesos: [out, in] -> [in, out]
-  //    Nota: PyTorch armazena pesos como [out, in] para eficiência
+  // 1. Transpose weights: [out, in] -> [in, out]
+  //    Note: PyTorch stores weights as [out, in] for efficiency
   use Traced(wt, tape1) <- result.try(autograd.transpose(tape, layer.w))
 
   // 2. Matmul: [batch, in] @ [in, out] -> [batch, out]
   use Traced(xw, tape2) <- result.try(autograd.matmul(tape1, x, wt))
 
   // 3. Add Bias: [batch, out] + [out]
-  //    TODO: Implementar broadcast real no autograd.add. 
-  //    Por enquanto assume-se que o backend suporta ou shapes compatíveis.
+  //    TODO: Implement real broadcast in autograd.add. 
+  //    For now, assumes backend supports it or shapes are compatible.
   autograd.add(tape2, xw, layer.b)
 }
 
-/// Função de ativação ReLU
+/// ReLU activation function
 pub fn relu(tape: Tape, x: Variable) -> Traced(Variable) {
   autograd.relu(tape, x)
 }
