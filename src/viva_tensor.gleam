@@ -346,3 +346,80 @@ pub fn transpose_strided(
 pub fn is_contiguous(t: tensor.Tensor) -> Bool {
   tensor.is_contiguous(t)
 }
+
+// =============================================================================
+// CONVOLUTION & POOLING (CNN Operations)
+// =============================================================================
+
+/// Conv2d configuration type
+pub type Conv2dConfig =
+  tensor.Conv2dConfig
+
+/// Default conv2d config (3x3 kernel, stride 1, no padding)
+pub fn conv2d_config() -> tensor.Conv2dConfig {
+  tensor.conv2d_config()
+}
+
+/// Conv2d config with "same" padding (output same size as input)
+pub fn conv2d_same(kernel_h: Int, kernel_w: Int) -> tensor.Conv2dConfig {
+  tensor.conv2d_same(kernel_h, kernel_w)
+}
+
+/// 2D Convolution
+/// Input: [H, W] or [C, H, W] or [N, C, H, W]
+/// Kernel: [KH, KW] or [C, KH, KW] or [C_out, C_in, KH, KW]
+pub fn conv2d(
+  input: tensor.Tensor,
+  kernel: tensor.Tensor,
+  config: tensor.Conv2dConfig,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.conv2d(input, kernel, config)
+}
+
+/// Pad 2D tensor with zeros
+pub fn pad2d(
+  t: tensor.Tensor,
+  pad_h: Int,
+  pad_w: Int,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.pad2d(t, pad_h, pad_w)
+}
+
+/// Pad 4D tensor (batch) with zeros
+pub fn pad4d(
+  t: tensor.Tensor,
+  pad_h: Int,
+  pad_w: Int,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.pad4d(t, pad_h, pad_w)
+}
+
+/// Max pooling 2D
+/// Input: [H, W] or [N, C, H, W]
+pub fn max_pool2d(
+  input: tensor.Tensor,
+  pool_h: Int,
+  pool_w: Int,
+  stride_h: Int,
+  stride_w: Int,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.max_pool2d(input, pool_h, pool_w, stride_h, stride_w)
+}
+
+/// Average pooling 2D
+pub fn avg_pool2d(
+  input: tensor.Tensor,
+  pool_h: Int,
+  pool_w: Int,
+  stride_h: Int,
+  stride_w: Int,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.avg_pool2d(input, pool_h, pool_w, stride_h, stride_w)
+}
+
+/// Global average pooling - reduces [N, C, H, W] to [N, C, 1, 1]
+pub fn global_avg_pool2d(
+  input: tensor.Tensor,
+) -> Result(tensor.Tensor, tensor.TensorError) {
+  tensor.global_avg_pool2d(input)
+}

@@ -408,6 +408,166 @@ pub fn named_describe_test() {
 }
 
 // =============================================================================
+// CONVOLUTION TESTS
+// =============================================================================
+
+pub fn pad2d_test() {
+  // 2x2 input
+  let input = tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0], shape: [2, 2])
+
+  // Pad by 1 on each side -> 4x4
+  let result = tensor.pad2d(input, 1, 1)
+  result |> should.be_ok()
+
+  let padded = case result {
+    Ok(p) -> p
+    Error(_) -> tensor.zeros([1])
+  }
+
+  tensor.shape(padded) |> should.equal([4, 4])
+
+  // Check corners are zeros
+  let data = tensor.get_data(padded)
+  list.first(data) |> should.equal(Ok(0.0))
+}
+
+pub fn conv2d_simple_test() {
+  // 3x3 input
+  let input =
+    tensor.Tensor(
+      data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0],
+      shape: [3, 3],
+    )
+
+  // 2x2 kernel (all ones = sum)
+  let kernel = tensor.Tensor(data: [1.0, 1.0, 1.0, 1.0], shape: [2, 2])
+
+  let config =
+    tensor.Conv2dConfig(
+      kernel_h: 2,
+      kernel_w: 2,
+      stride_h: 1,
+      stride_w: 1,
+      padding_h: 0,
+      padding_w: 0,
+    )
+
+  let result = tensor.conv2d(input, kernel, config)
+  result |> should.be_ok()
+
+  let output = case result {
+    Ok(o) -> o
+    Error(_) -> tensor.zeros([1])
+  }
+
+  // Output should be 2x2
+  tensor.shape(output) |> should.equal([2, 2])
+
+  // Top-left: 1+2+4+5 = 12
+  let data = tensor.get_data(output)
+  list.first(data) |> should.equal(Ok(12.0))
+}
+
+pub fn conv2d_same_padding_test() {
+  // 4x4 input
+  let input = tensor.ones([4, 4])
+
+  // 3x3 kernel with "same" padding
+  let kernel = tensor.fill([3, 3], 1.0)
+  let config = tensor.conv2d_same(3, 3)
+
+  let result = tensor.conv2d(input, kernel, config)
+  result |> should.be_ok()
+
+  let output = case result {
+    Ok(o) -> o
+    Error(_) -> tensor.zeros([1])
+  }
+
+  // With same padding, output = input size
+  tensor.shape(output) |> should.equal([4, 4])
+}
+
+pub fn max_pool2d_test() {
+  // 4x4 input
+  let input =
+    tensor.Tensor(
+      data: [
+        1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0,
+        14.0, 15.0, 16.0,
+      ],
+      shape: [4, 4],
+    )
+
+  // 2x2 pool, stride 2
+  let result = tensor.max_pool2d(input, 2, 2, 2, 2)
+  result |> should.be_ok()
+
+  let output = case result {
+    Ok(o) -> o
+    Error(_) -> tensor.zeros([1])
+  }
+
+  // Output should be 2x2
+  tensor.shape(output) |> should.equal([2, 2])
+
+  // Max of [1,2,5,6] = 6, [3,4,7,8] = 8, etc.
+  let data = tensor.get_data(output)
+  data |> should.equal([6.0, 8.0, 14.0, 16.0])
+}
+
+pub fn avg_pool2d_test() {
+  // 4x4 input (all 4s)
+  let input = tensor.fill([4, 4], 4.0)
+
+  // 2x2 pool, stride 2
+  let result = tensor.avg_pool2d(input, 2, 2, 2, 2)
+  result |> should.be_ok()
+
+  let output = case result {
+    Ok(o) -> o
+    Error(_) -> tensor.zeros([1])
+  }
+
+  // Output should be 2x2, all 4.0
+  tensor.shape(output) |> should.equal([2, 2])
+  tensor.get_data(output) |> should.equal([4.0, 4.0, 4.0, 4.0])
+}
+
+pub fn conv2d_batch_test() {
+  // Batch of 2, 1 channel, 3x3
+  let input = tensor.ones([2, 1, 3, 3])
+
+  // 1 output channel, 1 input channel, 2x2 kernel
+  let kernel = tensor.fill([1, 1, 2, 2], 1.0)
+
+  let config =
+    tensor.Conv2dConfig(
+      kernel_h: 2,
+      kernel_w: 2,
+      stride_h: 1,
+      stride_w: 1,
+      padding_h: 0,
+      padding_w: 0,
+    )
+
+  let result = tensor.conv2d(input, kernel, config)
+  result |> should.be_ok()
+
+  let output = case result {
+    Ok(o) -> o
+    Error(_) -> tensor.zeros([1])
+  }
+
+  // [2, 1, 2, 2]
+  tensor.shape(output) |> should.equal([2, 1, 2, 2])
+
+  // Each position = sum of 4 ones = 4.0
+  let data = tensor.get_data(output)
+  list.first(data) |> should.equal(Ok(4.0))
+}
+
+// =============================================================================
 // IMPORTS FOR TESTS
 // =============================================================================
 
