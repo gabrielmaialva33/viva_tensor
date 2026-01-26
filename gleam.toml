@@ -1,0 +1,14 @@
+name = "viva_tensor"
+version = "0.1.0"
+description = "Pure Gleam tensor library with named axes, broadcasting, and zero-copy views"
+licences = ["MIT"]
+repository = { type = "github", user = "vivacode", repo = "viva_tensor" }
+
+target = "erlang"
+
+[dependencies]
+gleam_stdlib = ">= 0.44.0 and < 2.0.0"
+gleamy_bench = ">= 0.6.0 and < 1.0.0"
+
+[dev-dependencies]
+gleeunit = ">= 1.0.0 and < 2.0.0"
