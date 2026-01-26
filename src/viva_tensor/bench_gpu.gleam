@@ -6,38 +6,10 @@ import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/result
 import viva_tensor/tensor
-
-// FFI para viva_glands (se disponível)
-@external(erlang, "Elixir.Viva.Glands.Native", "glands_check")
-fn glands_check() -> String
-
-@external(erlang, "Elixir.Viva.Glands.Native", "glands_init")
-fn glands_init_ffi(config: GlandsConfig) -> Result(GlandsHandle, String)
-
-@external(erlang, "Elixir.Viva.Glands.Native", "glands_similarity")
-fn glands_similarity_ffi(
-  handle: GlandsHandle,
-  a: List(Float),
-  b: List(Float),
-) -> Result(Float, String)
-
-@external(erlang, "Elixir.Viva.Glands.Native", "glands_bind")
-fn glands_bind_ffi(
-  handle: GlandsHandle,
-  a: List(Float),
-  b: List(Float),
-) -> Result(List(Float), String)
 
 @external(erlang, "timer", "tc")
 fn timer_tc(f: fn() -> a) -> #(Int, a)
-
-type GlandsConfig {
-  GlandsConfig(hrr_dim: Int, llm_dim: Int, seed: Int)
-}
-
-type GlandsHandle
 
 pub fn main() {
   io.println(

@@ -24,7 +24,6 @@ import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/option.{type Option, None, Some}
 import viva_tensor/tensor.{type Tensor, Tensor}
 
 // ============================================================================
@@ -255,7 +254,7 @@ pub fn compression_stats(
       float.absolute_value(o -. d)
     })
 
-  let mean_error = case list.length(errors) > 0 {
+  let mean_error = case errors != [] {
     True ->
       list.fold(errors, 0.0, fn(acc, e) { acc +. e })
       /. int.to_float(list.length(errors))

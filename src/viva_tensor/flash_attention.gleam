@@ -232,7 +232,7 @@ fn process_q_block(
         True -> {
           let q_start = q_block_idx * config.block_q
           let kv_start = kv_idx * config.block_kv
-          let kv_end = kv_start + list.length(k_block)
+          let _kv_end = kv_start + list.length(k_block)
 
           // Se todo o bloco KV está no futuro, pula
           case kv_start > q_start + list.length(q_block) {

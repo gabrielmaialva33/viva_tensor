@@ -1,9 +1,7 @@
 import gleam/dict
-import gleam/list
-import gleam/result
 import gleeunit
 import gleeunit/should
-import viva_tensor/autograd.{type Tape, Traced}
+import viva_tensor/autograd.{Traced}
 import viva_tensor/tensor
 
 pub fn main() {

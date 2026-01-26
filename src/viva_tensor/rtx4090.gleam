@@ -23,10 +23,9 @@ import gleam/int
 import gleam/io
 import gleam/list
 import viva_tensor/blackwell.{
-  type BlackwellTensor, type CompressionConfig, type CompressionStats, compress,
-  compression_stats, decompress, int8_config, nvfp4_config,
+  type BlackwellTensor, compress, int8_config, nvfp4_config,
 }
-import viva_tensor/tensor.{type Tensor, Tensor}
+import viva_tensor/tensor.{type Tensor}
 
 // ============================================================================
 // SPECS RTX 4090
@@ -117,7 +116,7 @@ pub type QuantMode4090 {
 
 /// Configuração padrão otimizada
 pub fn default_config() -> Rtx4090Config {
-  let specs = get_specs()
+  let _specs = get_specs()
 
   // Calcula batch size ótimo
   // Assumindo modelo típico: 512 dims, ~2MB por batch

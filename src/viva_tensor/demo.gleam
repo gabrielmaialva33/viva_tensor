@@ -6,7 +6,6 @@ import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/result
 import gleam/string
 
 import viva_tensor/awq

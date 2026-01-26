@@ -4,7 +4,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/result
-import viva_tensor/autograd.{type Tape, type Variable, Traced}
+import viva_tensor/autograd.{type Tape, Traced}
 import viva_tensor/nn
 import viva_tensor/tensor
 
@@ -36,8 +36,8 @@ pub fn main() {
   let y_data = tensor.from_list([2.1, 3.9, 6.2, 8.1, 10.3])
   let assert Ok(y_data) = tensor.reshape(y_data, [5, 1])
 
-  let Traced(x, tape1) = autograd.new_variable(tape, x_data)
-  let Traced(y, tape2) = autograd.new_variable(tape1, y_data)
+  let Traced(_x, tape1) = autograd.new_variable(tape, x_data)
+  let Traced(_y, tape2) = autograd.new_variable(tape1, y_data)
 
   // 2. Initialize Layers
   let Traced(layer1, tape3) = nn.linear(tape2, input_features, hidden_features)

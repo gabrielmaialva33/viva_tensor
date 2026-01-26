@@ -176,7 +176,7 @@ pub fn quantize_awq(
   let shape = get_tensor_shape(weights)
 
   // Assume weights é [out_features, in_features]
-  let #(out_features, in_features) = case shape {
+  let #(_out_features, in_features) = case shape {
     [o, i] -> #(o, i)
     _ -> #(1, list.length(weight_data))
   }

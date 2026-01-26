@@ -2,7 +2,6 @@
 ////
 //// Run: gleam run -m viva_tensor/bench
 
-import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
