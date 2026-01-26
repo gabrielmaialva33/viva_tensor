@@ -1,49 +1,54 @@
 import gleam/result
-import viva_tensor/autograd.{type Context, type Variable}
+import viva_tensor/autograd.{type Tape, type Variable, type Traced, Traced}
 import viva_tensor/tensor
 
+/// Camada Linear (Fully Connected)
+/// y = x @ W.T + b
 pub type Linear {
   Linear(w: Variable, b: Variable)
 }
 
-/// Cria uma nova camada Linear
-pub fn linear(ctx: Context, in_features: Int, out_features: Int) -> #(Context, Linear) {
+/// Inicializa uma nova camada Linear
+pub fn linear(tape: Tape, in_features: Int, out_features: Int) -> Traced(Linear) {
   // Inicialização de pesos (Xavier/Glorot)
   let w_data = tensor.xavier_init(in_features, out_features)
   let b_data = tensor.zeros([out_features])
   
-  let #(ctx1, w) = autograd.new_variable(ctx, w_data)
-  let #(ctx2, b) = autograd.new_variable(ctx1, b_data)
+  let Traced(w, tape1) = autograd.new_variable(tape, w_data)
+  let Traced(b, tape2) = autograd.new_variable(tape1, b_data)
   
-  #(ctx2, Linear(w, b))
+  Traced(value: Linear(w, b), tape: tape2)
 }
 
 /// Forward pass da camada Linear
-/// y = x @ w.T + b
-pub fn linear_forward(ctx: Context, layer: Linear, x: Variable) -> Result(#(Context, Variable), tensor.TensorError) {
-  // Transpor pesos: [out, in] -> [in, out]
-  use #(ctx1, wt) <- result.try(autograd.transpose(ctx, layer.w))
+pub fn linear_forward(tape: Tape, layer: Linear, x: Variable) -> Result(Traced(Variable), tensor.TensorError) {
+  // 1. Transpor pesos: [out, in] -> [in, out]
+  //    Nota: PyTorch armazena pesos como [out, in] para eficiência
+  use Traced(wt, tape1) <- result.try(autograd.transpose(tape, layer.w))
   
-  // Matmul: [batch, in] @ [in, out] -> [batch, out]
-  use #(ctx2, xw) <- result.try(autograd.matmul(ctx1, x, wt))
+  // 2. Matmul: [batch, in] @ [in, out] -> [batch, out]
+  use Traced(xw, tape2) <- result.try(autograd.matmul(tape1, x, wt))
   
-  // Add Bias: [batch, out] + [out] (requer broadcast)
-  // Por enquanto usamos add normal, assumindo shapes compatíveis ou broadcast implícito futuro
-  autograd.add(ctx2, xw, layer.b)
+  // 3. Add Bias: [batch, out] + [out]
+  //    TODO: Implementar broadcast real no autograd.add. 
+  //    Por enquanto assume-se que o backend suporta ou shapes compatíveis.
+  autograd.add(tape2, xw, layer.b)
 }
 
-/// Módulo de funções de ativação
-pub fn relu(ctx: Context, x: Variable) -> #(Context, Variable) {
-  autograd.relu(ctx, x)
+/// Função de ativação ReLU
+pub fn relu(tape: Tape, x: Variable) -> Traced(Variable) {
+  autograd.relu(tape, x)
 }
 
-/// Loss function: Mean Squared Error
-pub fn mse_loss(ctx: Context, pred: Variable, target: Variable) -> Result(#(Context, Variable), tensor.TensorError) {
-  // diff = pred - target
-  // square = diff * diff
-  // mean = sum(square) / size
+/// Loss function: Mean Squared Error (MSE)
+/// L = mean((pred - target)^2)
+pub fn mse_loss(tape: Tape, pred: Variable, target: Variable) -> Result(Traced(Variable), tensor.TensorError) {
+  // 1. diff = pred - target
+  use Traced(diff, tape1) <- result.try(autograd.sub(tape, pred, target))
   
-  // Precisamos implementar sub, mul, mean no autograd.
-  // Como MVP, vamos retornar um erro NotImplemented se tentar usar sem essas ops
-  Error(tensor.DimensionError("MSE Loss requer implementação de sub/mul/mean no autograd"))
+  // 2. square = diff * diff
+  use Traced(square, tape2) <- result.try(autograd.mul(tape1, diff, diff))
+  
+  // 3. loss = mean(square)
+  Ok(autograd.mean(tape2, square))
 }

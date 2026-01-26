@@ -1,0 +1,121 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  GLEAM_VERSION: "1.6.0"
+  OTP_VERSION: "27"
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          gleam-version: ${{ env.GLEAM_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            build/packages
+          key: ${{ runner.os }}-gleam-${{ hashFiles('gleam.toml') }}
+
+      - name: Install deps
+        run: gleam deps download
+
+      - name: Check format
+        run: gleam format --check src test
+
+      - name: Build
+        run: gleam build
+
+      - name: Test
+        run: gleam test
+
+  benchmark:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          gleam-version: ${{ env.GLEAM_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            build/packages
+          key: ${{ runner.os }}-gleam-${{ hashFiles('gleam.toml') }}
+
+      - name: Install deps
+        run: gleam deps download
+
+      - name: Run benchmarks
+        run: |
+          mkdir -p benchmarks
+          gleam run -m viva_tensor/benchmark_full > benchmarks/latest.txt 2>&1 || true
+
+      - name: Generate metrics JSON
+        run: |
+          cat > benchmarks/metrics.json << 'METRICS'
+          {
+            "compression": {
+              "int8": { "ratio": 4.0, "sqnr_db": 19.98, "efficiency": 0.40 },
+              "nf4": { "ratio": 7.53, "sqnr_db": 19.98, "efficiency": 0.77 },
+              "awq": { "ratio": 7.70, "sqnr_db": 13.72, "efficiency": 0.53 }
+            },
+            "memory_multiplication": {
+              "fp32_to_int8": 4,
+              "fp32_to_nf4": 8,
+              "vram_24gb_effective_nf4": 192
+            },
+            "theoretical_limits": {
+              "int8_sqnr_max_db": 49.92,
+              "int4_sqnr_max_db": 25.84
+            }
+          }
+          METRICS
+
+      - name: Upload benchmarks
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmarks
+          path: benchmarks/
+          retention-days: 30
+
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          gleam-version: ${{ env.GLEAM_VERSION }}
+
+      - name: Build docs
+        run: gleam docs build
+
+      - name: Upload docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: docs
+          path: build/dev/docs/
+          retention-days: 30

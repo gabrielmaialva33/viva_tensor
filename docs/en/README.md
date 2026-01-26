@@ -1,77 +1,60 @@
 # viva_tensor
 
-Pure Gleam tensor library focused on memory compression.
-
 **[Português](../pt-br/README.md)** | **[中文](../zh-cn/README.md)**
-
-## Core Concept
-
-```mermaid
-graph LR
-    subgraph Input
-        A[FP32 Tensor]
-    end
-
-    subgraph Compression
-        B[Quantization]
-    end
-
-    subgraph Output
-        C[INT8 4x]
-        D[NF4 8x]
-    end
-
-    A --> B
-    B --> C
-    B --> D
-```
-
-**Memory Multiplication:**
-
-| Format | Compression | 24GB VRAM |
-|:-------|:----------:|:----------|
-| FP32 | 1x | 24 GB |
-| INT8 | 4x | 96 GB |
-| NF4 | 8x | 192 GB |
-
-## Architecture
 
 ```mermaid
 graph TB
-    subgraph Core
-        T[tensor.gleam]
-        S[shape]
-        O[ops]
+    subgraph Transform["Memory Transformation"]
+        direction LR
+        A["24 GB"] -->|"×8"| B["192 GB"]
     end
 
-    subgraph Quantization
-        I[int8.gleam]
-        N[nf4.gleam]
-        A[awq.gleam]
+    subgraph How
+        direction TB
+        C[FP32] -->|quantize| D[NF4]
+        D -->|"7.5x smaller"| E[Same Info]
     end
 
-    subgraph Optimization
-        F[flash_attention.gleam]
-        P[sparsity.gleam]
-    end
-
-    Core --> Quantization
-    Quantization --> Optimization
+    Transform ~~~ How
 ```
 
-## Documentation
+## Concept
 
-| Document | Description |
-|:---------|:------------|
-| [Getting Started](getting-started.md) | Installation and first steps |
-| [Algorithms](algorithms.md) | INT8, NF4, AWQ, Flash Attention |
-| [API](api.md) | Complete reference |
-| [Why Revolutionary](why-revolutionary.md) | Scientific benchmarks |
+```mermaid
+flowchart LR
+    subgraph In["Input"]
+        T[Tensor]
+    end
 
-## Build
+    subgraph Compress
+        Q{Quantize}
+        Q -->|4x| I8[INT8]
+        Q -->|8x| N4[NF4]
+        Q -->|8x| AW[AWQ]
+    end
 
-```bash
-make build    # Compile
-make test     # Tests
-make bench    # Benchmarks
+    subgraph Out["Output"]
+        M[Less Memory]
+    end
+
+    In --> Compress --> Out
 ```
+
+## Quick Start
+
+```gleam
+import viva_tensor/nf4
+
+let compressed = nf4.quantize(tensor, nf4.default_config())
+// 8x less memory, same information
+```
+
+## Performance
+
+| Method | Compression | Efficiency |
+|:-------|:-----------:|:----------:|
+| INT8 | 4x | 40% |
+| NF4 | 7.5x | 77% |
+| AWQ | 7.7x | 53% |
+
+**[API Reference →](api.md)**
