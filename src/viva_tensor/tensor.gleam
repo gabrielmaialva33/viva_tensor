@@ -929,6 +929,57 @@ pub fn take_last(t: Tensor, n: Int) -> Tensor {
   }
 }
 
+/// Slice tensor: extract sub-tensor from start to start+lengths
+/// slice(t, [1], [3]) extracts elements at indices 1, 2, 3
+pub fn slice(
+  t: Tensor,
+  start: List(Int),
+  lengths: List(Int),
+) -> Result(Tensor, TensorError) {
+  let data = get_data(t)
+  let r = rank(t)
+
+  case list.length(start) == r && list.length(lengths) == r {
+    False -> Error(DimensionError("Slice dimensions must match tensor rank"))
+    True -> {
+      case r {
+        1 -> {
+          // 1D slice
+          let s = case list.first(start) {
+            Ok(v) -> v
+            Error(_) -> 0
+          }
+          let len = case list.first(lengths) {
+            Ok(v) -> v
+            Error(_) -> 0
+          }
+          let sliced = data |> list.drop(s) |> list.take(len)
+          Ok(Tensor(data: sliced, shape: [len]))
+        }
+        _ -> {
+          // Multi-dimensional slice - general case
+          let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
+
+          let result =
+            list.range(0, new_size - 1)
+            |> list.map(fn(flat_idx) {
+              let local_indices = flat_to_multi(flat_idx, lengths)
+              let global_indices =
+                list.map2(local_indices, start, fn(l, s) { l + s })
+              let global_flat = multi_to_flat(global_indices, t.shape)
+              case list.drop(data, global_flat) |> list.first {
+                Ok(v) -> v
+                Error(_) -> 0.0
+              }
+            })
+
+          Ok(Tensor(data: result, shape: lengths))
+        }
+      }
+    }
+  }
+}
+
 /// L2 norm
 pub fn norm(t: Tensor) -> Float {
   let data = get_data(t)

@@ -1,5 +1,5 @@
 name = "viva_tensor"
-version = "1.2.0"
+version = "1.2.1"
 description = "Pure Gleam tensor library with quantization (INT8, NF4, AWQ), auto-backend selection, and 8x memory multiplication"
 licences = ["MIT"]
 repository = { type = "github", user = "gabrielmaialva33", repo = "viva_tensor" }
