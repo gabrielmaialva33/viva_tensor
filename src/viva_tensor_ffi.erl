@@ -8,6 +8,9 @@
     array_size/1,
     array_dot/2,
     array_matmul/5,
+    array_sum/1,
+    array_scale/2,
+    strided_get/4,
     send_msg/2,
     collect_n/1,
     receive_any/0
@@ -59,6 +62,28 @@ array_matmul(A, B, M, N, K) ->
            J <- lists:seq(0, N - 1)
     ],
     array:from_list(Result).
+
+%% Sum all elements in array
+array_sum(Array) ->
+    array:foldl(fun(_Idx, Val, Acc) -> Acc + Val end, 0.0, Array).
+
+%% Scale all elements by scalar
+array_scale(Array, Scalar) ->
+    array:map(fun(_Idx, Val) -> Val * Scalar end, Array).
+
+%% Strided access - NumPy-style indexing
+%% Given strides [s0, s1, ...] and indices [i0, i1, ...], compute:
+%% offset + i0*s0 + i1*s1 + ...
+strided_get(Array, Offset, Strides, Indices) ->
+    FlatIdx = compute_strided_index(Offset, Strides, Indices),
+    array:get(FlatIdx, Array).
+
+compute_strided_index(Offset, Strides, Indices) ->
+    lists:foldl(
+        fun({Stride, Idx}, Acc) -> Acc + Stride * Idx end,
+        Offset,
+        lists:zip(Strides, Indices)
+    ).
 
 %% Send message to pid (for concurrent benchmarks)
 send_msg(Pid, Msg) ->
