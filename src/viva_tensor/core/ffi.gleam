@@ -33,6 +33,88 @@ pub fn array_size(arr: ErlangArray) -> Int {
   array_size_ffi(arr)
 }
 
+/// Convert array back to list
+pub fn array_to_list(arr: ErlangArray) -> List(Float) {
+  array_to_list_ffi(arr)
+}
+
+// =============================================================================
+// OPTIMIZED ARRAY OPERATIONS - Fast Math
+// =============================================================================
+
+/// Dot product using Erlang arrays (O(1) access per element)
+/// Much faster than list-based dot product for large vectors
+pub fn array_dot(a: ErlangArray, b: ErlangArray) -> Float {
+  array_dot_ffi(a, b)
+}
+
+/// Matrix multiplication using Erlang arrays
+/// A is MxK, B is KxN -> Result is MxN
+/// Uses O(1) array access, significantly faster than list indexing
+pub fn array_matmul(
+  a: ErlangArray,
+  b: ErlangArray,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> ErlangArray {
+  array_matmul_ffi(a, b, m, n, k)
+}
+
+/// Sum all elements in array
+pub fn array_sum(arr: ErlangArray) -> Float {
+  array_sum_ffi(arr)
+}
+
+/// Scale all elements by scalar
+pub fn array_scale(arr: ErlangArray, scalar: Float) -> ErlangArray {
+  array_scale_ffi(arr, scalar)
+}
+
+// =============================================================================
+// NIF OPERATIONS - Apple Accelerate (macOS only)
+// =============================================================================
+
+/// Check if native NIF is loaded
+/// Returns True on macOS with built NIF, False otherwise
+pub fn is_nif_loaded() -> Bool {
+  nif_is_loaded_ffi()
+}
+
+/// Get backend info string
+pub fn nif_backend_info() -> String {
+  nif_backend_info_ffi()
+}
+
+/// NIF-accelerated matrix multiplication (uses cblas_dgemm on macOS)
+/// Falls back to pure Erlang if NIF not available
+/// A[m,k] @ B[k,n] -> C[m,n]
+pub fn nif_matmul(
+  a: List(Float),
+  b: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(List(Float), String) {
+  nif_matmul_ffi(a, b, m, n, k)
+}
+
+/// NIF-accelerated dot product (uses vDSP on macOS)
+/// Falls back to pure Erlang if NIF not available
+pub fn nif_dot(a: List(Float), b: List(Float)) -> Result(Float, String) {
+  nif_dot_ffi(a, b)
+}
+
+/// NIF-accelerated sum (uses vDSP on macOS)
+pub fn nif_sum(data: List(Float)) -> Result(Float, String) {
+  nif_sum_ffi(data)
+}
+
+/// NIF-accelerated scale (uses vDSP on macOS)
+pub fn nif_scale(data: List(Float), scalar: Float) -> Result(List(Float), String) {
+  nif_scale_ffi(data, scalar)
+}
+
 // =============================================================================
 // MATH FUNCTIONS
 // =============================================================================
@@ -117,6 +199,27 @@ fn array_get_ffi(arr: ErlangArray, index: Int) -> Float
 @external(erlang, "viva_tensor_ffi", "array_size")
 fn array_size_ffi(arr: ErlangArray) -> Int
 
+@external(erlang, "viva_tensor_ffi", "array_to_list")
+fn array_to_list_ffi(arr: ErlangArray) -> List(Float)
+
+@external(erlang, "viva_tensor_ffi", "array_dot")
+fn array_dot_ffi(a: ErlangArray, b: ErlangArray) -> Float
+
+@external(erlang, "viva_tensor_ffi", "array_matmul")
+fn array_matmul_ffi(
+  a: ErlangArray,
+  b: ErlangArray,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> ErlangArray
+
+@external(erlang, "viva_tensor_ffi", "array_sum")
+fn array_sum_ffi(arr: ErlangArray) -> Float
+
+@external(erlang, "viva_tensor_ffi", "array_scale")
+fn array_scale_ffi(arr: ErlangArray, scalar: Float) -> ErlangArray
+
 @external(erlang, "math", "sqrt")
 fn sqrt_ffi(x: Float) -> Float
 
@@ -143,3 +246,28 @@ fn pow_ffi(x: Float, y: Float) -> Float
 
 @external(erlang, "rand", "uniform")
 fn random_uniform_ffi() -> Float
+
+// NIF bindings (viva_tensor_nif module)
+@external(erlang, "viva_tensor_nif", "is_nif_loaded")
+fn nif_is_loaded_ffi() -> Bool
+
+@external(erlang, "viva_tensor_nif", "backend_info")
+fn nif_backend_info_ffi() -> String
+
+@external(erlang, "viva_tensor_nif", "matmul")
+fn nif_matmul_ffi(
+  a: List(Float),
+  b: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_nif", "dot")
+fn nif_dot_ffi(a: List(Float), b: List(Float)) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_nif", "sum")
+fn nif_sum_ffi(data: List(Float)) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_nif", "scale")
+fn nif_scale_ffi(data: List(Float), scalar: Float) -> Result(List(Float), String)
