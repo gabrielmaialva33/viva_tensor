@@ -762,7 +762,8 @@ pub fn concat_axis(
             })
 
           case shapes_ok {
-            False -> Error(InvalidShape("Shapes must match except on concat axis"))
+            False ->
+              Error(InvalidShape("Shapes must match except on concat axis"))
             True -> {
               // Build new shape
               let concat_dim =
@@ -800,7 +801,9 @@ pub fn concat_axis(
                     list.range(0, total_size - 1)
                     |> list.map(fn(flat_idx) {
                       let indices = flat_to_multi(flat_idx, new_shape)
-                      let axis_idx = case list.drop(indices, axis) |> list.first {
+                      let axis_idx = case
+                        list.drop(indices, axis) |> list.first
+                      {
                         Ok(i) -> i
                         Error(_) -> 0
                       }
@@ -812,14 +815,19 @@ pub fn concat_axis(
                           case found_t >= 0 {
                             True -> acc
                             False -> {
-                              let t_axis_size =
-                                case list.drop(t.shape, axis) |> list.first {
-                                  Ok(d) -> d
-                                  Error(_) -> 0
-                                }
+                              let t_axis_size = case
+                                list.drop(t.shape, axis) |> list.first
+                              {
+                                Ok(d) -> d
+                                Error(_) -> 0
+                              }
                               case remaining < t_axis_size {
                                 True -> #(t_idx, remaining, t_idx)
-                                False -> #(-1, remaining - t_axis_size, t_idx + 1)
+                                False -> #(
+                                  -1,
+                                  remaining - t_axis_size,
+                                  t_idx + 1,
+                                )
                               }
                             }
                           }
@@ -911,8 +919,7 @@ pub fn take_first(t: Tensor, n: Int) -> Tensor {
     [] -> t
     [first_dim, ..rest_dims] -> {
       let take_n = int.min(n, first_dim)
-      let stride =
-        list.fold(rest_dims, 1, fn(acc, d) { acc * d })
+      let stride = list.fold(rest_dims, 1, fn(acc, d) { acc * d })
       let new_data = list.take(data, take_n * stride)
       let new_shape = [take_n, ..rest_dims]
       Tensor(data: new_data, shape: new_shape)
@@ -927,8 +934,7 @@ pub fn take_last(t: Tensor, n: Int) -> Tensor {
     [] -> t
     [first_dim, ..rest_dims] -> {
       let take_n = int.min(n, first_dim)
-      let stride =
-        list.fold(rest_dims, 1, fn(acc, d) { acc * d })
+      let stride = list.fold(rest_dims, 1, fn(acc, d) { acc * d })
       let skip = { first_dim - take_n } * stride
       let new_data = list.drop(data, skip)
       let new_shape = [take_n, ..rest_dims]
@@ -1441,11 +1447,7 @@ pub fn conv2d_same(kernel_h: Int, kernel_w: Int) -> Conv2dConfig {
 
 /// Pad a 2D tensor with zeros
 /// Input: [H, W], Output: [H + 2*pad_h, W + 2*pad_w]
-pub fn pad2d(
-  t: Tensor,
-  pad_h: Int,
-  pad_w: Int,
-) -> Result(Tensor, TensorError) {
+pub fn pad2d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
   let shp = shape(t)
   case shp {
     [h, w] -> {
@@ -1461,9 +1463,7 @@ pub fn pad2d(
           |> list.map(fn(col) {
             let src_row = row - pad_h
             let src_col = col - pad_w
-            case
-              src_row >= 0 && src_row < h && src_col >= 0 && src_col < w
-            {
+            case src_row >= 0 && src_row < h && src_col >= 0 && src_col < w {
               True -> {
                 let idx = src_row * w + src_col
                 case list_at_float(data, idx) {
@@ -1484,11 +1484,7 @@ pub fn pad2d(
 
 /// Pad a 4D tensor (batch) with zeros
 /// Input: [N, C, H, W], Output: [N, C, H + 2*pad_h, W + 2*pad_w]
-pub fn pad4d(
-  t: Tensor,
-  pad_h: Int,
-  pad_w: Int,
-) -> Result(Tensor, TensorError) {
+pub fn pad4d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
   let shp = shape(t)
   case shp {
     [n, c, h, w] -> {
@@ -1567,9 +1563,9 @@ pub fn conv2d(
     _, _ ->
       Error(InvalidShape(
         reason: "conv2d shape mismatch: input="
-          <> shape_to_string(in_shape)
-          <> " kernel="
-          <> shape_to_string(k_shape),
+        <> shape_to_string(in_shape)
+        <> " kernel="
+        <> shape_to_string(k_shape),
       ))
   }
 }
@@ -1604,11 +1600,21 @@ fn conv2d_simple(
   let k_arr = list_to_array_ffi(get_data(kernel))
 
   // Compute output using direct array access
-  let output = conv2d_simple_loop(
-    in_arr, k_arr, pw, kh, kw,
-    config.stride_h, config.stride_w,
-    out_h, out_w, 0, 0, []
-  )
+  let output =
+    conv2d_simple_loop(
+      in_arr,
+      k_arr,
+      pw,
+      kh,
+      kw,
+      config.stride_h,
+      config.stride_w,
+      out_h,
+      out_w,
+      0,
+      0,
+      [],
+    )
 
   Ok(Tensor(data: list.reverse(output), shape: [out_h, out_w]))
 }
@@ -1632,24 +1638,42 @@ fn conv2d_simple_loop(
     True -> acc
     False -> {
       case ow >= out_w {
-        True -> conv2d_simple_loop(
-          in_arr, k_arr, in_w, kh, kw,
-          stride_h, stride_w, out_h, out_w,
-          oh + 1, 0, acc
-        )
+        True ->
+          conv2d_simple_loop(
+            in_arr,
+            k_arr,
+            in_w,
+            kh,
+            kw,
+            stride_h,
+            stride_w,
+            out_h,
+            out_w,
+            oh + 1,
+            0,
+            acc,
+          )
         False -> {
           let row = oh * stride_h
           let col = ow * stride_w
 
           // Compute dot product inline
-          let val = conv2d_dot_product(
-            in_arr, k_arr, in_w, row, col, kh, kw, 0, 0, 0.0
-          )
+          let val =
+            conv2d_dot_product(in_arr, k_arr, in_w, row, col, kh, kw, 0, 0, 0.0)
 
           conv2d_simple_loop(
-            in_arr, k_arr, in_w, kh, kw,
-            stride_h, stride_w, out_h, out_w,
-            oh, ow + 1, [val, ..acc]
+            in_arr,
+            k_arr,
+            in_w,
+            kh,
+            kw,
+            stride_h,
+            stride_w,
+            out_h,
+            out_w,
+            oh,
+            ow + 1,
+            [val, ..acc],
           )
         }
       }
@@ -1674,9 +1698,19 @@ fn conv2d_dot_product(
     True -> acc
     False -> {
       case kc >= kw {
-        True -> conv2d_dot_product(
-          in_arr, k_arr, in_w, row, col, kh, kw, kr + 1, 0, acc
-        )
+        True ->
+          conv2d_dot_product(
+            in_arr,
+            k_arr,
+            in_w,
+            row,
+            col,
+            kh,
+            kw,
+            kr + 1,
+            0,
+            acc,
+          )
         False -> {
           let in_idx = { row + kr } * in_w + { col + kc }
           let k_idx = kr * kw + kc
@@ -1684,8 +1718,16 @@ fn conv2d_dot_product(
           let k_val = array_get_ffi(k_arr, k_idx)
 
           conv2d_dot_product(
-            in_arr, k_arr, in_w, row, col, kh, kw,
-            kr, kc + 1, acc +. in_val *. k_val
+            in_arr,
+            k_arr,
+            in_w,
+            row,
+            col,
+            kh,
+            kw,
+            kr,
+            kc + 1,
+            acc +. in_val *. k_val,
           )
         }
       }
@@ -1713,13 +1755,27 @@ fn conv2d_multichannel(
   let in_arr = list_to_array_ffi(get_data(input))
   let k_arr = list_to_array_ffi(get_data(kernel))
 
-  let output = conv2d_mc_loop(
-    in_arr, k_arr, c_in, h, w, kh, kw,
-    spatial_size, k_spatial,
-    config.stride_h, config.stride_w,
-    config.padding_h, config.padding_w,
-    out_h, out_w, 0, 0, []
-  )
+  let output =
+    conv2d_mc_loop(
+      in_arr,
+      k_arr,
+      c_in,
+      h,
+      w,
+      kh,
+      kw,
+      spatial_size,
+      k_spatial,
+      config.stride_h,
+      config.stride_w,
+      config.padding_h,
+      config.padding_w,
+      out_h,
+      out_w,
+      0,
+      0,
+      [],
+    )
 
   Ok(Tensor(data: list.reverse(output), shape: [out_h, out_w]))
 }
@@ -1749,25 +1805,68 @@ fn conv2d_mc_loop(
     True -> acc
     False -> {
       case ow >= out_w {
-        True -> conv2d_mc_loop(
-          in_arr, k_arr, c_in, h, w, kh, kw,
-          spatial_size, k_spatial, stride_h, stride_w, pad_h, pad_w,
-          out_h, out_w, oh + 1, 0, acc
-        )
+        True ->
+          conv2d_mc_loop(
+            in_arr,
+            k_arr,
+            c_in,
+            h,
+            w,
+            kh,
+            kw,
+            spatial_size,
+            k_spatial,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            out_h,
+            out_w,
+            oh + 1,
+            0,
+            acc,
+          )
         False -> {
           let row = oh * stride_h - pad_h
           let col = ow * stride_w - pad_w
 
           // Sum over all channels
-          let val = conv2d_mc_channels(
-            in_arr, k_arr, c_in, h, w, kh, kw,
-            spatial_size, k_spatial, row, col, 0, 0.0
-          )
+          let val =
+            conv2d_mc_channels(
+              in_arr,
+              k_arr,
+              c_in,
+              h,
+              w,
+              kh,
+              kw,
+              spatial_size,
+              k_spatial,
+              row,
+              col,
+              0,
+              0.0,
+            )
 
           conv2d_mc_loop(
-            in_arr, k_arr, c_in, h, w, kh, kw,
-            spatial_size, k_spatial, stride_h, stride_w, pad_h, pad_w,
-            out_h, out_w, oh, ow + 1, [val, ..acc]
+            in_arr,
+            k_arr,
+            c_in,
+            h,
+            w,
+            kh,
+            kw,
+            spatial_size,
+            k_spatial,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            out_h,
+            out_w,
+            oh,
+            ow + 1,
+            [val, ..acc],
           )
         }
       }
@@ -1797,13 +1896,37 @@ fn conv2d_mc_channels(
       let ch_offset = c * spatial_size
       let k_offset = c * k_spatial
 
-      let channel_sum = conv2d_kernel_sum(
-        in_arr, k_arr, h, w, kh, kw, ch_offset, k_offset, row, col, 0, 0, 0.0
-      )
+      let channel_sum =
+        conv2d_kernel_sum(
+          in_arr,
+          k_arr,
+          h,
+          w,
+          kh,
+          kw,
+          ch_offset,
+          k_offset,
+          row,
+          col,
+          0,
+          0,
+          0.0,
+        )
 
       conv2d_mc_channels(
-        in_arr, k_arr, c_in, h, w, kh, kw,
-        spatial_size, k_spatial, row, col, c + 1, acc +. channel_sum
+        in_arr,
+        k_arr,
+        c_in,
+        h,
+        w,
+        kh,
+        kw,
+        spatial_size,
+        k_spatial,
+        row,
+        col,
+        c + 1,
+        acc +. channel_sum,
       )
     }
   }
@@ -1829,10 +1952,22 @@ fn conv2d_kernel_sum(
     True -> acc
     False -> {
       case kc >= kw {
-        True -> conv2d_kernel_sum(
-          in_arr, k_arr, h, w, kh, kw, ch_offset, k_offset,
-          row, col, kr + 1, 0, acc
-        )
+        True ->
+          conv2d_kernel_sum(
+            in_arr,
+            k_arr,
+            h,
+            w,
+            kh,
+            kw,
+            ch_offset,
+            k_offset,
+            row,
+            col,
+            kr + 1,
+            0,
+            acc,
+          )
         False -> {
           let r = row + kr
           let c_pos = col + kc
@@ -1845,8 +1980,19 @@ fn conv2d_kernel_sum(
           let k_val = array_get_ffi(k_arr, k_offset + kr * kw + kc)
 
           conv2d_kernel_sum(
-            in_arr, k_arr, h, w, kh, kw, ch_offset, k_offset,
-            row, col, kr, kc + 1, acc +. in_val *. k_val
+            in_arr,
+            k_arr,
+            h,
+            w,
+            kh,
+            kw,
+            ch_offset,
+            k_offset,
+            row,
+            col,
+            kr,
+            kc + 1,
+            acc +. in_val *. k_val,
           )
         }
       }
@@ -1879,12 +2025,33 @@ fn conv2d_full(
   let in_arr = list_to_array_ffi(get_data(input))
   let k_arr = list_to_array_ffi(get_data(kernel))
 
-  let output = conv2d_full_loop(
-    in_arr, k_arr, n, c_in, c_out, h, w, kh, kw,
-    in_spatial, in_batch_size, k_spatial, k_filter_size,
-    config.stride_h, config.stride_w, config.padding_h, config.padding_w,
-    out_h, out_w, 0, 0, 0, 0, []
-  )
+  let output =
+    conv2d_full_loop(
+      in_arr,
+      k_arr,
+      n,
+      c_in,
+      c_out,
+      h,
+      w,
+      kh,
+      kw,
+      in_spatial,
+      in_batch_size,
+      k_spatial,
+      k_filter_size,
+      config.stride_h,
+      config.stride_w,
+      config.padding_h,
+      config.padding_w,
+      out_h,
+      out_w,
+      0,
+      0,
+      0,
+      0,
+      [],
+    )
 
   Ok(Tensor(data: list.reverse(output), shape: [n, c_out, out_h, out_w]))
 }
@@ -1920,28 +2087,91 @@ fn conv2d_full_loop(
     True -> acc
     False -> {
       case oc >= c_out {
-        True -> conv2d_full_loop(
-          in_arr, k_arr, n, c_in, c_out, h, w, kh, kw,
-          in_spatial, in_batch_size, k_spatial, k_filter_size,
-          stride_h, stride_w, pad_h, pad_w, out_h, out_w,
-          batch + 1, 0, 0, 0, acc
-        )
+        True ->
+          conv2d_full_loop(
+            in_arr,
+            k_arr,
+            n,
+            c_in,
+            c_out,
+            h,
+            w,
+            kh,
+            kw,
+            in_spatial,
+            in_batch_size,
+            k_spatial,
+            k_filter_size,
+            stride_h,
+            stride_w,
+            pad_h,
+            pad_w,
+            out_h,
+            out_w,
+            batch + 1,
+            0,
+            0,
+            0,
+            acc,
+          )
         False -> {
           case oh >= out_h {
-            True -> conv2d_full_loop(
-              in_arr, k_arr, n, c_in, c_out, h, w, kh, kw,
-              in_spatial, in_batch_size, k_spatial, k_filter_size,
-              stride_h, stride_w, pad_h, pad_w, out_h, out_w,
-              batch, oc + 1, 0, 0, acc
-            )
+            True ->
+              conv2d_full_loop(
+                in_arr,
+                k_arr,
+                n,
+                c_in,
+                c_out,
+                h,
+                w,
+                kh,
+                kw,
+                in_spatial,
+                in_batch_size,
+                k_spatial,
+                k_filter_size,
+                stride_h,
+                stride_w,
+                pad_h,
+                pad_w,
+                out_h,
+                out_w,
+                batch,
+                oc + 1,
+                0,
+                0,
+                acc,
+              )
             False -> {
               case ow >= out_w {
-                True -> conv2d_full_loop(
-                  in_arr, k_arr, n, c_in, c_out, h, w, kh, kw,
-                  in_spatial, in_batch_size, k_spatial, k_filter_size,
-                  stride_h, stride_w, pad_h, pad_w, out_h, out_w,
-                  batch, oc, oh + 1, 0, acc
-                )
+                True ->
+                  conv2d_full_loop(
+                    in_arr,
+                    k_arr,
+                    n,
+                    c_in,
+                    c_out,
+                    h,
+                    w,
+                    kh,
+                    kw,
+                    in_spatial,
+                    in_batch_size,
+                    k_spatial,
+                    k_filter_size,
+                    stride_h,
+                    stride_w,
+                    pad_h,
+                    pad_w,
+                    out_h,
+                    out_w,
+                    batch,
+                    oc,
+                    oh + 1,
+                    0,
+                    acc,
+                  )
                 False -> {
                   let batch_offset = batch * in_batch_size
                   let filter_offset = oc * k_filter_size
@@ -1949,17 +2179,50 @@ fn conv2d_full_loop(
                   let col = ow * stride_w - pad_w
 
                   // Sum over all input channels
-                  let val = conv2d_full_channels(
-                    in_arr, k_arr, c_in, h, w, kh, kw,
-                    in_spatial, k_spatial, batch_offset, filter_offset,
-                    row, col, 0, 0.0
-                  )
+                  let val =
+                    conv2d_full_channels(
+                      in_arr,
+                      k_arr,
+                      c_in,
+                      h,
+                      w,
+                      kh,
+                      kw,
+                      in_spatial,
+                      k_spatial,
+                      batch_offset,
+                      filter_offset,
+                      row,
+                      col,
+                      0,
+                      0.0,
+                    )
 
                   conv2d_full_loop(
-                    in_arr, k_arr, n, c_in, c_out, h, w, kh, kw,
-                    in_spatial, in_batch_size, k_spatial, k_filter_size,
-                    stride_h, stride_w, pad_h, pad_w, out_h, out_w,
-                    batch, oc, oh, ow + 1, [val, ..acc]
+                    in_arr,
+                    k_arr,
+                    n,
+                    c_in,
+                    c_out,
+                    h,
+                    w,
+                    kh,
+                    kw,
+                    in_spatial,
+                    in_batch_size,
+                    k_spatial,
+                    k_filter_size,
+                    stride_h,
+                    stride_w,
+                    pad_h,
+                    pad_w,
+                    out_h,
+                    out_w,
+                    batch,
+                    oc,
+                    oh,
+                    ow + 1,
+                    [val, ..acc],
                   )
                 }
               }
@@ -1995,14 +2258,39 @@ fn conv2d_full_channels(
       let ch_offset = batch_offset + ic * in_spatial
       let k_ch_offset = filter_offset + ic * k_spatial
 
-      let sum = conv2d_kernel_sum(
-        in_arr, k_arr, h, w, kh, kw, ch_offset, k_ch_offset, row, col, 0, 0, 0.0
-      )
+      let sum =
+        conv2d_kernel_sum(
+          in_arr,
+          k_arr,
+          h,
+          w,
+          kh,
+          kw,
+          ch_offset,
+          k_ch_offset,
+          row,
+          col,
+          0,
+          0,
+          0.0,
+        )
 
       conv2d_full_channels(
-        in_arr, k_arr, c_in, h, w, kh, kw,
-        in_spatial, k_spatial, batch_offset, filter_offset,
-        row, col, ic + 1, acc +. sum
+        in_arr,
+        k_arr,
+        c_in,
+        h,
+        w,
+        kh,
+        kw,
+        in_spatial,
+        k_spatial,
+        batch_offset,
+        filter_offset,
+        row,
+        col,
+        ic + 1,
+        acc +. sum,
       )
     }
   }
@@ -2026,10 +2314,22 @@ pub fn max_pool2d(
       let out_h = { h - pool_h } / stride_h + 1
       let out_w = { w - pool_w } / stride_w + 1
 
-      let output = pool2d_loop(
-        arr, w, pool_h, pool_w, stride_h, stride_w,
-        out_h, out_w, 0, 0, 0, True, []
-      )
+      let output =
+        pool2d_loop(
+          arr,
+          w,
+          pool_h,
+          pool_w,
+          stride_h,
+          stride_w,
+          out_h,
+          out_w,
+          0,
+          0,
+          0,
+          True,
+          [],
+        )
 
       Ok(Tensor(data: list.reverse(output), shape: [out_h, out_w]))
     }
@@ -2040,11 +2340,27 @@ pub fn max_pool2d(
       let spatial_size = h * w
       let batch_size = c * spatial_size
 
-      let output = pool4d_loop(
-        arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-        spatial_size, batch_size, out_h, out_w,
-        0, 0, 0, 0, True, []
-      )
+      let output =
+        pool4d_loop(
+          arr,
+          n,
+          c,
+          w,
+          pool_h,
+          pool_w,
+          stride_h,
+          stride_w,
+          spatial_size,
+          batch_size,
+          out_h,
+          out_w,
+          0,
+          0,
+          0,
+          0,
+          True,
+          [],
+        )
 
       Ok(Tensor(data: list.reverse(output), shape: [n, c, out_h, out_w]))
     }
@@ -2073,18 +2389,43 @@ fn pool2d_loop(
     True -> acc
     False -> {
       case ow >= out_w {
-        True -> pool2d_loop(
-          arr, w, pool_h, pool_w, stride_h, stride_w,
-          out_h, out_w, oh + 1, 0, base, is_max, acc
-        )
+        True ->
+          pool2d_loop(
+            arr,
+            w,
+            pool_h,
+            pool_w,
+            stride_h,
+            stride_w,
+            out_h,
+            out_w,
+            oh + 1,
+            0,
+            base,
+            is_max,
+            acc,
+          )
         False -> {
           let row = oh * stride_h
           let col = ow * stride_w
 
-          let val = pool_window(
-            arr, w, row, col, pool_h, pool_w, base, 0, 0, is_max,
-            case is_max { True -> -1.0e308 False -> 0.0 }
-          )
+          let val =
+            pool_window(
+              arr,
+              w,
+              row,
+              col,
+              pool_h,
+              pool_w,
+              base,
+              0,
+              0,
+              is_max,
+              case is_max {
+                True -> -1.0e308
+                False -> 0.0
+              },
+            )
 
           let final_val = case is_max {
             True -> val
@@ -2092,8 +2433,19 @@ fn pool2d_loop(
           }
 
           pool2d_loop(
-            arr, w, pool_h, pool_w, stride_h, stride_w,
-            out_h, out_w, oh, ow + 1, base, is_max, [final_val, ..acc]
+            arr,
+            w,
+            pool_h,
+            pool_w,
+            stride_h,
+            stride_w,
+            out_h,
+            out_w,
+            oh,
+            ow + 1,
+            base,
+            is_max,
+            [final_val, ..acc],
           )
         }
       }
@@ -2126,34 +2478,95 @@ fn pool4d_loop(
     True -> acc
     False -> {
       case channel >= c {
-        True -> pool4d_loop(
-          arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-          spatial_size, batch_size, out_h, out_w,
-          batch + 1, 0, 0, 0, is_max, acc
-        )
+        True ->
+          pool4d_loop(
+            arr,
+            n,
+            c,
+            w,
+            pool_h,
+            pool_w,
+            stride_h,
+            stride_w,
+            spatial_size,
+            batch_size,
+            out_h,
+            out_w,
+            batch + 1,
+            0,
+            0,
+            0,
+            is_max,
+            acc,
+          )
         False -> {
           case oh >= out_h {
-            True -> pool4d_loop(
-              arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-              spatial_size, batch_size, out_h, out_w,
-              batch, channel + 1, 0, 0, is_max, acc
-            )
+            True ->
+              pool4d_loop(
+                arr,
+                n,
+                c,
+                w,
+                pool_h,
+                pool_w,
+                stride_h,
+                stride_w,
+                spatial_size,
+                batch_size,
+                out_h,
+                out_w,
+                batch,
+                channel + 1,
+                0,
+                0,
+                is_max,
+                acc,
+              )
             False -> {
               case ow >= out_w {
-                True -> pool4d_loop(
-                  arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-                  spatial_size, batch_size, out_h, out_w,
-                  batch, channel, oh + 1, 0, is_max, acc
-                )
+                True ->
+                  pool4d_loop(
+                    arr,
+                    n,
+                    c,
+                    w,
+                    pool_h,
+                    pool_w,
+                    stride_h,
+                    stride_w,
+                    spatial_size,
+                    batch_size,
+                    out_h,
+                    out_w,
+                    batch,
+                    channel,
+                    oh + 1,
+                    0,
+                    is_max,
+                    acc,
+                  )
                 False -> {
                   let base = batch * batch_size + channel * spatial_size
                   let row = oh * stride_h
                   let col = ow * stride_w
 
-                  let val = pool_window(
-                    arr, w, row, col, pool_h, pool_w, base, 0, 0, is_max,
-                    case is_max { True -> -1.0e308 False -> 0.0 }
-                  )
+                  let val =
+                    pool_window(
+                      arr,
+                      w,
+                      row,
+                      col,
+                      pool_h,
+                      pool_w,
+                      base,
+                      0,
+                      0,
+                      is_max,
+                      case is_max {
+                        True -> -1.0e308
+                        False -> 0.0
+                      },
+                    )
 
                   let final_val = case is_max {
                     True -> val
@@ -2161,9 +2574,24 @@ fn pool4d_loop(
                   }
 
                   pool4d_loop(
-                    arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-                    spatial_size, batch_size, out_h, out_w,
-                    batch, channel, oh, ow + 1, is_max, [final_val, ..acc]
+                    arr,
+                    n,
+                    c,
+                    w,
+                    pool_h,
+                    pool_w,
+                    stride_h,
+                    stride_w,
+                    spatial_size,
+                    batch_size,
+                    out_h,
+                    out_w,
+                    batch,
+                    channel,
+                    oh,
+                    ow + 1,
+                    is_max,
+                    [final_val, ..acc],
                   )
                 }
               }
@@ -2193,17 +2621,46 @@ fn pool_window(
     True -> acc
     False -> {
       case pc >= pool_w {
-        True -> pool_window(arr, w, row, col, pool_h, pool_w, base, pr + 1, 0, is_max, acc)
+        True ->
+          pool_window(
+            arr,
+            w,
+            row,
+            col,
+            pool_h,
+            pool_w,
+            base,
+            pr + 1,
+            0,
+            is_max,
+            acc,
+          )
         False -> {
           let idx = base + { row + pr } * w + { col + pc }
           let val = array_get_ffi(arr, idx)
 
           let new_acc = case is_max {
-            True -> case val >. acc { True -> val False -> acc }
+            True ->
+              case val >. acc {
+                True -> val
+                False -> acc
+              }
             False -> acc +. val
           }
 
-          pool_window(arr, w, row, col, pool_h, pool_w, base, pr, pc + 1, is_max, new_acc)
+          pool_window(
+            arr,
+            w,
+            row,
+            col,
+            pool_h,
+            pool_w,
+            base,
+            pr,
+            pc + 1,
+            is_max,
+            new_acc,
+          )
         }
       }
     }
@@ -2227,10 +2684,22 @@ pub fn avg_pool2d(
       let out_h = { h - pool_h } / stride_h + 1
       let out_w = { w - pool_w } / stride_w + 1
 
-      let output = pool2d_loop(
-        arr, w, pool_h, pool_w, stride_h, stride_w,
-        out_h, out_w, 0, 0, 0, False, []
-      )
+      let output =
+        pool2d_loop(
+          arr,
+          w,
+          pool_h,
+          pool_w,
+          stride_h,
+          stride_w,
+          out_h,
+          out_w,
+          0,
+          0,
+          0,
+          False,
+          [],
+        )
 
       Ok(Tensor(data: list.reverse(output), shape: [out_h, out_w]))
     }
@@ -2241,11 +2710,27 @@ pub fn avg_pool2d(
       let spatial_size = h * w
       let batch_size = c * spatial_size
 
-      let output = pool4d_loop(
-        arr, n, c, w, pool_h, pool_w, stride_h, stride_w,
-        spatial_size, batch_size, out_h, out_w,
-        0, 0, 0, 0, False, []
-      )
+      let output =
+        pool4d_loop(
+          arr,
+          n,
+          c,
+          w,
+          pool_h,
+          pool_w,
+          stride_h,
+          stride_w,
+          spatial_size,
+          batch_size,
+          out_h,
+          out_w,
+          0,
+          0,
+          0,
+          0,
+          False,
+          [],
+        )
 
       Ok(Tensor(data: list.reverse(output), shape: [n, c, out_h, out_w]))
     }
@@ -2289,15 +2774,15 @@ pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
     }
 
     _ ->
-      Error(InvalidShape(reason: "global_avg_pool2d requires 4D tensor [N, C, H, W]"))
+      Error(InvalidShape(
+        reason: "global_avg_pool2d requires 4D tensor [N, C, H, W]",
+      ))
   }
 }
 
 /// Helper to convert shape to string for error messages
 fn shape_to_string(shp: List(Int)) -> String {
-  "["
-  <> list.map(shp, int.to_string) |> string_join(", ")
-  <> "]"
+  "[" <> list.map(shp, int.to_string) |> string_join(", ") <> "]"
 }
 
 fn string_join(strings: List(String), sep: String) -> String {

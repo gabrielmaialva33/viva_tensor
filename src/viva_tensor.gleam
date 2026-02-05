@@ -1,68 +1,96 @@
-//// viva_tensor - Pure Gleam tensor library
+//// viva_tensor - Pure Gleam tensor library for numerical computing
 ////
-//// N-dimensional arrays with named axes, broadcasting, and zero-copy views.
-////
-//// ## Features
-//// - NumPy-inspired API
-//// - Named tensors (Batch, Seq, Feature axes)
-//// - Broadcasting
+//// A NumPy-inspired tensor library with:
+//// - N-dimensional arrays with broadcasting
+//// - Named tensors with semantic axes
 //// - Zero-copy transpose/reshape via strides
 //// - O(1) random access with Erlang arrays
+//// - Quantization (INT8, NF4, AWQ) for 8x memory reduction
 ////
 //// ## Quick Start
 //// ```gleam
 //// import viva_tensor as t
-//// import viva_tensor/axis
 ////
 //// // Create tensors
 //// let a = t.zeros([2, 3])
 //// let b = t.ones([2, 3])
 ////
-//// // Operations
-//// let c = t.add(a, b)
-//// let d = t.matmul(a, t.transpose(b))
+//// // Operations return Results for safety
+//// let assert Ok(c) = t.add(a, b)
+//// let assert Ok(d) = t.matmul(a, t.transpose(b) |> result.unwrap(a))
 ////
-//// // Named tensors
-//// let named = t.named.zeros([axis.batch(32), axis.feature(128)])
-//// let summed = t.named.sum_along(named, axis.Batch)
+//// // CNN operations
+//// let input = t.random_uniform([28, 28])
+//// let kernel = t.random_uniform([3, 3])
+//// let assert Ok(conv_out) = t.conv2d(input, kernel, t.conv2d_same(3, 3))
+//// ```
+////
+//// ## Architecture
+//// ```
+//// viva_tensor/
+//// ├── core/          # Tensor fundamentals
+//// │   ├── tensor     # Opaque tensor type + constructors
+//// │   ├── ops        # Mathematical operations
+//// │   ├── shape      # Shape manipulation
+//// │   ├── config     # Builder patterns for configs
+//// │   ├── dtype      # Phantom types for type safety
+//// │   ├── error      # Centralized error types
+//// │   └── ffi        # Erlang FFI
+//// ├── quant/         # Quantization (nf4, awq, compression)
+//// ├── nn/            # Neural networks (layers, autograd, attention)
+//// └── optim/         # Optimizations (sparsity, pooling, hardware)
 //// ```
 
-// Re-export core tensor module
+// Re-export core modules
 import viva_tensor/tensor
 
 // =============================================================================
-// TENSOR CONSTRUCTORS (re-exports)
+// TYPE RE-EXPORTS
+// =============================================================================
+
+/// Tensor type - the core data structure
+pub type Tensor =
+  tensor.Tensor
+
+/// Tensor operation errors
+pub type TensorError =
+  tensor.TensorError
+
+/// Conv2D configuration
+pub type Conv2dConfig =
+  tensor.Conv2dConfig
+
+// =============================================================================
+// CONSTRUCTORS
 // =============================================================================
 
 /// Create tensor of zeros
-pub fn zeros(shape: List(Int)) -> tensor.Tensor {
+pub fn zeros(shape: List(Int)) -> Tensor {
   tensor.zeros(shape)
 }
 
 /// Create tensor of ones
-pub fn ones(shape: List(Int)) -> tensor.Tensor {
+pub fn ones(shape: List(Int)) -> Tensor {
   tensor.ones(shape)
 }
 
 /// Create tensor filled with value
-pub fn fill(shape: List(Int), value: Float) -> tensor.Tensor {
+pub fn fill(shape: List(Int), value: Float) -> Tensor {
   tensor.fill(shape, value)
 }
 
 /// Create tensor from list (1D)
-pub fn from_list(data: List(Float)) -> tensor.Tensor {
+pub fn from_list(data: List(Float)) -> Tensor {
   tensor.from_list(data)
 }
 
 /// Create 2D tensor from list of lists
-pub fn from_list2d(
-  rows: List(List(Float)),
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn from_list2d(rows: List(List(Float))) -> Result(Tensor, TensorError) {
   tensor.from_list2d(rows)
 }
 
 /// Create vector (1D tensor)
-pub fn vector(data: List(Float)) -> tensor.Tensor {
+pub fn vector(data: List(Float)) -> Tensor {
   tensor.vector(data)
 }
 
@@ -71,7 +99,7 @@ pub fn matrix(
   rows: Int,
   cols: Int,
   data: List(Float),
-) -> Result(tensor.Tensor, tensor.TensorError) {
+) -> Result(Tensor, TensorError) {
   tensor.matrix(rows, cols, data)
 }
 
@@ -80,22 +108,22 @@ pub fn matrix(
 // =============================================================================
 
 /// Tensor with uniform random values [0, 1)
-pub fn random_uniform(shape: List(Int)) -> tensor.Tensor {
+pub fn random_uniform(shape: List(Int)) -> Tensor {
   tensor.random_uniform(shape)
 }
 
 /// Tensor with normal random values
-pub fn random_normal(shape: List(Int), mean: Float, std: Float) -> tensor.Tensor {
+pub fn random_normal(shape: List(Int), mean: Float, std: Float) -> Tensor {
   tensor.random_normal(shape, mean, std)
 }
 
 /// Xavier initialization for neural network weights
-pub fn xavier_init(fan_in: Int, fan_out: Int) -> tensor.Tensor {
+pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
   tensor.xavier_init(fan_in, fan_out)
 }
 
 /// He initialization (for ReLU networks)
-pub fn he_init(fan_in: Int, fan_out: Int) -> tensor.Tensor {
+pub fn he_init(fan_in: Int, fan_out: Int) -> Tensor {
   tensor.he_init(fan_in, fan_out)
 }
 
@@ -104,44 +132,32 @@ pub fn he_init(fan_in: Int, fan_out: Int) -> tensor.Tensor {
 // =============================================================================
 
 /// Element-wise addition
-pub fn add(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn add(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.add(a, b)
 }
 
 /// Element-wise subtraction
-pub fn sub(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn sub(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.sub(a, b)
 }
 
 /// Element-wise multiplication
-pub fn mul(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn mul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.mul(a, b)
 }
 
 /// Element-wise division
-pub fn div(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn div(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.div(a, b)
 }
 
 /// Scale by constant
-pub fn scale(t: tensor.Tensor, s: Float) -> tensor.Tensor {
+pub fn scale(t: Tensor, s: Float) -> Tensor {
   tensor.scale(t, s)
 }
 
 /// Apply function to each element
-pub fn map(t: tensor.Tensor, f: fn(Float) -> Float) -> tensor.Tensor {
+pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
   tensor.map(t, f)
 }
 
@@ -150,42 +166,42 @@ pub fn map(t: tensor.Tensor, f: fn(Float) -> Float) -> tensor.Tensor {
 // =============================================================================
 
 /// Sum all elements
-pub fn sum(t: tensor.Tensor) -> Float {
+pub fn sum(t: Tensor) -> Float {
   tensor.sum(t)
 }
 
 /// Mean of all elements
-pub fn mean(t: tensor.Tensor) -> Float {
+pub fn mean(t: Tensor) -> Float {
   tensor.mean(t)
 }
 
 /// Maximum value
-pub fn max(t: tensor.Tensor) -> Float {
+pub fn max(t: Tensor) -> Float {
   tensor.max(t)
 }
 
 /// Minimum value
-pub fn min(t: tensor.Tensor) -> Float {
+pub fn min(t: Tensor) -> Float {
   tensor.min(t)
 }
 
 /// Index of maximum value
-pub fn argmax(t: tensor.Tensor) -> Int {
+pub fn argmax(t: Tensor) -> Int {
   tensor.argmax(t)
 }
 
 /// Index of minimum value
-pub fn argmin(t: tensor.Tensor) -> Int {
+pub fn argmin(t: Tensor) -> Int {
   tensor.argmin(t)
 }
 
 /// Variance
-pub fn variance(t: tensor.Tensor) -> Float {
+pub fn variance(t: Tensor) -> Float {
   tensor.variance(t)
 }
 
 /// Standard deviation
-pub fn std(t: tensor.Tensor) -> Float {
+pub fn std(t: Tensor) -> Float {
   tensor.std(t)
 }
 
@@ -194,39 +210,27 @@ pub fn std(t: tensor.Tensor) -> Float {
 // =============================================================================
 
 /// Dot product of two vectors
-pub fn dot(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(Float, tensor.TensorError) {
+pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   tensor.dot(a, b)
 }
 
 /// Matrix-matrix multiplication
-pub fn matmul(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul(a, b)
 }
 
 /// Matrix-vector multiplication
-pub fn matmul_vec(
-  mat: tensor.Tensor,
-  vec: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul_vec(mat, vec)
 }
 
-/// Transpose matrix
-pub fn transpose(t: tensor.Tensor) -> Result(tensor.Tensor, tensor.TensorError) {
+/// Matrix transpose
+pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.transpose(t)
 }
 
 /// Outer product
-pub fn outer(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.outer(a, b)
 }
 
@@ -235,26 +239,47 @@ pub fn outer(
 // =============================================================================
 
 /// Reshape tensor
-pub fn reshape(
-  t: tensor.Tensor,
-  new_shape: List(Int),
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
   tensor.reshape(t, new_shape)
 }
 
 /// Flatten to 1D
-pub fn flatten(t: tensor.Tensor) -> tensor.Tensor {
+pub fn flatten(t: Tensor) -> Tensor {
   tensor.flatten(t)
 }
 
 /// Remove dimensions of size 1
-pub fn squeeze(t: tensor.Tensor) -> tensor.Tensor {
+pub fn squeeze(t: Tensor) -> Tensor {
   tensor.squeeze(t)
 }
 
 /// Add dimension of size 1
-pub fn unsqueeze(t: tensor.Tensor, axis_idx: Int) -> tensor.Tensor {
-  tensor.unsqueeze(t, axis_idx)
+pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
+  tensor.unsqueeze(t, axis)
+}
+
+// =============================================================================
+// ACCESSORS
+// =============================================================================
+
+/// Get tensor shape
+pub fn shape(t: Tensor) -> List(Int) {
+  tensor.shape(t)
+}
+
+/// Get total size
+pub fn size(t: Tensor) -> Int {
+  tensor.size(t)
+}
+
+/// Get rank (number of dimensions)
+pub fn rank(t: Tensor) -> Int {
+  tensor.rank(t)
+}
+
+/// Convert to list
+pub fn to_list(t: Tensor) -> List(Float) {
+  tensor.to_list(t)
 }
 
 // =============================================================================
@@ -262,38 +287,18 @@ pub fn unsqueeze(t: tensor.Tensor, axis_idx: Int) -> tensor.Tensor {
 // =============================================================================
 
 /// L2 norm
-pub fn norm(t: tensor.Tensor) -> Float {
+pub fn norm(t: Tensor) -> Float {
   tensor.norm(t)
 }
 
 /// Normalize to unit length
-pub fn normalize(t: tensor.Tensor) -> tensor.Tensor {
+pub fn normalize(t: Tensor) -> Tensor {
   tensor.normalize(t)
 }
 
 /// Clamp values
-pub fn clamp(t: tensor.Tensor, min_val: Float, max_val: Float) -> tensor.Tensor {
+pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   tensor.clamp(t, min_val, max_val)
-}
-
-/// Get shape
-pub fn shape(t: tensor.Tensor) -> List(Int) {
-  t.shape
-}
-
-/// Get total size
-pub fn size(t: tensor.Tensor) -> Int {
-  tensor.size(t)
-}
-
-/// Get rank (number of dimensions)
-pub fn rank(t: tensor.Tensor) -> Int {
-  tensor.rank(t)
-}
-
-/// Convert to list
-pub fn to_list(t: tensor.Tensor) -> List(Float) {
-  tensor.to_list(t)
 }
 
 // =============================================================================
@@ -306,120 +311,95 @@ pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
 }
 
 /// Add with broadcasting
-pub fn add_broadcast(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.add_broadcast(a, b)
 }
 
 /// Multiply with broadcasting
-pub fn mul_broadcast(
-  a: tensor.Tensor,
-  b: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.mul_broadcast(a, b)
 }
 
 // =============================================================================
-// STRIDED / ZERO-COPY
+// ZERO-COPY OPERATIONS
 // =============================================================================
 
 /// Convert to strided tensor (O(1) access)
-pub fn to_strided(t: tensor.Tensor) -> tensor.Tensor {
+pub fn to_strided(t: Tensor) -> Tensor {
   tensor.to_strided(t)
 }
 
 /// Convert to contiguous tensor
-pub fn to_contiguous(t: tensor.Tensor) -> tensor.Tensor {
+pub fn to_contiguous(t: Tensor) -> Tensor {
   tensor.to_contiguous(t)
 }
 
 /// Zero-copy transpose
-pub fn transpose_strided(
-  t: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.transpose_strided(t)
 }
 
 /// Check if contiguous
-pub fn is_contiguous(t: tensor.Tensor) -> Bool {
+pub fn is_contiguous(t: Tensor) -> Bool {
   tensor.is_contiguous(t)
 }
 
 // =============================================================================
-// CONVOLUTION & POOLING (CNN Operations)
+// CNN OPERATIONS
 // =============================================================================
 
-/// Conv2d configuration type
-pub type Conv2dConfig =
-  tensor.Conv2dConfig
-
 /// Default conv2d config (3x3 kernel, stride 1, no padding)
-pub fn conv2d_config() -> tensor.Conv2dConfig {
+pub fn conv2d_config() -> Conv2dConfig {
   tensor.conv2d_config()
 }
 
-/// Conv2d config with "same" padding (output same size as input)
-pub fn conv2d_same(kernel_h: Int, kernel_w: Int) -> tensor.Conv2dConfig {
+/// Conv2d config with "same" padding
+pub fn conv2d_same(kernel_h: Int, kernel_w: Int) -> Conv2dConfig {
   tensor.conv2d_same(kernel_h, kernel_w)
 }
 
 /// 2D Convolution
-/// Input: [H, W] or [C, H, W] or [N, C, H, W]
-/// Kernel: [KH, KW] or [C, KH, KW] or [C_out, C_in, KH, KW]
 pub fn conv2d(
-  input: tensor.Tensor,
-  kernel: tensor.Tensor,
-  config: tensor.Conv2dConfig,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+  input: Tensor,
+  kernel: Tensor,
+  config: Conv2dConfig,
+) -> Result(Tensor, TensorError) {
   tensor.conv2d(input, kernel, config)
 }
 
 /// Pad 2D tensor with zeros
-pub fn pad2d(
-  t: tensor.Tensor,
-  pad_h: Int,
-  pad_w: Int,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+pub fn pad2d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
   tensor.pad2d(t, pad_h, pad_w)
 }
 
-/// Pad 4D tensor (batch) with zeros
-pub fn pad4d(
-  t: tensor.Tensor,
-  pad_h: Int,
-  pad_w: Int,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+/// Pad 4D tensor with zeros
+pub fn pad4d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
   tensor.pad4d(t, pad_h, pad_w)
 }
 
 /// Max pooling 2D
-/// Input: [H, W] or [N, C, H, W]
 pub fn max_pool2d(
-  input: tensor.Tensor,
+  input: Tensor,
   pool_h: Int,
   pool_w: Int,
   stride_h: Int,
   stride_w: Int,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+) -> Result(Tensor, TensorError) {
   tensor.max_pool2d(input, pool_h, pool_w, stride_h, stride_w)
 }
 
 /// Average pooling 2D
 pub fn avg_pool2d(
-  input: tensor.Tensor,
+  input: Tensor,
   pool_h: Int,
   pool_w: Int,
   stride_h: Int,
   stride_w: Int,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+) -> Result(Tensor, TensorError) {
   tensor.avg_pool2d(input, pool_h, pool_w, stride_h, stride_w)
 }
 
-/// Global average pooling - reduces [N, C, H, W] to [N, C, 1, 1]
-pub fn global_avg_pool2d(
-  input: tensor.Tensor,
-) -> Result(tensor.Tensor, tensor.TensorError) {
+/// Global average pooling
+pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
   tensor.global_avg_pool2d(input)
 }
