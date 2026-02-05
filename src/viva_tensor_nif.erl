@@ -35,22 +35,28 @@ init() ->
     NifPath = filename:join(PrivDir, "viva_tensor_nif"),
     case erlang:load_nif(NifPath, 0) of
         ok ->
+            %% Mark NIF as loaded using persistent_term
+            persistent_term:put(viva_tensor_nif_loaded, true),
             ok;
         {error, {load_failed, _}} ->
             %% NIF not built - silently fall back to Erlang
+            persistent_term:put(viva_tensor_nif_loaded, false),
             ok;
         {error, {reload, _}} ->
             %% Already loaded
             ok;
         {error, Reason} ->
             error_logger:info_msg("viva_tensor NIF not loaded: ~p~n", [Reason]),
+            persistent_term:put(viva_tensor_nif_loaded, false),
             ok
     end.
 
 %% Check if NIF is loaded
 is_nif_loaded() ->
-    %% If nif_matmul is replaced by NIF, we're loaded
-    erlang:function_exported(?MODULE, nif_matmul, 5).
+    %% Check persistent_term flag set during init
+    try persistent_term:get(viva_tensor_nif_loaded)
+    catch error:badarg -> false
+    end.
 
 %% Get backend info string
 backend_info() ->

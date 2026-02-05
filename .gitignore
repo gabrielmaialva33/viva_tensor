@@ -6,5 +6,11 @@ erl_crash.dump
 # NIF build artifacts
 *.o
 *.so
+*.dylib
 c_src/*.o
 priv/*.so
+
+# Zig build artifacts
+zig-cache/
+zig-out/
+.zig-cache/
