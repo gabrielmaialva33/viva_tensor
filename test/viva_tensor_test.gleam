@@ -2,6 +2,8 @@ import gleeunit
 import gleeunit/should
 import viva_tensor as t
 import viva_tensor/axis
+import viva_tensor/core/ops
+import viva_tensor/core/tensor as core_tensor
 import viva_tensor/named
 import viva_tensor/tensor
 
@@ -174,6 +176,72 @@ pub fn matmul_test() {
             Ok(c) -> {
               t.shape(c) |> should.equal([2, 2])
               t.to_list(c) |> should.equal([19.0, 22.0, 43.0, 50.0])
+            }
+            Error(_) -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+// =============================================================================
+// OPTIMIZED OPERATIONS (Erlang Array Backend)
+// =============================================================================
+
+pub fn dot_fast_test() {
+  let a = core_tensor.from_list([1.0, 2.0, 3.0])
+  let b = core_tensor.from_list([4.0, 5.0, 6.0])
+  case ops.dot_fast(a, b) {
+    Ok(d) -> d |> should.equal(32.0)
+    // Same result as dot: 1*4 + 2*5 + 3*6 = 32
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn matmul_fast_test() {
+  // Same test as matmul_test but using optimized version
+  case core_tensor.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case core_tensor.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case ops.matmul_fast(a, b) {
+            Ok(c) -> {
+              core_tensor.shape(c) |> should.equal([2, 2])
+              core_tensor.to_list(c) |> should.equal([19.0, 22.0, 43.0, 50.0])
+            }
+            Error(_) -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn dot_auto_test() {
+  // Auto-selecting dot (uses NIF if available)
+  let a = core_tensor.from_list([1.0, 2.0, 3.0])
+  let b = core_tensor.from_list([4.0, 5.0, 6.0])
+  case ops.dot_auto(a, b) {
+    Ok(d) -> d |> should.equal(32.0)
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn matmul_auto_test() {
+  // Auto-selecting matmul (uses NIF if available)
+  case core_tensor.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case core_tensor.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case ops.matmul_auto(a, b) {
+            Ok(c) -> {
+              core_tensor.shape(c) |> should.equal([2, 2])
+              core_tensor.to_list(c) |> should.equal([19.0, 22.0, 43.0, 50.0])
             }
             Error(_) -> should.fail()
           }
