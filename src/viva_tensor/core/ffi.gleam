@@ -283,3 +283,76 @@ pub fn now_microseconds() -> Int {
 
 @external(erlang, "viva_tensor_ffi", "now_microseconds")
 fn now_microseconds_ffi() -> Int
+
+// =============================================================================
+// ZIG SIMD NIF OPERATIONS
+// =============================================================================
+
+/// Check if Zig SIMD NIF is loaded
+pub fn zig_is_loaded() -> Bool {
+  zig_is_loaded_ffi()
+}
+
+/// Get Zig backend info
+pub fn zig_backend_info() -> String {
+  zig_backend_info_ffi()
+}
+
+/// Zig SIMD dot product
+pub fn zig_dot(a: List(Float), b: List(Float)) -> Result(Float, String) {
+  zig_dot_ffi(a, b)
+}
+
+/// Zig SIMD sum
+pub fn zig_sum(data: List(Float)) -> Result(Float, String) {
+  zig_sum_ffi(data)
+}
+
+/// Zig SIMD scale
+pub fn zig_scale(data: List(Float), scalar: Float) -> Result(List(Float), String) {
+  zig_scale_ffi(data, scalar)
+}
+
+/// Zig SIMD element-wise add
+pub fn zig_add(a: List(Float), b: List(Float)) -> Result(List(Float), String) {
+  zig_add_ffi(a, b)
+}
+
+/// Zig SIMD matrix multiplication
+pub fn zig_matmul(
+  a: List(Float),
+  b: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(List(Float), String) {
+  zig_matmul_ffi(a, b, m, n, k)
+}
+
+// Zig NIF FFI bindings
+@external(erlang, "viva_tensor_zig", "is_loaded")
+fn zig_is_loaded_ffi() -> Bool
+
+@external(erlang, "viva_tensor_zig", "backend_info")
+fn zig_backend_info_ffi() -> String
+
+@external(erlang, "viva_tensor_zig", "simd_dot")
+fn zig_dot_ffi(a: List(Float), b: List(Float)) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "simd_sum")
+fn zig_sum_ffi(data: List(Float)) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "simd_scale")
+fn zig_scale_ffi(data: List(Float), scalar: Float) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "simd_add")
+fn zig_add_ffi(a: List(Float), b: List(Float)) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "simd_matmul")
+fn zig_matmul_ffi(
+  a: List(Float),
+  b: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(List(Float), String)
