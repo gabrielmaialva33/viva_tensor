@@ -146,6 +146,45 @@ else
 endif
 
 # =============================================================================
+# NIF BUILD (Apple Accelerate on macOS)
+# =============================================================================
+
+.PHONY: nif nif-clean nif-info
+
+## Build native NIF (macOS only)
+nif:
+ifeq ($(OS),Windows_NT)
+	@echo "$(YELLOW)[SKIP]$(NC) NIF only supported on macOS"
+else
+ifeq ($(shell uname -s),Darwin)
+	@echo "$(YELLOW)[NIF]$(NC) Building Apple Accelerate NIF..."
+	@$(MAKE) -C c_src
+	@echo "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_nif.so"
+else
+	@echo "$(YELLOW)[SKIP]$(NC) NIF only supported on macOS"
+endif
+endif
+
+## Clean NIF artifacts
+nif-clean:
+	@echo "$(YELLOW)[CLEAN]$(NC) Cleaning NIF..."
+	@$(MAKE) -C c_src clean 2>$(NULL) || true
+	@$(RM) priv$(SEP)viva_tensor_nif.so 2>$(NULL) || true
+	@echo "$(GREEN)[OK]$(NC) NIF cleaned!"
+
+## Show NIF build info
+nif-info:
+ifeq ($(shell uname -s),Darwin)
+	@$(MAKE) -C c_src info
+else
+	@echo "NIF only supported on macOS"
+endif
+
+## Full build including NIF
+build-all: build nif
+	@echo "$(GREEN)[OK]$(NC) Full build (Gleam + NIF) complete!"
+
+# =============================================================================
 # BENCHMARKS ESPECÍFICOS
 # =============================================================================
 
@@ -224,6 +263,12 @@ help:
 	@echo "  make check       - Verifica tipos"
 	@echo "  make clean       - Limpa build"
 	@echo "  make all         - Build + test + bench"
+	@echo ""
+	@echo "NIF (macOS only):"
+	@echo "  make nif         - Build Apple Accelerate NIF"
+	@echo "  make nif-clean   - Clean NIF artifacts"
+	@echo "  make nif-info    - Show NIF build info"
+	@echo "  make build-all   - Build Gleam + NIF"
 	@echo ""
 	@echo "Benchmarks especificos:"
 	@echo "  make bench-int8  - Benchmark INT8"
