@@ -271,3 +271,15 @@ fn nif_sum_ffi(data: List(Float)) -> Result(Float, String)
 
 @external(erlang, "viva_tensor_nif", "scale")
 fn nif_scale_ffi(data: List(Float), scalar: Float) -> Result(List(Float), String)
+
+// =============================================================================
+// TIMING
+// =============================================================================
+
+/// Get current time in microseconds (for benchmarking)
+pub fn now_microseconds() -> Int {
+  now_microseconds_ffi()
+}
+
+@external(erlang, "viva_tensor_ffi", "now_microseconds")
+fn now_microseconds_ffi() -> Int

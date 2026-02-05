@@ -13,7 +13,8 @@
     strided_get/4,
     send_msg/2,
     collect_n/1,
-    receive_any/0
+    receive_any/0,
+    now_microseconds/0
 ]).
 
 %% Convert list to array (O(n) once, then O(1) access)
@@ -106,3 +107,7 @@ receive_any() ->
     receive
         Msg -> Msg
     end.
+
+%% Get current time in microseconds
+now_microseconds() ->
+    os:system_time(microsecond).

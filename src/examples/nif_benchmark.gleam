@@ -10,9 +10,7 @@ import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
-import gleam/result
 import viva_tensor/core/ffi
-import viva_tensor/tensor.{type Tensor}
 
 // ============================================================================
 // MAIN
@@ -145,7 +143,7 @@ fn benchmark_dot(size: Int) {
 
   // NIF
   let start_nif = now_microseconds()
-  let nif_result = ffi.nif_dot(a_data, b_data)
+  let _nif_result = ffi.nif_dot(a_data, b_data)
   let end_nif = now_microseconds()
   let nif_time = int.to_float(end_nif - start_nif) /. 1000.0
 
@@ -153,7 +151,7 @@ fn benchmark_dot(size: Int) {
   let start_pure = now_microseconds()
   let a_arr = ffi.list_to_array(a_data)
   let b_arr = ffi.list_to_array(b_data)
-  let pure_result = ffi.array_dot(a_arr, b_arr)
+  let _pure_result = ffi.array_dot(a_arr, b_arr)
   let end_pure = now_microseconds()
   let pure_time = int.to_float(end_pure - start_pure) /. 1000.0
 
@@ -258,19 +256,7 @@ fn bool_to_string(b: Bool) -> String {
   }
 }
 
-/// Get current time in microseconds (via Erlang)
-@external(erlang, "erlang", "monotonic_time")
-fn monotonic_time_native() -> Int
-
-@external(erlang, "erlang", "convert_time_unit")
-fn convert_time_unit(time: Int, from: a, to: b) -> Int
-
+/// Get current time in microseconds (via FFI)
 fn now_microseconds() -> Int {
-  let native = monotonic_time_native()
-  convert_time_unit(native, Native, Microsecond)
+  ffi.now_microseconds()
 }
-
-/// Time unit atoms for FFI
-type Native
-
-type Microsecond
