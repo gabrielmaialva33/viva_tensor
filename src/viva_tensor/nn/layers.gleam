@@ -17,8 +17,10 @@
 
 import gleam/result
 import viva_tensor/core/error.{type TensorError}
+import viva_tensor/core/ffi
 import viva_tensor/core/tensor
 import viva_tensor/nn/autograd.{type Tape, type Traced, type Variable, Traced}
+import viva_tensor/telemetry
 
 // -------------------------------------------------------------------------
 // Linear Layer - The Workhorse of Neural Networks
@@ -58,6 +60,7 @@ pub fn linear(tape: Tape, in_features: Int, out_features: Int) -> Traced(Linear)
 }
 
 /// Forward pass: y = xW^T + b
+/// Instrumented: records forward pass latency.
 ///
 /// The order of operations matters for gradient computation:
 /// 1. Transpose W: [out, in] -> [in, out]
@@ -70,6 +73,8 @@ pub fn linear_forward(
   layer: Linear,
   x: Variable,
 ) -> Result(Traced(Variable), TensorError) {
+  let t0 = ffi.now_microseconds()
+
   // Step 1: Transpose weights
   // PyTorch stores [out, in], we need [in, out] for x @ W^T
   use Traced(wt, tape1) <- result.try(autograd.transpose(tape, layer.w))
@@ -82,7 +87,9 @@ pub fn linear_forward(
   // Step 3: Add bias
   // Bias broadcasts over the batch dimension
   // y_i = (xW^T)_i + b for each sample i in the batch
-  autograd.add(tape2, xw, layer.b)
+  let result = autograd.add(tape2, xw, layer.b)
+  telemetry.record_op("linear_forward", ffi.now_microseconds() - t0)
+  result
 }
 
 // -------------------------------------------------------------------------

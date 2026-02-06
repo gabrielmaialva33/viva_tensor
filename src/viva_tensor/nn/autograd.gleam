@@ -53,8 +53,10 @@ import gleam/list
 import gleam/result
 import gleam/string
 import viva_tensor/core/error.{type TensorError}
+import viva_tensor/core/ffi
 import viva_tensor/core/ops
 import viva_tensor/core/tensor.{type Tensor}
+import viva_tensor/telemetry
 
 // -------------------------------------------------------------------------
 // Core Types - The Building Blocks of Differentiation
@@ -376,6 +378,7 @@ pub fn relu(tape: Tape, a: Variable) -> Traced(Variable) {
 
 /// Executes backpropagation starting from a loss variable.
 /// Returns gradients for all variables: Map(NodeId -> Tensor).
+/// Instrumented: records graph size and backward pass latency.
 ///
 /// The loss should be a scalar (or we treat it as sum of elements).
 /// Multi-output differentiation is possible but rarely needed in ML.
@@ -383,6 +386,7 @@ pub fn backward(
   tape: Tape,
   loss: Variable,
 ) -> Result(Dict(NodeId, Tensor), String) {
+  let t0 = ffi.now_microseconds()
   // Seed gradient: dL/dL = 1.0 (the journey begins)
   let loss_shape = tensor.shape(loss.data)
   let initial_grad = tensor.ones(loss_shape)
@@ -441,6 +445,7 @@ pub fn backward(
       }
     })
 
+  telemetry.record_backward(tape.next_id, ffi.now_microseconds() - t0)
   Ok(final_grads)
 }
 

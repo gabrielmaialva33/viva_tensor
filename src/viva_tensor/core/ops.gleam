@@ -18,6 +18,7 @@ import gleam/result
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi
 import viva_tensor/core/tensor.{type Tensor}
+import viva_tensor/telemetry
 
 // --- Element-wise Ops -------------------------------------------------------
 
@@ -397,6 +398,7 @@ pub fn matmul_fast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 // The 1500x difference is why we bother with NIFs.
 
 /// Smart dot - delegates to fastest available backend at runtime.
+/// Instrumented: records latency and backend selection metrics.
 pub fn dot_auto(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   case
     tensor.rank(a) == 1
@@ -404,18 +406,21 @@ pub fn dot_auto(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
     && tensor.size(a) == tensor.size(b)
   {
     True -> {
+      let t0 = ffi.now_microseconds()
       let a_list = tensor.to_list(a)
       let b_list = tensor.to_list(b)
       // Try Apple Accelerate first (fastest on macOS)
-      case ffi.is_nif_loaded() {
+      let #(result, backend) = case ffi.is_nif_loaded() {
         True -> {
           case ffi.nif_dot(a_list, b_list) {
-            Ok(result) -> Ok(result)
+            Ok(r) -> #(Ok(r), "accelerate")
             Error(_) -> dot_with_zig_fallback(a_list, b_list, a, b)
           }
         }
         False -> dot_with_zig_fallback(a_list, b_list, a, b)
       }
+      telemetry.record_dot(tensor.size(a), ffi.now_microseconds() - t0, backend)
+      result
     }
     False -> Error(error.ShapeMismatch(tensor.shape(a), tensor.shape(b)))
   }
@@ -426,35 +431,39 @@ fn dot_with_zig_fallback(
   b_list: List(Float),
   a: Tensor,
   b: Tensor,
-) -> Result(Float, TensorError) {
+) -> #(Result(Float, TensorError), String) {
   // Try Zig SIMD (cross-platform fast)
   case ffi.zig_is_loaded() {
     True -> {
       case ffi.zig_dot(a_list, b_list) {
-        Ok(result) -> Ok(result)
-        Error(_) -> dot_fast(a, b)
+        Ok(r) -> #(Ok(r), "zig")
+        Error(_) -> #(dot_fast(a, b), "erlang")
       }
     }
-    False -> dot_fast(a, b)
+    False -> #(dot_fast(a, b), "erlang")
   }
 }
 
 /// Smart matmul. Can be 1400x faster than pure Gleam for 500x500 matrices.
+/// Instrumented: logs backend selection and records latency metrics.
 pub fn matmul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a), tensor.shape(b) {
     [m, k], [k2, n] if k == k2 -> {
+      let t0 = ffi.now_microseconds()
       let a_list = tensor.to_list(a)
       let b_list = tensor.to_list(b)
       // Try Apple Accelerate first (fastest on macOS for large matrices)
-      case ffi.is_nif_loaded() {
+      let #(result, backend) = case ffi.is_nif_loaded() {
         True -> {
           case ffi.nif_matmul(a_list, b_list, m, n, k) {
-            Ok(result_list) -> tensor.new(result_list, [m, n])
+            Ok(result_list) -> #(tensor.new(result_list, [m, n]), "accelerate")
             Error(_) -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
           }
         }
         False -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
       }
+      telemetry.record_matmul(m, n, k, ffi.now_microseconds() - t0, backend)
+      result
     }
     [_m, k], [k2, _n] -> Error(error.ShapeMismatch([k, -1], [k2, -1]))
     _, _ -> Error(error.DimensionError("Expected two matrices"))
@@ -469,16 +478,16 @@ fn matmul_with_zig_fallback(
   k: Int,
   a: Tensor,
   b: Tensor,
-) -> Result(Tensor, TensorError) {
+) -> #(Result(Tensor, TensorError), String) {
   // Try Zig SIMD (cross-platform, often faster for small-medium matrices)
   case ffi.zig_is_loaded() {
     True -> {
       case ffi.zig_matmul(a_list, b_list, m, n, k) {
-        Ok(result_list) -> tensor.new(result_list, [m, n])
-        Error(_) -> matmul_fast(a, b)
+        Ok(result_list) -> #(tensor.new(result_list, [m, n]), "zig")
+        Error(_) -> #(matmul_fast(a, b), "erlang")
       }
     }
-    False -> matmul_fast(a, b)
+    False -> #(matmul_fast(a, b), "erlang")
   }
 }
 
@@ -512,20 +521,24 @@ pub fn all_backends_info() -> String {
   <> "\nPure Erlang: ✓ Always available"
 }
 
-/// Auto-selecting sum reduction
-/// Priority: Zig SIMD > Apple Accelerate > Pure Erlang
+/// Auto-selecting sum reduction.
+/// Priority: Zig SIMD > Apple Accelerate > Pure Erlang.
+/// Instrumented: records operation latency.
 pub fn sum_auto(t: Tensor) -> Float {
+  let t0 = ffi.now_microseconds()
   let data = tensor.to_list(t)
   // Try Zig SIMD first (often faster for reductions)
-  case ffi.zig_is_loaded() {
+  let result = case ffi.zig_is_loaded() {
     True -> {
       case ffi.zig_sum(data) {
-        Ok(result) -> result
+        Ok(r) -> r
         Error(_) -> sum_with_accel_fallback(data)
       }
     }
     False -> sum_with_accel_fallback(data)
   }
+  telemetry.record_op("sum", ffi.now_microseconds() - t0)
+  result
 }
 
 fn sum_with_accel_fallback(data: List(Float)) -> Float {
