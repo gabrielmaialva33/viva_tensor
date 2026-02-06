@@ -27,7 +27,31 @@
     %% In-place mutation (zero allocation)
     nt_add_mut/2, nt_scale_mut/2, nt_negate_mut/1, nt_relu_mut/1,
     %% Retro / fused kernels
-    nt_saturn_blend/3, nt_fused_linear_relu/6
+    nt_saturn_blend/3, nt_fused_linear_relu/6,
+    %% Resonance kernels (Log-Number System) - f64
+    nt_resonance_mul/2, nt_resonance_power/2
+]).
+
+%% LNS (True Log-Number System) - f32 via IADD, 8x throughput
+-export([
+    lns_from_f64/1, lns_to_f64/1,
+    lns_mul/2, lns_mul_corrected/2, lns_div/2,
+    lns_sqrt/1, lns_rsqrt/1
+]).
+
+%% Horde - SoA Physics, 10K+ entities at 60fps
+-export([
+    horde_create/2,
+    horde_set_positions/2, horde_set_velocities/2,
+    horde_integrate/2, horde_dampen/2, horde_wrap/2,
+    horde_get_positions/1, horde_get_velocities/1,
+    horde_count/1, horde_kinetic_energy/1
+]).
+
+%% HDC - Hyperdimensional Computing, one-shot learning
+-export([
+    hdc_create/1, hdc_random/2,
+    hdc_bind/2, hdc_similarity/2, hdc_permute/2, hdc_dim/1
 ]).
 
 -on_load(init/0).
@@ -240,3 +264,45 @@ nt_relu_mut(_Ref) -> erlang:nif_error(nif_not_loaded).
 %% Retro / fused kernels
 nt_saturn_blend(_Texture, _Shade, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_fused_linear_relu(_A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+
+%% Resonance kernels (Log-Number System) - f64
+nt_resonance_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_resonance_power(_Ref, _Exponent) -> erlang:nif_error(nif_not_loaded).
+
+%% ==========================================================================
+%% LNS (True Log-Number System) - f32 via IADD, 8x throughput
+%% ==========================================================================
+
+lns_from_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
+lns_to_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
+lns_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
+lns_mul_corrected(_A, _B) -> erlang:nif_error(nif_not_loaded).
+lns_div(_A, _B) -> erlang:nif_error(nif_not_loaded).
+lns_sqrt(_Ref) -> erlang:nif_error(nif_not_loaded).
+lns_rsqrt(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% ==========================================================================
+%% Horde - SoA Physics, 10K+ entities at 60fps
+%% ==========================================================================
+
+horde_create(_EntityCount, _Dims) -> erlang:nif_error(nif_not_loaded).
+horde_set_positions(_Horde, _Data) -> erlang:nif_error(nif_not_loaded).
+horde_set_velocities(_Horde, _Data) -> erlang:nif_error(nif_not_loaded).
+horde_integrate(_Horde, _Dt) -> erlang:nif_error(nif_not_loaded).
+horde_dampen(_Horde, _Friction) -> erlang:nif_error(nif_not_loaded).
+horde_wrap(_Horde, _MaxBound) -> erlang:nif_error(nif_not_loaded).
+horde_get_positions(_Horde) -> erlang:nif_error(nif_not_loaded).
+horde_get_velocities(_Horde) -> erlang:nif_error(nif_not_loaded).
+horde_count(_Horde) -> erlang:nif_error(nif_not_loaded).
+horde_kinetic_energy(_Horde) -> erlang:nif_error(nif_not_loaded).
+
+%% ==========================================================================
+%% HDC - Hyperdimensional Computing, one-shot learning
+%% ==========================================================================
+
+hdc_create(_Dim) -> erlang:nif_error(nif_not_loaded).
+hdc_random(_Dim, _Seed) -> erlang:nif_error(nif_not_loaded).
+hdc_bind(_A, _B) -> erlang:nif_error(nif_not_loaded).
+hdc_similarity(_A, _B) -> erlang:nif_error(nif_not_loaded).
+hdc_permute(_Vec, _Shift) -> erlang:nif_error(nif_not_loaded).
+hdc_dim(_Vec) -> erlang:nif_error(nif_not_loaded).

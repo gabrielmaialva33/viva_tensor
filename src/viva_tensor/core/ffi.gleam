@@ -643,6 +643,26 @@ pub fn nt_fused_linear_relu(
   nt_fused_linear_relu_ffi(a, b, bias, m, n, k)
 }
 
+/// Resonance Multiply: LNS element-wise multiply.
+/// result[i] = sign * exp(log|a[i]| + log|b[i]|)
+/// Multiplication via addition in log domain — better precision for chains.
+pub fn nt_resonance_mul(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_resonance_mul_ffi(a, b)
+}
+
+/// Resonance Power: LNS element-wise power.
+/// result[i] = sign(x) * |x|^exponent via exp(exponent * log|x|)
+/// Power = multiply in log domain. Sign preserved for bipolar states.
+pub fn nt_resonance_power(
+  data: NativeTensorRef,
+  exponent: Float,
+) -> Result(NativeTensorRef, String) {
+  nt_resonance_power_ffi(data, exponent)
+}
+
 // NIF Resource FFI bindings
 @external(erlang, "viva_tensor_zig", "nt_zeros")
 fn nt_zeros_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
@@ -771,6 +791,19 @@ fn nt_fused_linear_relu_ffi(
   k: Int,
 ) -> Result(NativeTensorRef, String)
 
+// Resonance kernel FFI (Log-Number System)
+@external(erlang, "viva_tensor_zig", "nt_resonance_mul")
+fn nt_resonance_mul_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_resonance_power")
+fn nt_resonance_power_ffi(
+  data: NativeTensorRef,
+  exponent: Float,
+) -> Result(NativeTensorRef, String)
+
 // Zig NIF FFI bindings
 @external(erlang, "viva_tensor_zig", "is_loaded")
 fn zig_is_loaded_ffi() -> Bool
@@ -804,3 +837,258 @@ fn zig_matmul_ffi(
   n: Int,
   k: Int,
 ) -> Result(List(Float), String)
+
+// =============================================================================
+// LNS (True Log-Number System) - f32 via IADD
+// "Multiplicação como soma de inteiros" - 8x throughput vs FMA
+//
+// IEEE-754 trick: bits(A*B) ≈ bits(A) + bits(B) - bias
+// where bias = 0x3F800000 (1.0f)
+//
+// This trades precision for throughput:
+// - Fast (~11% max error): 16 IADD ops/cycle vs 2 FMA ops/cycle
+// - Corrected (~2% max error): Mitchell's algorithm adds correction term
+//
+// Use when precision tolerance > 2% is acceptable.
+// Great for: embeddings, attention scores, normalization
+// =============================================================================
+
+/// LNS tensor reference - f32 storage for IADD-based multiplication
+pub type LnsTensorRef
+
+/// Convert f64 NativeTensor to f32 LNS tensor
+pub fn lns_from_f64(ref: NativeTensorRef) -> Result(LnsTensorRef, String) {
+  lns_from_f64_ffi(ref)
+}
+
+/// Convert LNS tensor back to f64 NativeTensor
+pub fn lns_to_f64(ref: LnsTensorRef) -> Result(NativeTensorRef, String) {
+  lns_to_f64_ffi(ref)
+}
+
+/// Fast LNS multiply via IADD (~11% max error, 8x throughput)
+pub fn lns_mul(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String) {
+  lns_mul_ffi(a, b)
+}
+
+/// Mitchell's corrected LNS multiply (~2% max error)
+pub fn lns_mul_corrected(
+  a: LnsTensorRef,
+  b: LnsTensorRef,
+) -> Result(LnsTensorRef, String) {
+  lns_mul_corrected_ffi(a, b)
+}
+
+/// LNS division via ISUB
+pub fn lns_div(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String) {
+  lns_div_ffi(a, b)
+}
+
+/// LNS sqrt via bit shift
+pub fn lns_sqrt(a: LnsTensorRef) -> Result(LnsTensorRef, String) {
+  lns_sqrt_ffi(a)
+}
+
+/// Fast inverse sqrt (Quake III trick)
+pub fn lns_rsqrt(a: LnsTensorRef) -> Result(LnsTensorRef, String) {
+  lns_rsqrt_ffi(a)
+}
+
+// LNS FFI bindings
+@external(erlang, "viva_tensor_zig", "lns_from_f64")
+fn lns_from_f64_ffi(ref: NativeTensorRef) -> Result(LnsTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_to_f64")
+fn lns_to_f64_ffi(ref: LnsTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_mul")
+fn lns_mul_ffi(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_mul_corrected")
+fn lns_mul_corrected_ffi(
+  a: LnsTensorRef,
+  b: LnsTensorRef,
+) -> Result(LnsTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_div")
+fn lns_div_ffi(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_sqrt")
+fn lns_sqrt_ffi(a: LnsTensorRef) -> Result(LnsTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "lns_rsqrt")
+fn lns_rsqrt_ffi(a: LnsTensorRef) -> Result(LnsTensorRef, String)
+
+// =============================================================================
+// HORDE - SoA Physics Engine
+// "10K entidades sem GC" - Structure of Arrays for cache-efficient physics
+//
+// Layout: positions[N*dims], velocities[N*dims] (contiguous SoA)
+// Operations are SIMD FMA across all entities at once.
+//
+// Use for: particle systems, boids, agent simulations, physics
+// =============================================================================
+
+/// Horde reference - SoA entity collection
+pub type HordeRef
+
+/// Create new Horde with entity count and dimensionality (1, 2, or 3)
+pub fn horde_create(entity_count: Int, dims: Int) -> Result(HordeRef, String) {
+  horde_create_ffi(entity_count, dims)
+}
+
+/// Set all positions from flat list [x0, y0, x1, y1, ...] for 2D
+pub fn horde_set_positions(
+  horde: HordeRef,
+  data: List(Float),
+) -> Result(Nil, String) {
+  horde_set_positions_ffi(horde, data)
+}
+
+/// Set all velocities from flat list
+pub fn horde_set_velocities(
+  horde: HordeRef,
+  data: List(Float),
+) -> Result(Nil, String) {
+  horde_set_velocities_ffi(horde, data)
+}
+
+/// Euler integration step: positions += velocities * dt (FMA)
+pub fn horde_integrate(horde: HordeRef, dt: Float) -> Result(Nil, String) {
+  horde_integrate_ffi(horde, dt)
+}
+
+/// Apply velocity damping: velocities *= friction
+pub fn horde_dampen(horde: HordeRef, friction: Float) -> Result(Nil, String) {
+  horde_dampen_ffi(horde, friction)
+}
+
+/// Toroidal wrap: positions mod max_bound
+pub fn horde_wrap(horde: HordeRef, max_bound: Float) -> Result(Nil, String) {
+  horde_wrap_ffi(horde, max_bound)
+}
+
+/// Get current positions as flat list
+pub fn horde_get_positions(horde: HordeRef) -> Result(List(Float), String) {
+  horde_get_positions_ffi(horde)
+}
+
+/// Get current velocities as flat list
+pub fn horde_get_velocities(horde: HordeRef) -> Result(List(Float), String) {
+  horde_get_velocities_ffi(horde)
+}
+
+/// Get entity count
+pub fn horde_count(horde: HordeRef) -> Result(Int, String) {
+  horde_count_ffi(horde)
+}
+
+/// Compute total kinetic energy: 0.5 * sum(vel^2)
+pub fn horde_kinetic_energy(horde: HordeRef) -> Result(Float, String) {
+  horde_kinetic_energy_ffi(horde)
+}
+
+// Horde FFI bindings
+@external(erlang, "viva_tensor_zig", "horde_create")
+fn horde_create_ffi(entity_count: Int, dims: Int) -> Result(HordeRef, String)
+
+@external(erlang, "viva_tensor_zig", "horde_set_positions")
+fn horde_set_positions_ffi(horde: HordeRef, data: List(Float)) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "horde_set_velocities")
+fn horde_set_velocities_ffi(horde: HordeRef, data: List(Float)) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "horde_integrate")
+fn horde_integrate_ffi(horde: HordeRef, dt: Float) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "horde_dampen")
+fn horde_dampen_ffi(horde: HordeRef, friction: Float) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "horde_wrap")
+fn horde_wrap_ffi(horde: HordeRef, max_bound: Float) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "horde_get_positions")
+fn horde_get_positions_ffi(horde: HordeRef) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "horde_get_velocities")
+fn horde_get_velocities_ffi(horde: HordeRef) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "horde_count")
+fn horde_count_ffi(horde: HordeRef) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "horde_kinetic_energy")
+fn horde_kinetic_energy_ffi(horde: HordeRef) -> Result(Float, String)
+
+// =============================================================================
+// HDC - Hyperdimensional Computing
+// "One-shot learning via binary vectors" - 1M similarity ops/sec
+//
+// Uses high-dimensional binary vectors (10K bits) for:
+// - Binding: XOR (associative memory, invertible)
+// - Similarity: Hamming distance via popcount
+// - Permutation: circular shift for sequence encoding
+//
+// Use for: one-shot learning, associative memory, symbolic reasoning
+// =============================================================================
+
+/// HDC vector reference - binary hyperdimensional vector
+pub type HdcVectorRef
+
+/// Standard HDC dimension (10,000 bits)
+pub const hdc_default_dim: Int = 10_048
+
+// Note: 10048 = 157 * 64, rounds up from 10000 to multiple of 64
+
+/// Create empty hypervector (dim must be multiple of 64)
+pub fn hdc_create(dim: Int) -> Result(HdcVectorRef, String) {
+  hdc_create_ffi(dim)
+}
+
+/// Create random hypervector (seed for reproducibility)
+pub fn hdc_random(dim: Int, seed: Int) -> Result(HdcVectorRef, String) {
+  hdc_random_ffi(dim, seed)
+}
+
+/// XOR binding: associates two concepts (invertible: A XOR B XOR B = A)
+pub fn hdc_bind(
+  a: HdcVectorRef,
+  b: HdcVectorRef,
+) -> Result(HdcVectorRef, String) {
+  hdc_bind_ffi(a, b)
+}
+
+/// Cosine-like similarity via Hamming distance [0, 1]
+/// 1 = identical, 0.5 = orthogonal (random), 0 = opposite
+pub fn hdc_similarity(a: HdcVectorRef, b: HdcVectorRef) -> Result(Float, String) {
+  hdc_similarity_ffi(a, b)
+}
+
+/// Circular permutation for sequence encoding
+/// encode(ABC) = A XOR perm(B,1) XOR perm(C,2)
+pub fn hdc_permute(vec: HdcVectorRef, shift: Int) -> Result(HdcVectorRef, String) {
+  hdc_permute_ffi(vec, shift)
+}
+
+/// Get dimensionality (total bits)
+pub fn hdc_dim(vec: HdcVectorRef) -> Result(Int, String) {
+  hdc_dim_ffi(vec)
+}
+
+// HDC FFI bindings
+@external(erlang, "viva_tensor_zig", "hdc_create")
+fn hdc_create_ffi(dim: Int) -> Result(HdcVectorRef, String)
+
+@external(erlang, "viva_tensor_zig", "hdc_random")
+fn hdc_random_ffi(dim: Int, seed: Int) -> Result(HdcVectorRef, String)
+
+@external(erlang, "viva_tensor_zig", "hdc_bind")
+fn hdc_bind_ffi(a: HdcVectorRef, b: HdcVectorRef) -> Result(HdcVectorRef, String)
+
+@external(erlang, "viva_tensor_zig", "hdc_similarity")
+fn hdc_similarity_ffi(a: HdcVectorRef, b: HdcVectorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "hdc_permute")
+fn hdc_permute_ffi(vec: HdcVectorRef, shift: Int) -> Result(HdcVectorRef, String)
+
+@external(erlang, "viva_tensor_zig", "hdc_dim")
+fn hdc_dim_ffi(vec: HdcVectorRef) -> Result(Int, String)
