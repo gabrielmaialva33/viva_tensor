@@ -405,22 +405,38 @@ pub fn dot_auto(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   {
     True -> {
       let t0 = ffi.now_microseconds()
-      let a_list = tensor.to_list(a)
-      let b_list = tensor.to_list(b)
-      // Try Apple Accelerate first (fastest on macOS)
-      let #(result, backend) = case ffi.is_nif_loaded() {
-        True -> {
-          case ffi.nif_dot(a_list, b_list) {
-            Ok(r) -> #(Ok(r), "accelerate")
-            Error(_) -> dot_with_zig_fallback(a_list, b_list, a, b)
+      // Try Native path first (zero list conversion)
+      let #(result, backend) = case
+        tensor.native_ref(a),
+        tensor.native_ref(b)
+      {
+        Ok(ref_a), Ok(ref_b) ->
+          case ffi.nt_dot(ref_a, ref_b) {
+            Ok(r) -> #(Ok(r), "native")
+            Error(_) -> dot_list_fallback(a, b)
           }
-        }
-        False -> dot_with_zig_fallback(a_list, b_list, a, b)
+        _, _ -> dot_list_fallback(a, b)
       }
       telemetry.record_dot(tensor.size(a), ffi.now_microseconds() - t0, backend)
       result
     }
     False -> Error(error.ShapeMismatch(tensor.shape(a), tensor.shape(b)))
+  }
+}
+
+fn dot_list_fallback(
+  a: Tensor,
+  b: Tensor,
+) -> #(Result(Float, TensorError), String) {
+  let a_list = tensor.to_list(a)
+  let b_list = tensor.to_list(b)
+  case ffi.is_nif_loaded() {
+    True ->
+      case ffi.nif_dot(a_list, b_list) {
+        Ok(r) -> #(Ok(r), "accelerate")
+        Error(_) -> dot_with_zig_fallback(a_list, b_list, a, b)
+      }
+    False -> dot_with_zig_fallback(a_list, b_list, a, b)
   }
 }
 
@@ -448,23 +464,45 @@ pub fn matmul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a), tensor.shape(b) {
     [m, k], [k2, n] if k == k2 -> {
       let t0 = ffi.now_microseconds()
-      let a_list = tensor.to_list(a)
-      let b_list = tensor.to_list(b)
-      // Try Apple Accelerate first (fastest on macOS for large matrices)
-      let #(result, backend) = case ffi.is_nif_loaded() {
-        True -> {
-          case ffi.nif_matmul(a_list, b_list, m, n, k) {
-            Ok(result_list) -> #(tensor.new(result_list, [m, n]), "accelerate")
-            Error(_) -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+      // Try Native path first (zero list conversion)
+      let #(result, backend) = case
+        tensor.native_ref(a),
+        tensor.native_ref(b)
+      {
+        Ok(ref_a), Ok(ref_b) ->
+          case ffi.nt_matmul(ref_a, ref_b, m, n, k) {
+            Ok(ref_c) -> #(
+              Ok(tensor.from_native_ref(ref_c, [m, n])),
+              "native",
+            )
+            Error(_) -> matmul_list_fallback(a, b, m, n, k)
           }
-        }
-        False -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+        _, _ -> matmul_list_fallback(a, b, m, n, k)
       }
       telemetry.record_matmul(m, n, k, ffi.now_microseconds() - t0, backend)
       result
     }
     [_m, k], [k2, _n] -> Error(error.ShapeMismatch([k, -1], [k2, -1]))
     _, _ -> Error(error.DimensionError("Expected two matrices"))
+  }
+}
+
+fn matmul_list_fallback(
+  a: Tensor,
+  b: Tensor,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> #(Result(Tensor, TensorError), String) {
+  let a_list = tensor.to_list(a)
+  let b_list = tensor.to_list(b)
+  case ffi.is_nif_loaded() {
+    True ->
+      case ffi.nif_matmul(a_list, b_list, m, n, k) {
+        Ok(result_list) -> #(tensor.new(result_list, [m, n]), "accelerate")
+        Error(_) -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+      }
+    False -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
   }
 }
 
@@ -493,7 +531,7 @@ fn matmul_with_zig_fallback(
 /// Shows best available backend for tensor operations
 pub fn backend_info() -> String {
   case ffi.zig_is_loaded() {
-    True -> ffi.zig_backend_info()
+    True -> ffi.zig_backend_info() <> " + NIF Resources"
     False ->
       case ffi.is_nif_loaded() {
         True -> ffi.nif_backend_info()
@@ -524,19 +562,29 @@ pub fn all_backends_info() -> String {
 /// Instrumented: records operation latency.
 pub fn sum_auto(t: Tensor) -> Float {
   let t0 = ffi.now_microseconds()
+  // Try Native path first
+  let result = case tensor.native_ref(t) {
+    Ok(ref) ->
+      case ffi.nt_sum(ref) {
+        Ok(r) -> r
+        Error(_) -> sum_list_fallback(t)
+      }
+    Error(_) -> sum_list_fallback(t)
+  }
+  telemetry.record_op("sum", ffi.now_microseconds() - t0)
+  result
+}
+
+fn sum_list_fallback(t: Tensor) -> Float {
   let data = tensor.to_list(t)
-  // Try Zig SIMD first (often faster for reductions)
-  let result = case ffi.zig_is_loaded() {
-    True -> {
+  case ffi.zig_is_loaded() {
+    True ->
       case ffi.zig_sum(data) {
         Ok(r) -> r
         Error(_) -> sum_with_accel_fallback(data)
       }
-    }
     False -> sum_with_accel_fallback(data)
   }
-  telemetry.record_op("sum", ffi.now_microseconds() - t0)
-  result
 }
 
 fn sum_with_accel_fallback(data: List(Float)) -> Float {
@@ -554,82 +602,127 @@ fn sum_with_accel_fallback(data: List(Float)) -> Float {
 /// Auto-selecting element-wise add. Delegates to Zig SIMD or Accelerate.
 pub fn add_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a) == tensor.shape(b) {
-    True -> {
-      let a_data = tensor.to_list(a)
-      let b_data = tensor.to_list(b)
-      let result_data = case ffi.zig_is_loaded() {
-        True -> {
-          case ffi.zig_add(a_data, b_data) {
-            Ok(r) -> r
-            Error(_) -> list.map2(a_data, b_data, fn(x, y) { x +. y })
+    True ->
+      case tensor.native_ref(a), tensor.native_ref(b) {
+        Ok(ref_a), Ok(ref_b) ->
+          case ffi.nt_add(ref_a, ref_b) {
+            Ok(ref_c) -> Ok(tensor.from_native_ref(ref_c, tensor.shape(a)))
+            Error(_) -> add_list_fallback(a, b)
           }
-        }
-        False -> list.map2(a_data, b_data, fn(x, y) { x +. y })
+        _, _ -> add_list_fallback(a, b)
       }
-      tensor.new(result_data, tensor.shape(a))
-    }
     False -> Error(error.ShapeMismatch(tensor.shape(a), tensor.shape(b)))
   }
+}
+
+fn add_list_fallback(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Tensor, TensorError) {
+  let a_data = tensor.to_list(a)
+  let b_data = tensor.to_list(b)
+  let result_data = case ffi.zig_is_loaded() {
+    True ->
+      case ffi.zig_add(a_data, b_data) {
+        Ok(r) -> r
+        Error(_) -> list.map2(a_data, b_data, fn(x, y) { x +. y })
+      }
+    False -> list.map2(a_data, b_data, fn(x, y) { x +. y })
+  }
+  tensor.new(result_data, tensor.shape(a))
 }
 
 /// Auto-selecting element-wise subtract.
 pub fn sub_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a) == tensor.shape(b) {
-    True -> {
-      // sub = a + (-1 * b), use zig_add after negating b
-      let a_data = tensor.to_list(a)
-      let b_data = tensor.to_list(b)
-      let result_data = case ffi.zig_is_loaded() {
-        True -> {
-          case ffi.zig_scale(b_data, -1.0) {
-            Ok(neg_b) -> {
-              case ffi.zig_add(a_data, neg_b) {
-                Ok(r) -> r
-                Error(_) -> list.map2(a_data, b_data, fn(x, y) { x -. y })
-              }
-            }
-            Error(_) -> list.map2(a_data, b_data, fn(x, y) { x -. y })
+    True ->
+      case tensor.native_ref(a), tensor.native_ref(b) {
+        Ok(ref_a), Ok(ref_b) ->
+          case ffi.nt_sub(ref_a, ref_b) {
+            Ok(ref_c) -> Ok(tensor.from_native_ref(ref_c, tensor.shape(a)))
+            Error(_) -> sub_list_fallback(a, b)
           }
-        }
-        False -> list.map2(a_data, b_data, fn(x, y) { x -. y })
+        _, _ -> sub_list_fallback(a, b)
       }
-      tensor.new(result_data, tensor.shape(a))
-    }
     False -> Error(error.ShapeMismatch(tensor.shape(a), tensor.shape(b)))
   }
+}
+
+fn sub_list_fallback(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Tensor, TensorError) {
+  let a_data = tensor.to_list(a)
+  let b_data = tensor.to_list(b)
+  let result_data = case ffi.zig_is_loaded() {
+    True ->
+      case ffi.zig_scale(b_data, -1.0) {
+        Ok(neg_b) ->
+          case ffi.zig_add(a_data, neg_b) {
+            Ok(r) -> r
+            Error(_) -> list.map2(a_data, b_data, fn(x, y) { x -. y })
+          }
+        Error(_) -> list.map2(a_data, b_data, fn(x, y) { x -. y })
+      }
+    False -> list.map2(a_data, b_data, fn(x, y) { x -. y })
+  }
+  tensor.new(result_data, tensor.shape(a))
 }
 
 /// Auto-selecting element-wise multiply. Delegates to Zig SIMD when available.
 pub fn mul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a) == tensor.shape(b) {
-    True -> {
-      let a_data = tensor.to_list(a)
-      let b_data = tensor.to_list(b)
-      let result_data = case ffi.zig_is_loaded() {
-        True -> {
-          case ffi.zig_mul(a_data, b_data) {
-            Ok(r) -> r
-            Error(_) -> list.map2(a_data, b_data, fn(x, y) { x *. y })
+    True ->
+      case tensor.native_ref(a), tensor.native_ref(b) {
+        Ok(ref_a), Ok(ref_b) ->
+          case ffi.nt_mul(ref_a, ref_b) {
+            Ok(ref_c) -> Ok(tensor.from_native_ref(ref_c, tensor.shape(a)))
+            Error(_) -> mul_list_fallback(a, b)
           }
-        }
-        False -> list.map2(a_data, b_data, fn(x, y) { x *. y })
+        _, _ -> mul_list_fallback(a, b)
       }
-      tensor.new(result_data, tensor.shape(a))
-    }
     False -> Error(error.ShapeMismatch(tensor.shape(a), tensor.shape(b)))
   }
 }
 
+fn mul_list_fallback(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Tensor, TensorError) {
+  let a_data = tensor.to_list(a)
+  let b_data = tensor.to_list(b)
+  let result_data = case ffi.zig_is_loaded() {
+    True ->
+      case ffi.zig_mul(a_data, b_data) {
+        Ok(r) -> r
+        Error(_) -> list.map2(a_data, b_data, fn(x, y) { x *. y })
+      }
+    False -> list.map2(a_data, b_data, fn(x, y) { x *. y })
+  }
+  tensor.new(result_data, tensor.shape(a))
+}
+
 /// Auto-selecting scalar multiplication. Delegates to Zig SIMD or Accelerate.
 pub fn scale_auto(t: Tensor, s: Float) -> Tensor {
+  // Try Native path first
+  case tensor.native_ref(t) {
+    Ok(ref) ->
+      case ffi.nt_scale(ref, s) {
+        Ok(ref_c) -> tensor.from_native_ref(ref_c, tensor.shape(t))
+        Error(_) -> scale_list_fallback(t, s)
+      }
+    Error(_) -> scale_list_fallback(t, s)
+  }
+}
+
+fn scale_list_fallback(t: Tensor, s: Float) -> Tensor {
   let data = tensor.to_list(t)
   let result_data = case ffi.zig_is_loaded() {
-    True -> {
+    True ->
       case ffi.zig_scale(data, s) {
         Ok(r) -> r
         Error(_) -> scale_with_accel_fallback(data, s)
       }
-    }
     False -> scale_with_accel_fallback(data, s)
   }
   case tensor.new(result_data, tensor.shape(t)) {

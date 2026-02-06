@@ -23,7 +23,7 @@ import gleam/int
 import gleam/list
 import gleam/result
 import viva_tensor/core/error.{type TensorError}
-import viva_tensor/core/ffi.{type ErlangArray}
+import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 
 // --- Tensor Type -----------------------------------------------------------
 
@@ -42,6 +42,10 @@ pub opaque type Tensor {
     strides: List(Int),
     offset: Int,
   )
+  /// Native tensor - data lives in contiguous C memory via NIF resource.
+  /// Zero-copy ops: no list conversion between operations.
+  /// GC calls destructor to free native memory automatically.
+  Native(ref: NativeTensorRef, shape: List(Int))
 }
 
 // --- Constructors -----------------------------------------------------------
@@ -237,6 +241,7 @@ pub fn shape(t: Tensor) -> List(Int) {
   case t {
     Dense(_, s) -> s
     Strided(_, s, _, _) -> s
+    Native(_, s) -> s
   }
 }
 
@@ -244,6 +249,11 @@ pub fn shape(t: Tensor) -> List(Int) {
 pub fn to_list(t: Tensor) -> List(Float) {
   case t {
     Dense(data, _) -> data
+    Native(ref, _) ->
+      case ffi.nt_to_list(ref) {
+        Ok(data) -> data
+        Error(_) -> []
+      }
     Strided(storage, shp, strides, offset) -> {
       let total_size = compute_size(shp)
       list.range(0, total_size - 1)
@@ -304,6 +314,14 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
     Dense(data, _) ->
       list_at_float(data, index)
       |> result.map_error(fn(_) { error.IndexOutOfBounds(index, size(t)) })
+
+    Native(ref, _) ->
+      case ffi.nt_to_list(ref) {
+        Ok(data) ->
+          list_at_float(data, index)
+          |> result.map_error(fn(_) { error.IndexOutOfBounds(index, size(t)) })
+        Error(_) -> Error(error.IndexOutOfBounds(index, 0))
+      }
 
     Strided(storage, shp, strides, offset) -> {
       let indices = flat_to_multi(index, shp)
@@ -377,6 +395,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
 pub fn to_strided(t: Tensor) -> Tensor {
   case t {
     Strided(_, _, _, _) -> t
+    Native(_, _) -> t
     Dense(data, shp) -> {
       let storage = ffi.list_to_array(data)
       let strides = compute_strides(shp)
@@ -389,6 +408,10 @@ pub fn to_strided(t: Tensor) -> Tensor {
 pub fn to_dense(t: Tensor) -> Tensor {
   case t {
     Dense(_, _) -> t
+    Native(_, _) -> {
+      let data = to_list(t)
+      Dense(data: data, shape: shape(t))
+    }
     Strided(_, _, _, _) -> {
       let data = to_list(t)
       Dense(data: data, shape: shape(t))
@@ -405,6 +428,7 @@ pub fn to_contiguous(t: Tensor) -> Tensor {
 pub fn is_contiguous(t: Tensor) -> Bool {
   case t {
     Dense(_, _) -> True
+    Native(_, _) -> True
     Strided(_, shp, strides, _) -> {
       let expected_strides = compute_strides(shp)
       strides == expected_strides
@@ -415,6 +439,18 @@ pub fn is_contiguous(t: Tensor) -> Bool {
 /// Zero-copy transpose (just swap strides and shape)
 pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
   case t {
+    Native(ref, shp) ->
+      case shp {
+        [_m, _n] ->
+          case ffi.nt_transpose(ref) {
+            Ok(ref_t) -> Ok(Native(ref: ref_t, shape: list.reverse(shp)))
+            Error(_) -> {
+              let dense = to_dense(t)
+              transpose_strided(dense)
+            }
+          }
+        _ -> Error(error.DimensionError("Transpose requires 2D tensor"))
+      }
     Dense(_, shp) -> {
       case shp {
         [_m, _n] -> {
@@ -481,4 +517,77 @@ fn list_at(lst: List(a), index: Int) -> Result(a, Nil) {
 
 fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
   list_at(lst, index)
+}
+
+// --- Native Tensor API -------------------------------------------------------
+// Direct access to NIF resource tensors. Data stays in contiguous C memory.
+// Zero list conversion between ops. This is the fast path.
+
+/// Check if tensor is backed by native C memory
+pub fn is_native(t: Tensor) -> Bool {
+  case t {
+    Native(_, _) -> True
+    _ -> False
+  }
+}
+
+/// Extract native ref (for passing to NIF resource ops)
+pub fn native_ref(t: Tensor) -> Result(NativeTensorRef, Nil) {
+  case t {
+    Native(ref, _) -> Ok(ref)
+    _ -> Error(Nil)
+  }
+}
+
+/// Wrap a NIF resource ref as a Tensor
+pub fn from_native_ref(ref: NativeTensorRef, shape: List(Int)) -> Tensor {
+  Native(ref: ref, shape: shape)
+}
+
+/// Create native tensor of zeros (data in C memory)
+pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
+  case ffi.nt_zeros(shape) {
+    Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
+  }
+}
+
+/// Create native tensor of ones
+pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
+  case ffi.nt_ones(shape) {
+    Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
+  }
+}
+
+/// Create native tensor filled with value
+pub fn native_fill(shape: List(Int), value: Float) -> Result(Tensor, TensorError) {
+  case ffi.nt_fill(shape, value) {
+    Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
+  }
+}
+
+/// Create native tensor from list data
+pub fn native_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(Tensor, TensorError) {
+  case ffi.nt_from_list(data, shape) {
+    Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error(_) -> {
+      let expected = compute_size(shape)
+      let actual = list.length(data)
+      case expected == actual {
+        True -> Error(error.InvalidShape("NIF resource allocation failed"))
+        False ->
+          Error(error.InvalidShape(
+            "Data size "
+            <> int.to_string(actual)
+            <> " doesn't match shape "
+            <> error.shape_to_string(shape),
+          ))
+      }
+    }
+  }
 }

@@ -39,6 +39,11 @@
 /// but we mostly just read from it during tensor operations.
 pub type ErlangArray
 
+/// Native tensor resource - opaque reference to contiguous C memory.
+/// Created by NIF constructors, ops return new refs.
+/// Erlang GC frees native memory automatically via destructor.
+pub type NativeTensorRef
+
 // --- Array Operations ---
 //
 // These wrap Erlang :array operations for O(1) element access.
@@ -442,6 +447,329 @@ pub fn zig_matmul(
 ) -> Result(List(Float), String) {
   zig_matmul_ffi(a, b, m, n, k)
 }
+
+// --- NIF Resource API (zero-copy native tensors) ---
+//
+// These operate on NativeTensorRef - opaque handles to contiguous C arrays.
+// No list<->array conversion per operation. Data stays in native memory.
+// This is the fast path: Gleam → Erlang NIF → C → Zig SIMD → C → Erlang NIF → Gleam
+// vs the old path: Gleam → List → C array alloc+copy → Zig SIMD → C → List alloc → Gleam
+
+/// Create native tensor of zeros
+pub fn nt_zeros(shape: List(Int)) -> Result(NativeTensorRef, String) {
+  nt_zeros_ffi(shape)
+}
+
+/// Create native tensor of ones
+pub fn nt_ones(shape: List(Int)) -> Result(NativeTensorRef, String) {
+  nt_ones_ffi(shape)
+}
+
+/// Create native tensor filled with value
+pub fn nt_fill(shape: List(Int), value: Float) -> Result(NativeTensorRef, String) {
+  nt_fill_ffi(shape, value)
+}
+
+/// Create native tensor from list data + shape
+pub fn nt_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(NativeTensorRef, String) {
+  nt_from_list_ffi(data, shape)
+}
+
+/// Extract data as list (one-time conversion at boundaries)
+pub fn nt_to_list(ref: NativeTensorRef) -> Result(List(Float), String) {
+  nt_to_list_ffi(ref)
+}
+
+/// Get shape from native tensor
+pub fn nt_shape(ref: NativeTensorRef) -> Result(List(Int), String) {
+  nt_shape_ffi(ref)
+}
+
+/// Get total element count
+pub fn nt_size(ref: NativeTensorRef) -> Result(Int, String) {
+  nt_size_ffi(ref)
+}
+
+/// Native add: ref + ref → ref (zero copy)
+pub fn nt_add(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_add_ffi(a, b)
+}
+
+/// Native sub: ref - ref → ref
+pub fn nt_sub(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_sub_ffi(a, b)
+}
+
+/// Native element-wise mul: ref * ref → ref
+pub fn nt_mul(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_mul_ffi(a, b)
+}
+
+/// Native scale: ref * scalar → ref
+pub fn nt_scale(
+  a: NativeTensorRef,
+  scalar: Float,
+) -> Result(NativeTensorRef, String) {
+  nt_scale_ffi(a, scalar)
+}
+
+/// Native negate: -ref → ref
+pub fn nt_negate(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_negate_ffi(a)
+}
+
+/// Native dot product: ref · ref → scalar
+pub fn nt_dot(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(Float, String) {
+  nt_dot_ffi(a, b)
+}
+
+/// Native sum reduction → scalar
+pub fn nt_sum(a: NativeTensorRef) -> Result(Float, String) {
+  nt_sum_ffi(a)
+}
+
+/// Native max → scalar
+pub fn nt_max(a: NativeTensorRef) -> Result(Float, String) {
+  nt_max_ffi(a)
+}
+
+/// Native min → scalar
+pub fn nt_min(a: NativeTensorRef) -> Result(Float, String) {
+  nt_min_ffi(a)
+}
+
+/// Native matmul: [m,k] @ [k,n] → [m,n] in native memory
+pub fn nt_matmul(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_matmul_ffi(a, b, m, n, k)
+}
+
+/// Native transpose: [m,n] → [n,m] contiguous copy
+pub fn nt_transpose(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_transpose_ffi(a)
+}
+
+/// Native ReLU activation
+pub fn nt_relu(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_relu_ffi(a)
+}
+
+/// Native sigmoid activation
+pub fn nt_sigmoid(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_sigmoid_ffi(a)
+}
+
+/// Native exp
+pub fn nt_exp(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_exp_ffi(a)
+}
+
+/// Native log
+pub fn nt_log(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_log_ffi(a)
+}
+
+// --- In-Place Mutation (Zero Allocation) ---
+// "Quebrar a imutabilidade dentro do Zig para economizar RAM"
+// These modify the tensor IN PLACE. The caller must understand
+// that the original ref now points to mutated data.
+// Use with care - this breaks functional purity for performance.
+
+/// In-place add: a += b. Returns ok. MUTATES a.
+pub fn nt_add_mut(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(Nil, String) {
+  nt_add_mut_ffi(a, b)
+}
+
+/// In-place scale: a *= scalar. Returns ok. MUTATES a.
+pub fn nt_scale_mut(a: NativeTensorRef, scalar: Float) -> Result(Nil, String) {
+  nt_scale_mut_ffi(a, scalar)
+}
+
+/// In-place negate: a = -a. Returns ok. MUTATES a.
+pub fn nt_negate_mut(a: NativeTensorRef) -> Result(Nil, String) {
+  nt_negate_mut_ffi(a)
+}
+
+/// In-place ReLU: a = max(0, a). Returns ok. MUTATES a.
+pub fn nt_relu_mut(a: NativeTensorRef) -> Result(Nil, String) {
+  nt_relu_mut_ffi(a)
+}
+
+// --- Retro / Fused Kernels ---
+
+/// Saturn Blend: result = texture + (shade - bias)
+/// VDP1-inspired lighting with pure SIMD addition.
+pub fn nt_saturn_blend(
+  texture: NativeTensorRef,
+  shade: NativeTensorRef,
+  bias: Float,
+) -> Result(NativeTensorRef, String) {
+  nt_saturn_blend_ffi(texture, shade, bias)
+}
+
+/// Fused MatMul + Bias + ReLU: C = max(0, A@B + bias)
+/// Single pass, saves 2 full tensor traversals.
+pub fn nt_fused_linear_relu(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  bias: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_fused_linear_relu_ffi(a, b, bias, m, n, k)
+}
+
+// NIF Resource FFI bindings
+@external(erlang, "viva_tensor_zig", "nt_zeros")
+fn nt_zeros_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_ones")
+fn nt_ones_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_fill")
+fn nt_fill_ffi(shape: List(Int), value: Float) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_from_list")
+fn nt_from_list_ffi(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_to_list")
+fn nt_to_list_ffi(ref: NativeTensorRef) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_shape")
+fn nt_shape_ffi(ref: NativeTensorRef) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "nt_size")
+fn nt_size_ffi(ref: NativeTensorRef) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "nt_add")
+fn nt_add_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_sub")
+fn nt_sub_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_mul")
+fn nt_mul_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_scale")
+fn nt_scale_ffi(
+  a: NativeTensorRef,
+  scalar: Float,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_negate")
+fn nt_negate_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_dot")
+fn nt_dot_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "nt_sum")
+fn nt_sum_ffi(a: NativeTensorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "nt_max")
+fn nt_max_ffi(a: NativeTensorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "nt_min")
+fn nt_min_ffi(a: NativeTensorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "nt_matmul")
+fn nt_matmul_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_transpose")
+fn nt_transpose_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_relu")
+fn nt_relu_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_sigmoid")
+fn nt_sigmoid_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_exp")
+fn nt_exp_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_log")
+fn nt_log_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+// In-place mutation FFI
+@external(erlang, "viva_tensor_zig", "nt_add_mut")
+fn nt_add_mut_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_scale_mut")
+fn nt_scale_mut_ffi(
+  a: NativeTensorRef,
+  scalar: Float,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_negate_mut")
+fn nt_negate_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_relu_mut")
+fn nt_relu_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
+
+// Retro / fused kernel FFI
+@external(erlang, "viva_tensor_zig", "nt_saturn_blend")
+fn nt_saturn_blend_ffi(
+  texture: NativeTensorRef,
+  shade: NativeTensorRef,
+  bias: Float,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_fused_linear_relu")
+fn nt_fused_linear_relu_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  bias: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String)
 
 // Zig NIF FFI bindings
 @external(erlang, "viva_tensor_zig", "is_loaded")

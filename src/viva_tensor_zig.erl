@@ -16,6 +16,20 @@
     is_loaded/0
 ]).
 
+%% NIF Resource API - zero-copy tensor operations
+-export([
+    nt_zeros/1, nt_ones/1, nt_fill/2, nt_from_list/2,
+    nt_to_list/1, nt_shape/1, nt_size/1,
+    nt_add/2, nt_sub/2, nt_mul/2, nt_scale/2, nt_negate/1,
+    nt_dot/2, nt_sum/1, nt_max/1, nt_min/1,
+    nt_matmul/5, nt_transpose/1,
+    nt_relu/1, nt_sigmoid/1, nt_exp/1, nt_log/1,
+    %% In-place mutation (zero allocation)
+    nt_add_mut/2, nt_scale_mut/2, nt_negate_mut/1, nt_relu_mut/1,
+    %% Retro / fused kernels
+    nt_saturn_blend/3, nt_fused_linear_relu/6
+]).
+
 -on_load(init/0).
 
 %% NIF Loading
@@ -178,3 +192,51 @@ nif_simd_available() ->
 
 nif_backend_info() ->
     erlang:nif_error(nif_not_loaded).
+
+%% ==========================================================================
+%% NIF Resource API Stubs (replaced by C NIFs on load)
+%% ==========================================================================
+
+%% Constructors
+nt_zeros(_Shape) -> erlang:nif_error(nif_not_loaded).
+nt_ones(_Shape) -> erlang:nif_error(nif_not_loaded).
+nt_fill(_Shape, _Value) -> erlang:nif_error(nif_not_loaded).
+nt_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
+
+%% Accessors
+nt_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_size(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Element-wise ops
+nt_add(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_sub(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_scale(_Ref, _Scalar) -> erlang:nif_error(nif_not_loaded).
+nt_negate(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Reductions
+nt_dot(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_sum(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_max(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_min(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Matrix ops
+nt_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_transpose(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Activations
+nt_relu(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_sigmoid(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_exp(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_log(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% In-place mutation (zero allocation)
+nt_add_mut(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_scale_mut(_Ref, _Scalar) -> erlang:nif_error(nif_not_loaded).
+nt_negate_mut(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_relu_mut(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Retro / fused kernels
+nt_saturn_blend(_Texture, _Shade, _Bias) -> erlang:nif_error(nif_not_loaded).
+nt_fused_linear_relu(_A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).

@@ -174,9 +174,14 @@ zig:
 	@echo "$(YELLOW)[ZIG]$(NC) Building Zig SIMD NIF..."
 	@$(MKDIR) priv
 	@cd zig_src && zig build -Derl_include=$(ERL_INCLUDE) -Doptimize=ReleaseFast
+ifeq ($(OS),Windows_NT)
+	@$(COPY) zig_src$(SEP)zig-out$(SEP)bin$(SEP)viva_tensor_zig.dll priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
+	@echo "$(GREEN)[OK]$(NC) Zig NIF built: priv/viva_tensor_zig.dll"
+else
 	@$(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.dylib priv$(SEP)viva_tensor_zig.so 2>$(NULL) || \
 	 $(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.so priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
 	@echo "$(GREEN)[OK]$(NC) Zig NIF built: priv/viva_tensor_zig.so"
+endif
 
 ## Clean Zig NIF artifacts
 zig-clean:

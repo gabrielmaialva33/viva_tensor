@@ -31,6 +31,9 @@ if "%1"=="clean" goto clean
 if "%1"=="fmt" goto fmt
 if "%1"=="check" goto check
 if "%1"=="deps" goto deps
+if "%1"=="zig" goto zig
+if "%1"=="zig-clean" goto zig-clean
+if "%1"=="build-all" goto build-all
 if "%1"=="all" goto all
 if "%1"=="help" goto help
 goto help
@@ -91,6 +94,34 @@ gleam deps download
 echo [OK] Dependencias instaladas!
 goto end
 
+:zig
+echo [ZIG] Building Zig SIMD NIF...
+if not exist priv mkdir priv
+for /f "tokens=*" %%i in ('erl -noshell -eval "io:format([126,115,126,110],[filename:join([code:root_dir(),<<""erts-"">>,erlang:system_info(version),<<""include"">>])])" -s init stop 2^>nul') do set "ERL_INCLUDE=%%i"
+echo [ZIG] Using Erlang include: %ERL_INCLUDE%
+cd zig_src && zig build -Derl_include="%ERL_INCLUDE%" -Doptimize=ReleaseFast && cd ..
+if exist zig_src\zig-out\bin\viva_tensor_zig.dll (
+    copy zig_src\zig-out\bin\viva_tensor_zig.dll priv\viva_tensor_zig.dll >nul
+    echo [OK] Zig NIF built: priv\viva_tensor_zig.dll
+) else (
+    echo [FAIL] Zig build failed
+)
+goto end
+
+:zig-clean
+echo [CLEAN] Cleaning Zig NIF...
+if exist zig_src\zig-out rmdir /S /Q zig_src\zig-out
+if exist zig_src\.zig-cache rmdir /S /Q zig_src\.zig-cache
+if exist priv\viva_tensor_zig.dll del /Q priv\viva_tensor_zig.dll
+echo [OK] Zig NIF limpo!
+goto end
+
+:build-all
+call :build
+call :zig
+echo [OK] Full build (Gleam + Zig NIF) completo!
+goto end
+
 :all
 call :build
 call :test
@@ -117,6 +148,9 @@ echo   make fmt        - Formata codigo
 echo   make check      - Verifica tipos
 echo   make clean      - Limpa build
 echo   make deps       - Instala dependencias
+echo   make zig        - Build Zig SIMD NIF (requer Zig 0.15+)
+echo   make zig-clean  - Limpa artefatos Zig NIF
+echo   make build-all  - Build Gleam + Zig NIF
 echo   make all        - Build + test + bench
 echo   make help       - Mostra esta ajuda
 echo.

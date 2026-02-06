@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // Get Erlang include path from environment or use default
+    // Get Erlang include path (needed for nif_entry.c, not for Zig code)
     const erl_include = b.option(
         []const u8,
         "erl_include",
@@ -22,13 +22,22 @@ pub fn build(b: *std.Build) void {
         }),
     });
 
-    // Allow undefined symbols - BEAM resolves enif_* at NIF load time
-    lib.linker_allow_shlib_undefined = true;
+    // On Unix, allow undefined symbols (BEAM resolves enif_* at NIF load time)
+    // On Windows, ERL_NIF_INIT uses TWinDynNifCallbacks - no undefined symbols
+    if (target.result.os.tag != .windows) {
+        lib.linker_allow_shlib_undefined = true;
+    }
 
-    // Add Erlang NIF headers
-    lib.root_module.addIncludePath(.{ .cwd_relative = erl_include });
+    // Compile the C NIF entry point (uses erl_nif.h for NIF boilerplate)
+    lib.addCSourceFile(.{
+        .file = b.path("nif_entry.c"),
+        .flags = &.{},
+    });
 
-    // Link with libc for erl_nif
+    // Add Erlang NIF headers (for nif_entry.c)
+    lib.addIncludePath(.{ .cwd_relative = erl_include });
+
+    // Link with libc (needed by nif_entry.c)
     lib.linkLibC();
 
     // Install the library
