@@ -35,6 +35,9 @@ import gleam/io
 import gleam/list
 import viva_tensor/tensor.{type Tensor, Tensor}
 
+@external(erlang, "math", "exp")
+fn math_exp(x: Float) -> Float
+
 // -------------------------------------------------------------------------
 // Configuration Types
 // -------------------------------------------------------------------------
@@ -328,9 +331,7 @@ fn process_kv_block(
     // Step 2: Compute correction factor for previous statistics
     // When max increases, we need to downscale previous exp values
     let correction = case stat.sum_exp >. 0.0 {
-      True ->
-        float.power(2.71828, stat.max_val -. new_max)
-        |> result_to_float(1.0)
+      True -> math_exp(stat.max_val -. new_max)
       False -> 1.0
     }
 
@@ -338,11 +339,7 @@ fn process_kv_block(
     let corrected_sum = stat.sum_exp *. correction
 
     // Step 4: Compute exp(scores - new_max) for this block
-    let exp_scores =
-      list.map(scores, fn(s) {
-        float.power(2.71828, s -. new_max)
-        |> result_to_float(0.0)
-      })
+    let exp_scores = list.map(scores, fn(s) { math_exp(s -. new_max) })
 
     // Step 5: Add to running sum
     let new_sum = list.fold(exp_scores, corrected_sum, float.add)
@@ -490,11 +487,7 @@ fn dot_product(a: List(Float), b: List(Float)) -> Float {
 
 fn softmax_row(row: List(Float)) -> List(Float) {
   let max_val = list.fold(row, -999_999.0, float.max)
-  let exp_vals =
-    list.map(row, fn(x) {
-      float.power(2.71828, x -. max_val)
-      |> result_to_float(0.0)
-    })
+  let exp_vals = list.map(row, fn(x) { math_exp(x -. max_val) })
   let sum = list.fold(exp_vals, 0.0, float.add)
   case sum >. 0.0 {
     True -> list.map(exp_vals, fn(e) { e /. sum })
@@ -506,13 +499,6 @@ fn get_row(matrix: List(List(Float)), idx: Int) -> List(Float) {
   case list.drop(matrix, idx) {
     [row, ..] -> row
     [] -> []
-  }
-}
-
-fn result_to_float(r: Result(Float, a), default: Float) -> Float {
-  case r {
-    Ok(v) -> v
-    Error(_) -> default
   }
 }
 
