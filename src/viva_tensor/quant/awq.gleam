@@ -1,21 +1,33 @@
 //// AWQ (Activation-aware Weight Quantization)
 ////
-//// MLSys 2024 BEST PAPER AWARD!
+//// Reference: Lin et al. (2024) - "AWQ: Activation-aware Weight Quantization
+//// for LLM Compression and Acceleration"
+//// MLSys 2024 BEST PAPER AWARD
 //// https://arxiv.org/abs/2306.00978
 ////
-//// INSIGHT PRINCIPAL:
-//// Apenas ~1% dos pesos são "salientes" - identificados pela
-//// magnitude das ATIVAÇÕES, não dos pesos!
+//// --- The Key Insight (worth repeating) ---
+//// Only ~1% of weights are "salient" - and they matter 10x more than the rest.
+//// But here's the twist: you identify them by looking at ACTIVATIONS, not weights.
+//// High activation magnitude = that channel matters = protect those weights.
 ////
-//// ALGORITMO:
-//// 1. Coletar estatísticas de ativação (calibration)
-//// 2. Identificar canais salientes (alta ativação média)
-//// 3. Escalar canais salientes PARA CIMA antes de quantizar
-//// 4. Escalar ativações de entrada PARA BAIXO (matematicamente equivalente)
+//// --- The Genius ---
+//// Don't modify the quantization algorithm. Modify the weights BEFORE quantizing.
+//// Scale salient channels UP by s, then scale activations DOWN by 1/s.
+//// Mathematically equivalent: W*X = (sW)*(X/s)
+//// But now the important weights have more precision after quantization.
 ////
-//// RESULTADO: Mesma compressão, MUITO menos erro!
+//// --- Compression Math ---
+//// Same as NF4/INT4: 32/4 = 8x theoretical, ~7.7x effective
+//// The magic is in the QUALITY, not the ratio.
+//// AWQ achieves NF4-level compression with FP16-level accuracy.
 ////
-//// Implementação: MIT-HAN Lab + AutoAWQ
+//// --- Why AWQ Won MLSys 2024 ---
+//// 1. Simple insight, huge impact
+//// 2. Zero runtime overhead (transform is pre-computed)
+//// 3. Works with ANY quantization method (INT4, NF4, whatever)
+//// 4. State-of-the-art on LLaMA, OPT, BLOOM benchmarks
+////
+//// Implementation based on: MIT-HAN Lab + AutoAWQ
 
 import gleam/float
 import gleam/int
@@ -23,65 +35,70 @@ import gleam/io
 import gleam/list
 import viva_tensor/tensor.{type Tensor, Tensor}
 
-// ============================================================================
-// TIPOS
-// ============================================================================
+// --- AWQ Types ---
 
-/// Configuração AWQ
+/// AWQ configuration
 pub type AWQConfig {
   AWQConfig(
-    /// Bits de quantização (4 é padrão)
+    /// Quantization bits (4 is standard, 3 is aggressive)
     bits: Int,
-    /// Tamanho do grupo para scales
+    /// Group size for per-group scaling (128 is typical)
+    /// Smaller = more accurate, larger = more compressed
     group_size: Int,
-    /// Expoente alpha para scaling (0.5 é típico)
+    /// Alpha exponent for scaling: scale = activation_stat ^ alpha
+    /// 0.5 is empirically optimal (sqrt of activation magnitude)
+    /// Higher alpha = more aggressive protection of salient channels
     alpha: Float,
-    /// Usar zero-point (assimétrico)
+    /// Use zero-point (asymmetric quantization)
+    /// Opinion: Skip it. The cache-miss overhead isn't worth the accuracy gain.
     zero_point: Bool,
   )
 }
 
-/// Scales AWQ computados
+/// Computed AWQ scales for weight transformation
 pub type AWQScales {
   AWQScales(
-    /// Scales por canal (multiplicador de pesos)
+    /// Per-channel scale factors: multiply weights by these before quantizing
     weight_scales: List(Float),
-    /// Estatísticas de ativação usadas
+    /// Original activation statistics (for debugging/analysis)
     activation_stats: List(Float),
-    /// Alpha usado
+    /// Alpha used in computation
     alpha: Float,
   )
 }
 
-/// Tensor quantizado com AWQ
+/// AWQ-quantized tensor
 pub type AWQTensor {
   AWQTensor(
-    /// Pesos quantizados (INT4)
+    /// Quantized weights (INT4 values)
     quantized_weights: List(Int),
-    /// Scales AWQ por canal
+    /// AWQ channel scales (the secret sauce)
     awq_scales: AWQScales,
-    /// Scales de quantização por grupo
+    /// Per-group quantization scales
     quant_scales: List(Float),
-    /// Zero-points (se assimétrico)
+    /// Zero-points if asymmetric (usually empty)
     zero_points: List(Int),
-    /// Shape original
+    /// Original shape
     shape: List(Int),
-    /// Memória em bytes
+    /// Memory in bytes
     memory_bytes: Int,
   )
 }
 
-/// Configuração padrão AWQ
+/// Default AWQ config (matches AutoAWQ defaults)
 pub fn default_config() -> AWQConfig {
   AWQConfig(bits: 4, group_size: 128, alpha: 0.5, zero_point: False)
 }
 
-// ============================================================================
-// CALIBRAÇÃO - Coleta Estatísticas de Ativação
-// ============================================================================
+// --- Calibration: The Critical Step ---
 
-/// Coleta estatísticas de ativação de um batch de calibração
-/// Retorna média absoluta por canal
+/// Collect activation statistics from calibration data
+///
+/// This is THE critical step. Bad calibration = bad quantization.
+/// Use 128-512 samples from your actual inference distribution.
+/// More samples = more stable statistics, diminishing returns after 256.
+///
+/// Returns: mean absolute activation per channel
 pub fn collect_activation_stats(
   activations_batch: List(List(Float)),
 ) -> List(Float) {
@@ -90,10 +107,10 @@ pub fn collect_activation_stats(
     [first, ..] -> {
       let num_channels = list.length(first)
 
-      // Inicializa somas
+      // Initialize per-channel accumulators
       let initial = list.repeat(0.0, num_channels)
 
-      // Acumula abs(activation) por canal
+      // Accumulate |activation| per channel across all samples
       let sums =
         list.fold(activations_batch, initial, fn(acc, activation) {
           list.map2(acc, activation, fn(sum, act) {
@@ -101,26 +118,30 @@ pub fn collect_activation_stats(
           })
         })
 
-      // Divide pelo número de amostras
+      // Mean absolute activation per channel
       let num_samples = int.to_float(list.length(activations_batch))
       list.map(sums, fn(sum) { sum /. num_samples })
     }
   }
 }
 
-// ============================================================================
-// AWQ SCALING - O Algoritmo Principal
-// ============================================================================
+// --- AWQ Scaling: The Core Algorithm ---
 
-/// Computa scales AWQ baseado nas estatísticas de ativação
-/// scale[i] = activation_stat[i] ^ alpha
+/// Compute AWQ scales from activation statistics
+///
+/// Formula: scale[i] = activation_stat[i] ^ alpha
+///
+/// Why alpha = 0.5 (sqrt)?
+/// - Too low (0.1): Not enough protection for salient channels
+/// - Too high (0.9): Over-protection, wastes precision on outliers
+/// - 0.5: Empirically optimal across LLaMA, OPT, BLOOM
 pub fn compute_awq_scales(
   activation_stats: List(Float),
   alpha: Float,
 ) -> AWQScales {
   let weight_scales =
     list.map(activation_stats, fn(stat) {
-      // Evita scale zero
+      // Avoid scale of zero (would lose the channel entirely)
       let safe_stat = case stat >. 0.0 {
         True -> stat
         False -> 1.0
@@ -135,9 +156,8 @@ pub fn compute_awq_scales(
   )
 }
 
-/// Aplica transformação equivalente aos pesos
-/// W' = W * diag(s)
-/// Isso escala canais salientes PARA CIMA
+/// Apply equivalent transformation to weights: W' = W * diag(s)
+/// This scales salient channels UP before quantization
 pub fn apply_weight_transform(
   weights: List(List(Float)),
   scales: AWQScales,
@@ -147,9 +167,9 @@ pub fn apply_weight_transform(
   })
 }
 
-/// Aplica transformação inversa às ativações
-/// X' = X * diag(1/s)
-/// Isso compensa o scaling dos pesos
+/// Apply inverse transformation to activations: X' = X * diag(1/s)
+/// This compensates for the weight scaling at runtime
+/// Note: In production, fuse this into the previous layer's output
 pub fn apply_activation_transform(
   activations: List(Float),
   scales: AWQScales,
@@ -162,11 +182,19 @@ pub fn apply_activation_transform(
   })
 }
 
-// ============================================================================
-// QUANTIZAÇÃO COM AWQ
-// ============================================================================
+// --- Full AWQ Pipeline ---
 
-/// Quantiza pesos usando AWQ (pipeline completo)
+/// Complete AWQ quantization pipeline
+///
+/// Steps:
+/// 1. Collect activation statistics (calibration)
+/// 2. Compute per-channel AWQ scales
+/// 3. Transform weights (scale up salient channels)
+/// 4. Quantize transformed weights
+///
+/// At inference:
+/// - Use quantized weights directly
+/// - Apply inverse activation transform (fused into previous layer)
 pub fn quantize_awq(
   weights: Tensor,
   calibration_data: List(List(Float)),
@@ -175,39 +203,38 @@ pub fn quantize_awq(
   let weight_data = tensor.to_list(weights)
   let shape = get_tensor_shape(weights)
 
-  // Assume weights é [out_features, in_features]
+  // Assume weights is [out_features, in_features]
   let #(_out_features, in_features) = case shape {
     [o, i] -> #(o, i)
     _ -> #(1, list.length(weight_data))
   }
 
-  // Reshape weights para matriz
+  // Reshape to matrix
   let weight_matrix = list.sized_chunk(weight_data, in_features)
 
-  // Step 1: Coleta estatísticas de ativação
+  // Step 1: Calibration - collect activation statistics
   let activation_stats = collect_activation_stats(calibration_data)
 
-  // Step 2: Computa scales AWQ
+  // Step 2: Compute AWQ scales (the magic)
   let awq_scales = compute_awq_scales(activation_stats, config.alpha)
 
-  // Step 3: Aplica transformação aos pesos (escala canais salientes)
+  // Step 3: Transform weights (scale salient channels UP)
   let transformed_weights = apply_weight_transform(weight_matrix, awq_scales)
 
-  // Step 4: Quantização simétrica dos pesos transformados
+  // Step 4: Standard symmetric quantization on transformed weights
   let flat_transformed = list.flatten(transformed_weights)
   let #(quantized, quant_scales) =
     symmetric_group_quantize(flat_transformed, config.bits, config.group_size)
 
-  // Calcula memória
-  // - bits/valor para dados
-  // - 16 bits para cada scale
+  // Memory calculation:
+  // - bits per value for quantized data
+  // - FP16 per group for quant scales
+  // - FP16 per channel for AWQ scales
   let num_elements = list.length(flat_transformed)
   let num_groups = { num_elements + config.group_size - 1 } / config.group_size
   let data_bytes = { num_elements * config.bits + 7 } / 8
   let scale_bytes = num_groups * 2
-  // FP16
   let awq_scale_bytes = in_features * 2
-  // FP16 para AWQ scales
   let memory = data_bytes + scale_bytes + awq_scale_bytes
 
   AWQTensor(
@@ -220,7 +247,8 @@ pub fn quantize_awq(
   )
 }
 
-/// Quantização simétrica por grupos
+/// Symmetric per-group quantization
+/// Why symmetric? Because asymmetric zero-points are a cache-miss nightmare.
 fn symmetric_group_quantize(
   values: List(Float),
   bits: Int,
@@ -237,7 +265,7 @@ fn symmetric_group_quantize(
     list.fold(groups, #([], []), fn(acc, group) {
       let #(q_acc, s_acc) = acc
 
-      // Encontra max abs no grupo
+      // Per-group absmax
       let max_abs =
         group
         |> list.map(float.absolute_value)
@@ -248,7 +276,7 @@ fn symmetric_group_quantize(
         False -> 1.0
       }
 
-      // Quantiza
+      // Quantize
       let quantized =
         list.map(group, fn(v) {
           let scaled = v *. scale
@@ -262,11 +290,10 @@ fn symmetric_group_quantize(
   #(quantized_groups, list.reverse(scales))
 }
 
-// ============================================================================
-// DEQUANTIZAÇÃO
-// ============================================================================
+// --- Dequantization ---
 
-/// Dequantiza tensor AWQ
+/// Dequantize AWQ tensor back to FP32
+/// Note: Must also undo the AWQ weight transform
 pub fn dequantize_awq(awq: AWQTensor) -> Tensor {
   let group_size = case awq.quant_scales {
     [] -> list.length(awq.quantized_weights)
@@ -275,7 +302,7 @@ pub fn dequantize_awq(awq: AWQTensor) -> Tensor {
 
   let groups = list.sized_chunk(awq.quantized_weights, group_size)
 
-  // Dequantiza por grupo
+  // Step 1: Dequantize per group
   let dequantized =
     list.index_map(groups, fn(group, idx) {
       let scale = get_at_index_float(awq.quant_scales, idx, 1.0)
@@ -283,7 +310,7 @@ pub fn dequantize_awq(awq: AWQTensor) -> Tensor {
     })
     |> list.flatten
 
-  // Desfaz AWQ transform (divide por scales)
+  // Step 2: Undo AWQ transform (divide by AWQ scales)
   let in_features = case awq.shape {
     [_, i] -> i
     _ -> 1
@@ -305,11 +332,13 @@ pub fn dequantize_awq(awq: AWQTensor) -> Tensor {
   Tensor(data: restored, shape: awq.shape)
 }
 
-// ============================================================================
-// ANÁLISE DE SALIÊNCIA
-// ============================================================================
+// --- Saliency Analysis ---
 
-/// Identifica canais salientes (top-k por ativação)
+/// Identify the most salient channels (top-k by activation magnitude)
+///
+/// Key insight: Only ~1% of channels are truly salient.
+/// But they contribute ~10% of the output magnitude.
+/// Protecting them is the key to AWQ's success.
 pub fn identify_salient_channels(
   activation_stats: List(Float),
   top_percent: Float,
@@ -319,18 +348,15 @@ pub fn identify_salient_channels(
     float.round(int.to_float(n) *. top_percent /. 100.0)
     |> int.max(1)
 
-  // Ordena por magnitude e pega top-k índices
+  // Sort by magnitude (descending) and take top-k indices
   activation_stats
   |> list.index_map(fn(stat, idx) { #(idx, stat) })
   |> list.sort(fn(a, b) { float.compare(b.1, a.1) })
-  // Descending
   |> list.take(k)
   |> list.map(fn(pair) { pair.0 })
 }
 
-// ============================================================================
-// BENCHMARK
-// ============================================================================
+// --- Benchmark ---
 
 pub fn main() {
   benchmark_awq()
@@ -338,29 +364,26 @@ pub fn main() {
 
 pub fn benchmark_awq() {
   io.println(
-    "╔══════════════════════════════════════════════════════════════════╗",
+    "=====================================================================",
   )
+  io.println("  AWQ - Lin et al. (2024) MLSys Best Paper")
+  io.println("  The key insight: 1% of weights matter 10x more")
   io.println(
-    "║  AWQ (Activation-aware Weight Quantization)                      ║",
-  )
-  io.println(
-    "║  MLSys 2024 BEST PAPER AWARD!                                    ║",
-  )
-  io.println(
-    "╚══════════════════════════════════════════════════════════════════╝\n",
+    "=====================================================================\n",
   )
 
-  io.println("CONCEITO:")
-  io.println("  - Apenas ~1% dos pesos são 'salientes'")
-  io.println("  - Identificados pela magnitude das ATIVAÇÕES, não dos pesos!")
-  io.println("  - Escalar canais salientes PARA CIMA antes de quantizar")
-  io.println("  - Matematicamente equivalente: W*X = (sW)*(X/s)")
+  io.println("--- The Algorithm ---")
+  io.println("  1. Collect activation statistics (calibration)")
+  io.println("  2. Identify salient channels (high activation = important)")
+  io.println("  3. Scale salient weights UP before quantizing")
+  io.println("  4. Scale activations DOWN at runtime (mathematically equivalent)")
+  io.println("  Result: Protected channels get more quantization precision")
   io.println("")
 
-  // Simula pesos de uma camada linear [512, 256]
+  // Simulate [512, 256] weight matrix
   let weights = tensor.random_uniform([512, 256])
 
-  // Simula dados de calibração (100 amostras x 256 features)
+  // Simulate calibration data: 100 samples x 256 features
   let calibration_data =
     list.range(1, 100)
     |> list.map(fn(_) {
@@ -370,47 +393,44 @@ pub fn benchmark_awq() {
 
   let config = default_config()
 
-  io.println("━━━ CALIBRAÇÃO ━━━")
+  io.println("--- Calibration ---")
   let activation_stats = collect_activation_stats(calibration_data)
-  io.println("  Amostras de calibração: 100")
-  io.println("  Features por amostra: 256")
+  io.println("  Samples: 100")
+  io.println("  Features: 256")
 
-  // Analisa saliência
+  // Saliency analysis
   let salient_channels = identify_salient_channels(activation_stats, 1.0)
   io.println(
-    "  Canais salientes (top 1%): "
-    <> int.to_string(list.length(salient_channels)),
+    "  Salient channels (top 1%): " <> int.to_string(list.length(salient_channels)),
   )
 
-  // Mostra top 5 canais salientes
-  io.println("  Top 5 canais mais salientes:")
+  io.println("  Top 5 most salient:")
   salient_channels
   |> list.take(5)
   |> list.each(fn(idx) {
     let stat = get_at_index_float(activation_stats, idx, 0.0)
     io.println(
-      "    Canal " <> int.to_string(idx) <> ": " <> float_to_string(stat),
+      "    Channel " <> int.to_string(idx) <> ": " <> float_to_string(stat),
     )
   })
 
-  io.println("\n━━━ AWQ QUANTIZATION ━━━")
+  io.println("\n--- AWQ Quantization ---")
   let #(time_awq, awq_tensor) =
     timer_tc(fn() { quantize_awq(weights, calibration_data, config) })
 
   let original_bytes = 512 * 256 * 4
-  // FP32
   let ratio =
     int.to_float(original_bytes) /. int.to_float(awq_tensor.memory_bytes)
 
-  io.println("  Tempo:       " <> int.to_string(time_awq / 1000) <> "ms")
+  io.println("  Time:        " <> int.to_string(time_awq / 1000) <> "ms")
   io.println("  Original:    " <> int.to_string(original_bytes / 1024) <> " KB")
   io.println(
-    "  Comprimido:  " <> int.to_string(awq_tensor.memory_bytes / 1024) <> " KB",
+    "  Compressed:  " <> int.to_string(awq_tensor.memory_bytes / 1024) <> " KB",
   )
-  io.println("  Compressão:  " <> float_to_string(ratio) <> "x")
+  io.println("  Compression: " <> float_to_string(ratio) <> "x")
 
-  // Verifica erro
-  io.println("\n━━━ VERIFICAÇÃO DE ERRO ━━━")
+  // Error analysis
+  io.println("\n--- Error Analysis ---")
   let decompressed = dequantize_awq(awq_tensor)
   let orig_data = tensor.to_list(weights)
   let decomp_data = tensor.to_list(decompressed)
@@ -425,50 +445,36 @@ pub fn benchmark_awq() {
 
   let max_error = list.fold(errors, 0.0, float.max)
 
-  io.println("  Erro médio: " <> float_to_string(mean_error))
-  io.println("  Erro máx:   " <> float_to_string(max_error))
+  io.println("  Mean error: " <> float_to_string(mean_error))
+  io.println("  Max error:  " <> float_to_string(max_error))
 
-  // Comparação com quantização sem AWQ
-  io.println("\n━━━ COMPARAÇÃO: AWQ vs Quantização Normal ━━━")
-  io.println("  AWQ reduz erro em canais salientes (~1% dos pesos)")
-  io.println("  Esses canais têm MAIOR impacto na saída")
-  io.println("  Resultado: mesma compressão, MUITO menos perda de qualidade")
+  io.println("\n--- Why AWQ Beats Standard Quantization ---")
+  io.println("  Standard: All channels quantized equally")
+  io.println("  AWQ: Salient channels get more precision")
+  io.println("  Same compression ratio, MUCH lower perplexity")
 
   io.println(
-    "\n╔══════════════════════════════════════════════════════════════════╗",
+    "\n=====================================================================",
   )
+  io.println("  AWQ IN PRODUCTION")
+  io.println("")
+  io.println("  LLaMA-7B:")
+  io.println("    - FP16: 14GB")
+  io.println("    - AWQ-4bit: 3.5GB (fits on RTX 3060!)")
+  io.println("    - Perplexity loss: <0.5%")
+  io.println("")
+  io.println("  LLaMA-70B:")
+  io.println("    - FP16: 140GB (needs 8x A100)")
+  io.println("    - AWQ-4bit: 35GB (fits on single A100!)")
+  io.println("    - Perplexity loss: <1%")
+  io.println("")
+  io.println("  Zero runtime overhead - transform is pre-computed.")
   io.println(
-    "║  POR QUE AWQ VENCEU O MLSYS 2024:                                ║",
-  )
-  io.println(
-    "║                                                                  ║",
-  )
-  io.println(
-    "║  1. Insight simples mas poderoso: foca nas ativações             ║",
-  )
-  io.println(
-    "║  2. Zero custo em runtime (transformação pré-computada)          ║",
-  )
-  io.println(
-    "║  3. Funciona com qualquer quantização (INT4, INT8, NF4)          ║",
-  )
-  io.println(
-    "║  4. Estado da arte em LLMs quantizados                           ║",
-  )
-  io.println(
-    "║                                                                  ║",
-  )
-  io.println(
-    "║  viva_tensor + AWQ = Máxima precisão com 8x compressão!          ║",
-  )
-  io.println(
-    "╚══════════════════════════════════════════════════════════════════╝",
+    "=====================================================================",
   )
 }
 
-// ============================================================================
-// HELPERS
-// ============================================================================
+// --- Helper Functions ---
 
 fn get_tensor_shape(t: Tensor) -> List(Int) {
   case t {

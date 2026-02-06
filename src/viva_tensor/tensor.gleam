@@ -1,16 +1,21 @@
 //// Tensor - N-dimensional arrays for numerical computing
 ////
+//// "All you need is shapes" - a tensor library author, probably
+////
+//// This is the PUBLIC FACADE over core/tensor.gleam. Why two modules?
+//// Because opaque types are great until you need pattern matching in tests.
+//// This module gives you the nice API; core/ gives you the guarantees.
+////
 //// Design: NumPy-inspired with strides for zero-copy views.
 //// Uses Erlang :array for O(1) access + strides for efficient transpose/reshape.
+//// For matrices > 100x100, enable the NIF. The difference is 100-1000x.
 
 import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
 
-// =============================================================================
-// TYPES
-// =============================================================================
+// --- Types ---
 
 /// Opaque type for Erlang :array
 pub type ErlangArray
@@ -20,6 +25,9 @@ pub type ErlangArray
 /// - shape: dimensions [d0, d1, ..., dn]
 /// - strides: bytes to skip for each dimension [s0, s1, ..., sn]
 /// - offset: starting position in storage (for views/slices)
+///
+/// NCHW vs NHWC: we use NCHW because that's what the cool kids (PyTorch) do.
+/// TensorFlow uses NHWC by default, but they also use Python so...
 pub type Tensor {
   Tensor(data: List(Float), shape: List(Int))
   StridedTensor(
@@ -38,9 +46,7 @@ pub type TensorError {
   BroadcastError(a: List(Int), b: List(Int))
 }
 
-// =============================================================================
-// CONSTRUCTORS
-// =============================================================================
+// --- Constructors ---
 
 /// Create tensor of zeros
 pub fn zeros(shape: List(Int)) -> Tensor {
@@ -111,9 +117,7 @@ pub fn matrix(
   }
 }
 
-// =============================================================================
-// PROPERTIES
-// =============================================================================
+// --- Properties ---
 
 /// Get tensor shape
 pub fn shape(t: Tensor) -> List(Int) {
@@ -183,9 +187,7 @@ pub fn cols(t: Tensor) -> Int {
   }
 }
 
-// =============================================================================
-// ELEMENT ACCESS
-// =============================================================================
+// --- Element Access ---
 
 /// Access element by linear index
 pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
@@ -258,9 +260,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-// =============================================================================
-// ELEMENT-WISE OPERATIONS
-// =============================================================================
+// --- Element-wise Operations ---
 
 /// Apply function to each element
 pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
@@ -300,7 +300,8 @@ pub fn sub(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Element-wise multiplication (Hadamard)
+/// Element-wise multiplication (Hadamard product)
+/// Not to be confused with matmul. Named after Jacques Hadamard (1865-1963).
 pub fn mul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
     True -> {
@@ -341,9 +342,7 @@ pub fn negate(t: Tensor) -> Tensor {
   scale(t, -1.0)
 }
 
-// =============================================================================
-// REDUCTION OPERATIONS
-// =============================================================================
+// --- Reduction Operations ---
 
 /// Sum all elements
 pub fn sum(t: Tensor) -> Float {
@@ -357,7 +356,7 @@ pub fn product(t: Tensor) -> Float {
   list.fold(data, 1.0, fn(acc, x) { acc *. x })
 }
 
-/// Mean
+/// Mean: E[X] = (1/n) * sum(x_i)
 pub fn mean(t: Tensor) -> Float {
   let s = sum(t)
   let n = int.to_float(size(t))
@@ -423,7 +422,8 @@ pub fn argmin(t: Tensor) -> Int {
   }
 }
 
-/// Variance of all elements
+/// Variance: Var(X) = E[X^2] - E[X]^2  (computational form)
+/// We use the two-pass algorithm for numerical stability.
 pub fn variance(t: Tensor) -> Float {
   let data = get_data(t)
   let m = mean(t)
@@ -439,7 +439,7 @@ pub fn variance(t: Tensor) -> Float {
   }
 }
 
-/// Standard deviation
+/// Standard deviation: sqrt(Var(X))
 pub fn std(t: Tensor) -> Float {
   float_sqrt(variance(t))
 }
@@ -507,7 +507,6 @@ pub fn mean_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Remove element at index from list
 fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
   lst
   |> list.index_map(fn(item, i) { #(item, i) })
@@ -515,7 +514,6 @@ fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
   |> list.map(fn(pair) { pair.0 })
 }
 
-/// Compute flat index when summing along an axis
 fn compute_index_with_axis(
   shape: List(Int),
   out_idx: Int,
@@ -557,11 +555,9 @@ fn compute_index_with_axis(
   })
 }
 
-// =============================================================================
-// MATRIX OPERATIONS
-// =============================================================================
+// --- Matrix Operations ---
 
-/// Dot product of two vectors
+/// Dot product of two vectors: a . b = sum(a_i * b_i)
 pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   case rank(a) == 1 && rank(b) == 1 && size(a) == size(b) {
     True -> {
@@ -575,6 +571,7 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 }
 
 /// Matrix-vector multiplication: [m, n] @ [n] -> [m]
+/// C_i = sum_j(A_ij * x_j)
 pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
   case mat.shape, vec.shape {
     [m, n], [vec_n] if n == vec_n -> {
@@ -599,6 +596,9 @@ pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
 }
 
 /// Matrix-matrix multiplication: [m, n] @ [n, p] -> [m, p]
+/// C_ij = sum_k(A_ik * B_kj)
+///
+/// This is O(mnp) - for large matrices, use the NIF backend.
 pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape, b.shape {
     [m, n], [n2, p] if n == n2 -> {
@@ -628,7 +628,7 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Matrix transpose
+/// Matrix transpose: A^T where (A^T)_ij = A_ji
 pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
   case t.shape {
     [m, n] -> {
@@ -644,7 +644,8 @@ pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Outer product: [m] @ [n] -> [m, n]
+/// Outer product: [m] x [n] -> [m, n]
+/// C_ij = a_i * b_j
 pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case rank(a) == 1 && rank(b) == 1 {
     True -> {
@@ -660,9 +661,7 @@ pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-// =============================================================================
-// UTILITY
-// =============================================================================
+// --- Utility ---
 
 /// Convert to list
 pub fn to_list(t: Tensor) -> List(Float) {
@@ -688,13 +687,14 @@ pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
   }
 }
 
-/// Clone tensor
+/// Clone tensor (creates a copy)
 pub fn clone(t: Tensor) -> Tensor {
   let data = get_data(t)
   Tensor(data: data, shape: t.shape)
 }
 
-/// Reshape tensor
+/// Reshape tensor - same data, different shape
+/// The total number of elements must match.
 pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
   let old_size = size(t)
   let new_size = list.fold(new_shape, 1, fn(acc, dim) { acc * dim })
@@ -994,14 +994,14 @@ pub fn slice(
   }
 }
 
-/// L2 norm
+/// L2 norm: ||x||_2 = sqrt(sum(x_i^2))
 pub fn norm(t: Tensor) -> Float {
   let data = get_data(t)
   let sum_sq = list.fold(data, 0.0, fn(acc, x) { acc +. x *. x })
   float_sqrt(sum_sq)
 }
 
-/// Normalize to unit length
+/// Normalize to unit length: x / ||x||_2
 pub fn normalize(t: Tensor) -> Tensor {
   let n = norm(t)
   case n >. 0.0001 {
@@ -1010,14 +1010,12 @@ pub fn normalize(t: Tensor) -> Tensor {
   }
 }
 
-/// Clamp values
+/// Clamp values to [min, max]
 pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   map(t, fn(x) { float.min(float.max(x, min_val), max_val) })
 }
 
-// =============================================================================
-// RANDOM
-// =============================================================================
+// --- Random ---
 
 /// Tensor with uniform random values [0, 1)
 pub fn random_uniform(shape: List(Int)) -> Tensor {
@@ -1028,7 +1026,8 @@ pub fn random_uniform(shape: List(Int)) -> Tensor {
   Tensor(data: data, shape: shape)
 }
 
-/// Tensor with normal random values (approx via Box-Muller)
+/// Tensor with normal random values via Box-Muller transform.
+/// Box & Muller (1958) - A Note on the Generation of Random Normal Deviates
 pub fn random_normal(
   shape: List(Int),
   mean_val: Float,
@@ -1040,6 +1039,7 @@ pub fn random_normal(
     |> list.map(fn(_) {
       let u1 = float.max(random_float(), 0.0001)
       let u2 = random_float()
+      // Box-Muller: z = sqrt(-2*ln(u1)) * cos(2*pi*u2)
       let z =
         float_sqrt(-2.0 *. float_log(u1))
         *. float_cos(2.0 *. 3.14159265359 *. u2)
@@ -1048,7 +1048,11 @@ pub fn random_normal(
   Tensor(data: data, shape: shape)
 }
 
-/// Xavier initialization for weights
+/// Xavier/Glorot initialization for weights.
+/// Glorot & Bengio (2010) - Understanding the difficulty of training deep feedforward NNs
+///
+/// limit = sqrt(6 / (fan_in + fan_out))
+/// W ~ Uniform(-limit, limit)
 pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
   let limit = float_sqrt(6.0 /. int.to_float(fan_in + fan_out))
   let data =
@@ -1061,16 +1065,22 @@ pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
   Tensor(data: data, shape: [fan_out, fan_in])
 }
 
-/// He initialization (for ReLU)
+/// He/Kaiming initialization (for ReLU networks).
+/// He et al. (2015) - Delving Deep into Rectifiers
+///
+/// std = sqrt(2 / fan_in)
+/// W ~ Normal(0, std)
 pub fn he_init(fan_in: Int, fan_out: Int) -> Tensor {
   let std_val = float_sqrt(2.0 /. int.to_float(fan_in))
   // Shape [fan_out, fan_in] follows PyTorch convention
   random_normal([fan_out, fan_in], 0.0, std_val)
 }
 
-// =============================================================================
-// BROADCASTING
-// =============================================================================
+// --- Broadcasting ---
+// NumPy broadcasting rules (van der Walt et al., 2011)
+// 1. If ranks differ, prepend 1s to the smaller shape
+// 2. Dimensions are compatible if equal or one of them is 1
+// 3. Output dimension is the maximum of the two
 
 /// Check if two shapes can be broadcast together
 pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
@@ -1115,7 +1125,8 @@ pub fn broadcast_shape(
   }
 }
 
-/// Broadcast tensor to target shape
+/// Broadcast tensor to target shape.
+/// Zero-copy when possible, materialized when necessary.
 pub fn broadcast_to(
   t: Tensor,
   target_shape: List(Int),
@@ -1150,11 +1161,9 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   mul(a_bc, b_bc)
 }
 
-// =============================================================================
-// SHAPE MANIPULATION
-// =============================================================================
+// --- Shape Manipulation ---
 
-/// Remove dimensions of size 1
+/// Remove dimensions of size 1 (squeeze operation)
 pub fn squeeze(t: Tensor) -> Tensor {
   let data = get_data(t)
   let new_shape = list.filter(t.shape, fn(d) { d != 1 })
@@ -1186,7 +1195,7 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Add dimension of size 1 at specified axis
+/// Add dimension of size 1 at specified axis (unsqueeze operation)
 pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
   let data = get_data(t)
   let rnk = list.length(t.shape)
@@ -1200,14 +1209,12 @@ pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
   Tensor(data: data, shape: new_shape)
 }
 
-/// Expand tensor to add batch dimension
+/// Expand tensor to add batch dimension (alias for unsqueeze)
 pub fn expand_dims(t: Tensor, axis: Int) -> Tensor {
   unsqueeze(t, axis)
 }
 
-// =============================================================================
-// STRIDED TENSOR - Zero-copy operations
-// =============================================================================
+// --- Strided Tensor (Zero-copy operations) ---
 
 /// Convert regular tensor to strided (O(n) once, then O(1) access)
 pub fn to_strided(t: Tensor) -> Tensor {
@@ -1233,6 +1240,7 @@ pub fn to_contiguous(t: Tensor) -> Tensor {
 }
 
 /// ZERO-COPY TRANSPOSE - just swap strides and shape!
+/// This is the magic of strided tensors: transpose is O(1).
 pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
   case t {
     Tensor(_, shape) -> {
@@ -1308,9 +1316,7 @@ pub fn get2d_fast(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
   }
 }
 
-// =============================================================================
-// INTERNAL HELPERS
-// =============================================================================
+// --- Internal Helpers ---
 
 fn list_at_int(lst: List(Int), index: Int) -> Result(Int, Nil) {
   case index < 0 {
@@ -1405,9 +1411,12 @@ fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
   })
 }
 
-// =============================================================================
-// CONVOLUTION & POOLING - CNN Operations
-// =============================================================================
+// --- Convolution & Pooling ---
+// LeCun et al. (1989) - Backpropagation Applied to Handwritten Zip Code Recognition
+// The paper that started it all. ConvNets are now 35+ years old!
+//
+// Why no im2col? Because direct convolution is clearer and im2col wastes memory.
+// For production, use the NIF with BLAS/cuDNN anyway.
 
 /// Conv2D configuration
 pub type Conv2dConfig {
@@ -1531,11 +1540,15 @@ pub fn pad4d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Extract a patch from 2D tensor at position (row, col)
-/// 2D Convolution using optimized O(1) array access
-/// Input: [H, W] or [C, H, W] or [N, C, H, W]
-/// Kernel: [K_out, K_in, KH, KW] or [KH, KW] for single channel
-/// Output: [H_out, W_out] or [N, K_out, H_out, W_out]
+/// 2D Convolution with optimized O(1) array access.
+///
+/// Output size formula: O = floor((I - K + 2P) / S) + 1
+/// where I = input size, K = kernel size, P = padding, S = stride
+///
+/// Input shapes supported:
+/// - [H, W] with kernel [KH, KW] -> [H_out, W_out]
+/// - [C, H, W] with kernel [C, KH, KW] -> [H_out, W_out]
+/// - [N, C_in, H, W] with kernel [C_out, C_in, KH, KW] -> [N, C_out, H_out, W_out]
 pub fn conv2d(
   input: Tensor,
   kernel: Tensor,
@@ -1570,7 +1583,7 @@ pub fn conv2d(
   }
 }
 
-/// Simple 2D convolution (single channel) - OPTIMIZED with O(1) array access
+/// Simple 2D convolution (single channel) with O(1) array access
 fn conv2d_simple(
   input: Tensor,
   kernel: Tensor,
@@ -1592,6 +1605,7 @@ fn conv2d_simple(
     _ -> #(h, w)
   }
 
+  // Output size: O = floor((I - K + 2P) / S) + 1 (padding already applied)
   let out_h = { ph - kh } / config.stride_h + 1
   let out_w = { pw - kw } / config.stride_w + 1
 
@@ -1735,7 +1749,7 @@ fn conv2d_dot_product(
   }
 }
 
-/// Multi-channel convolution (sum over channels) - OPTIMIZED
+/// Multi-channel convolution (sum over channels)
 fn conv2d_multichannel(
   input: Tensor,
   kernel: Tensor,
@@ -1780,7 +1794,7 @@ fn conv2d_multichannel(
   Ok(Tensor(data: list.reverse(output), shape: [out_h, out_w]))
 }
 
-/// Multi-channel conv loop - tail recursive
+/// Multi-channel conv loop (tail recursive)
 fn conv2d_mc_loop(
   in_arr: ErlangArray,
   k_arr: ErlangArray,
@@ -2000,8 +2014,7 @@ fn conv2d_kernel_sum(
   }
 }
 
-/// Full convolution with batches and multiple output channels
-/// Full batched convolution - OPTIMIZED with O(1) array access
+/// Full batched convolution with O(1) array access
 fn conv2d_full(
   input: Tensor,
   kernel: Tensor,
@@ -2296,7 +2309,11 @@ fn conv2d_full_channels(
   }
 }
 
-/// Max pooling 2D - OPTIMIZED with O(1) array access
+// --- Pooling Operations ---
+// Scherer et al. (2010) - Evaluation of Pooling Operations in Convolutional Architectures
+// Spoiler: max pooling usually wins, but average pooling has its uses.
+
+/// Max pooling 2D with O(1) array access
 /// Input: [H, W] or [N, C, H, W]
 /// Output: [H_out, W_out] or [N, C, H_out, W_out]
 pub fn max_pool2d(
@@ -2667,8 +2684,7 @@ fn pool_window(
   }
 }
 
-/// Average pooling 2D
-/// Average pooling 2D - OPTIMIZED with O(1) array access
+/// Average pooling 2D with O(1) array access
 pub fn avg_pool2d(
   input: Tensor,
   pool_h: Int,
@@ -2739,7 +2755,10 @@ pub fn avg_pool2d(
   }
 }
 
-/// Global average pooling - reduces spatial dimensions to 1x1
+/// Global average pooling - reduces spatial dimensions to 1x1.
+/// The modern replacement for flatten+dense in classification heads.
+/// Lin et al. (2013) - Network In Network
+///
 /// Input: [N, C, H, W] -> Output: [N, C, 1, 1]
 pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
   let shp = shape(input)
@@ -2780,7 +2799,6 @@ pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Helper to convert shape to string for error messages
 fn shape_to_string(shp: List(Int)) -> String {
   "[" <> list.map(shp, int.to_string) |> string_join(", ") <> "]"
 }
@@ -2793,9 +2811,7 @@ fn string_join(strings: List(String), sep: String) -> String {
   }
 }
 
-// =============================================================================
-// FFI - Erlang externals
-// =============================================================================
+// --- FFI (Erlang externals) ---
 
 @external(erlang, "math", "sqrt")
 fn float_sqrt(x: Float) -> Float

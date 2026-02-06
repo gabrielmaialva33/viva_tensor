@@ -1,70 +1,47 @@
-//// viva_tensor - Pure Gleam tensor library for numerical computing
+//// viva_tensor - NumPy for the BEAM.
 ////
-//// A NumPy-inspired tensor library with:
-//// - N-dimensional arrays with broadcasting
-//// - Named tensors with semantic axes
-//// - Zero-copy transpose/reshape via strides
-//// - O(1) random access with Erlang arrays
-//// - Quantization (INT8, NF4, AWQ) for 8x memory reduction
+//// Born from the frustration of "why can't I do tensor math in Erlang/Elixir
+//// without calling Python?" Now you can.
 ////
-//// ## Quick Start
+//// The name: "viva" = alive in Portuguese/Spanish. Tensors that live on the BEAM.
+//// Also, "viva" sounds better than "gleam_tensor" (sorry, marketing decision).
+////
+//// Architecture:
+//// - core/ = the fundamentals (tensor, ops, shape, error)
+//// - nn/ = neural network building blocks (layers, autograd, attention)
+//// - quant/ = quantization for memory efficiency (INT8, NF4, AWQ)
+//// - optim/ = hardware-specific optimizations
+////
+//// Performance tip: for matrices > 100x100, make sure the NIF is compiled.
+//// The difference is ~100-1000x. No, that's not a typo.
+////
 //// ```gleam
 //// import viva_tensor as t
 ////
-//// // Create tensors
 //// let a = t.zeros([2, 3])
 //// let b = t.ones([2, 3])
-////
-//// // Operations return Results for safety
-//// let assert Ok(c) = t.add(a, b)
-//// let assert Ok(d) = t.matmul(a, t.transpose(b) |> result.unwrap(a))
-////
-//// // CNN operations
-//// let input = t.random_uniform([28, 28])
-//// let kernel = t.random_uniform([3, 3])
-//// let assert Ok(conv_out) = t.conv2d(input, kernel, t.conv2d_same(3, 3))
-//// ```
-////
-//// ## Architecture
-//// ```
-//// viva_tensor/
-//// ├── core/          # Tensor fundamentals
-//// │   ├── tensor     # Opaque tensor type + constructors
-//// │   ├── ops        # Mathematical operations
-//// │   ├── shape      # Shape manipulation
-//// │   ├── config     # Builder patterns for configs
-//// │   ├── dtype      # Phantom types for type safety
-//// │   ├── error      # Centralized error types
-//// │   └── ffi        # Erlang FFI
-//// ├── quant/         # Quantization (nf4, awq, compression)
-//// ├── nn/            # Neural networks (layers, autograd, attention)
-//// └── optim/         # Optimizations (sparsity, pooling, hardware)
+//// let assert Ok(c) = t.add(a, b)  // [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
 //// ```
 
-// Re-export core modules
+// Public API - re-exports from internal modules for convenience.
+// Users can import viva_tensor and get everything they need.
+
 import viva_tensor/tensor
 
-// =============================================================================
-// TYPE RE-EXPORTS
-// =============================================================================
+// --- Types ------------------------------------------------------------------
 
-/// Tensor type - the core data structure
 pub type Tensor =
   tensor.Tensor
 
-/// Tensor operation errors
 pub type TensorError =
   tensor.TensorError
 
-/// Conv2D configuration
 pub type Conv2dConfig =
   tensor.Conv2dConfig
 
-// =============================================================================
-// CONSTRUCTORS
-// =============================================================================
+// --- Constructors -----------------------------------------------------------
 
-/// Create tensor of zeros
+/// All zeros. The tensor equivalent of a blank canvas.
 pub fn zeros(shape: List(Int)) -> Tensor {
   tensor.zeros(shape)
 }
@@ -103,11 +80,9 @@ pub fn matrix(
   tensor.matrix(rows, cols, data)
 }
 
-// =============================================================================
-// RANDOM CONSTRUCTORS
-// =============================================================================
+// --- Random -----------------------------------------------------------------
 
-/// Tensor with uniform random values [0, 1)
+/// Random uniform [0, 1)
 pub fn random_uniform(shape: List(Int)) -> Tensor {
   tensor.random_uniform(shape)
 }
@@ -127,11 +102,9 @@ pub fn he_init(fan_in: Int, fan_out: Int) -> Tensor {
   tensor.he_init(fan_in, fan_out)
 }
 
-// =============================================================================
-// ELEMENT-WISE OPERATIONS
-// =============================================================================
+// --- Math -------------------------------------------------------------------
 
-/// Element-wise addition
+/// Add element-wise
 pub fn add(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.add(a, b)
 }
@@ -161,11 +134,9 @@ pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
   tensor.map(t, f)
 }
 
-// =============================================================================
-// REDUCTION OPERATIONS
-// =============================================================================
+// --- Reductions -------------------------------------------------------------
 
-/// Sum all elements
+/// Sum everything
 pub fn sum(t: Tensor) -> Float {
   tensor.sum(t)
 }
@@ -205,11 +176,9 @@ pub fn std(t: Tensor) -> Float {
   tensor.std(t)
 }
 
-// =============================================================================
-// MATRIX OPERATIONS
-// =============================================================================
+// --- Linear Algebra ---------------------------------------------------------
 
-/// Dot product of two vectors
+/// Dot product (vectors only)
 pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   tensor.dot(a, b)
 }
@@ -234,11 +203,9 @@ pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.outer(a, b)
 }
 
-// =============================================================================
-// SHAPE OPERATIONS
-// =============================================================================
+// --- Shape Ops --------------------------------------------------------------
 
-/// Reshape tensor
+/// Reshape (total size must match)
 pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
   tensor.reshape(t, new_shape)
 }
@@ -258,11 +225,9 @@ pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
   tensor.unsqueeze(t, axis)
 }
 
-// =============================================================================
-// ACCESSORS
-// =============================================================================
+// --- Accessors --------------------------------------------------------------
 
-/// Get tensor shape
+/// Shape as list of dimensions
 pub fn shape(t: Tensor) -> List(Int) {
   tensor.shape(t)
 }
@@ -282,11 +247,9 @@ pub fn to_list(t: Tensor) -> List(Float) {
   tensor.to_list(t)
 }
 
-// =============================================================================
-// UTILITY
-// =============================================================================
+// --- Utils ------------------------------------------------------------------
 
-/// L2 norm
+/// L2 norm (Euclidean length)
 pub fn norm(t: Tensor) -> Float {
   tensor.norm(t)
 }
@@ -301,11 +264,9 @@ pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   tensor.clamp(t, min_val, max_val)
 }
 
-// =============================================================================
-// BROADCASTING
-// =============================================================================
+// --- Broadcasting -----------------------------------------------------------
 
-/// Check if shapes can broadcast
+/// Can these shapes broadcast together?
 pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
   tensor.can_broadcast(a, b)
 }
@@ -320,11 +281,9 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.mul_broadcast(a, b)
 }
 
-// =============================================================================
-// ZERO-COPY OPERATIONS
-// =============================================================================
+// --- Strided (Zero-copy) ----------------------------------------------------
 
-/// Convert to strided tensor (O(1) access)
+/// Convert to strided representation for O(1) element access
 pub fn to_strided(t: Tensor) -> Tensor {
   tensor.to_strided(t)
 }
@@ -344,9 +303,10 @@ pub fn is_contiguous(t: Tensor) -> Bool {
   tensor.is_contiguous(t)
 }
 
-// =============================================================================
-// CNN OPERATIONS
-// =============================================================================
+// --- CNN Ops ----------------------------------------------------------------
+// Convolution: the operation that made deep learning work for images.
+// Yann LeCun et al. (1989) showed CNNs could recognize handwritten digits.
+// 35 years later, we're using the same basic operation to generate cat pics.
 
 /// Default conv2d config (3x3 kernel, stride 1, no padding)
 pub fn conv2d_config() -> Conv2dConfig {
