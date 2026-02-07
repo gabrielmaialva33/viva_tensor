@@ -48,20 +48,42 @@ pub fn build(b: *std.Build) void {
     lib.linkLibC();
 
     // Link with optimized BLAS for GEMM (800+ GFLOPS with MKL)
-    // Intel MKL on both Windows and Linux for maximum performance
+    // Platform-specific backends: MKL (Windows/Linux), Accelerate (macOS)
     if (target.result.os.tag == .windows) {
         // Windows: Intel MKL via winget install Intel.oneMKL
+        // nif_entry.c uses cblas_dgemm directly when _WIN32 is defined
+        // (no cuda_gemm.c needed - MKL is called directly from nif_entry.c)
         const mkl_inc = b.fmt("{s}/include", .{mkl_root});
         const mkl_lib = b.fmt("{s}/lib", .{mkl_root});
         lib.addIncludePath(.{ .cwd_relative = mkl_inc });
         lib.addLibraryPath(.{ .cwd_relative = mkl_lib });
         lib.linkSystemLibrary("mkl_rt");
+    } else if (target.result.os.tag == .macos) {
+        // macOS: Apple Accelerate framework (vDSP + BLAS)
+        lib.addCSourceFile(.{
+            .file = b.path("accelerate.c"),
+            .flags = &.{},
+        });
+        lib.linkFramework("Accelerate");
     } else {
         // Linux: Intel MKL (apt install intel-mkl) - 800+ GFLOPS!
         lib.addCSourceFile(.{
             .file = b.path("cuda_gemm.c"),
-            .flags = &.{ "-DUSE_MKL_DIRECT" },
+            .flags = &.{"-DUSE_MKL_DIRECT"},
         });
+
+        // cuSPARSELt for 2:4 structured sparsity (660/1320 TFLOPS!)
+        lib.addCSourceFile(.{
+            .file = b.path("cuda_sparselt.c"),
+            .flags = &.{},
+        });
+
+        // SageAttention: INT8 QK^T + FP8 support (2-5x faster than FlashAttention!)
+        lib.addCSourceFile(.{
+            .file = b.path("cuda_sage.c"),
+            .flags = &.{},
+        });
+
         lib.root_module.addCMacro("USE_MKL_DIRECT", "1");
 
         // MKL headers and libs (Ubuntu: apt install intel-mkl)
@@ -73,7 +95,7 @@ pub fn build(b: *std.Build) void {
         lib.addLibraryPath(.{ .cwd_relative = "../deps/openblas-tuned/lib" });
         lib.addIncludePath(.{ .cwd_relative = "../deps/openblas-tuned/include" });
 
-        // dlopen for CUDA
+        // dlopen for CUDA and cuSPARSELt
         lib.linkSystemLibrary("dl");
         lib.linkSystemLibrary("pthread");
     }

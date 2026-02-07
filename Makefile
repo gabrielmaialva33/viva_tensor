@@ -5,7 +5,7 @@
 # Usage:
 #   make build      - Build the project
 #   make test       - Run tests
-#   make bench      - Run benchmarks and save to output/
+#   make bench      - Run benchmarks and save to bench/reports/
 #   make demo       - Run the demonstration
 #   make docs       - Generate documentation
 #   make clean      - Clean build artifacts
@@ -41,7 +41,7 @@ endif
 # Directories
 SRC_DIR := src
 TEST_DIR := test
-OUTPUT_DIR := output
+OUTPUT_DIR := bench/reports
 DOCS_DIR := docs
 BUILD_DIR := build
 
@@ -154,70 +154,51 @@ endif
 # NIF BUILD (Apple Accelerate on macOS)
 # =============================================================================
 
-.PHONY: nif nif-clean nif-info zig zig-clean
+.PHONY: zig zig-clean zig-info
 
 # Erlang NIF headers (auto-detected)
 ERL_ROOT := $(shell erl -noshell -eval 'io:format("~s", [code:root_dir()]).' -s init stop 2>$(NULL))
 ERL_INCLUDE := $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]).' -s init stop 2>$(NULL))
 
-## Build Apple Accelerate NIF (macOS only)
-nif:
-ifeq ($(OS),Windows_NT)
-	@echo "$(YELLOW)[SKIP]$(NC) NIF only supported on macOS"
-else
-ifeq ($(shell uname -s),Darwin)
-	@echo "$(YELLOW)[NIF]$(NC) Building Apple Accelerate NIF..."
-	@$(MAKE) -C c_src
-	@echo "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_nif.so"
-else
-	@echo "$(YELLOW)[SKIP]$(NC) NIF only supported on macOS"
-endif
-endif
-
-## Build Zig SIMD NIF (cross-platform, requires Zig 0.15+)
+## Build Zig NIF (cross-platform: Windows/Linux/macOS)
+## Includes: SIMD kernels, Intel MKL, CUDA, Apple Accelerate
 zig:
-	@echo "$(YELLOW)[ZIG]$(NC) Building Zig SIMD NIF..."
+	@echo "$(YELLOW)[ZIG]$(NC) Building NIF (Zig + platform backends)..."
 	@$(MKDIR) priv
 	@cd zig_src && zig build -Derl_include=$(ERL_INCLUDE) -Doptimize=ReleaseFast
 ifeq ($(OS),Windows_NT)
 	@$(COPY) zig_src$(SEP)zig-out$(SEP)bin$(SEP)viva_tensor_zig.dll priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
-	@echo "$(GREEN)[OK]$(NC) Zig NIF built: priv/viva_tensor_zig.dll"
+	@echo "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_zig.dll"
 else
 	@$(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.dylib priv$(SEP)viva_tensor_zig.so 2>$(NULL) || \
 	 $(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.so priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
-	@echo "$(GREEN)[OK]$(NC) Zig NIF built: priv/viva_tensor_zig.so"
+	@echo "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_zig.so"
 endif
 
 ## Clean Zig NIF artifacts
 zig-clean:
-	@echo "$(YELLOW)[CLEAN]$(NC) Cleaning Zig NIF..."
+	@echo "$(YELLOW)[CLEAN]$(NC) Cleaning NIF..."
 	@$(RMDIR) zig_src$(SEP)zig-out 2>$(NULL) || true
 	@$(RMDIR) zig_src$(SEP).zig-cache 2>$(NULL) || true
 	@$(RM) priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
-	@echo "$(GREEN)[OK]$(NC) Zig NIF cleaned!"
-
-## Clean C NIF artifacts
-nif-clean:
-	@echo "$(YELLOW)[CLEAN]$(NC) Cleaning C NIF..."
-	@$(MAKE) -C c_src clean 2>$(NULL) || true
-	@$(RM) priv$(SEP)viva_tensor_nif.so 2>$(NULL) || true
-	@echo "$(GREEN)[OK]$(NC) C NIF cleaned!"
+	@$(RM) priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
+	@echo "$(GREEN)[OK]$(NC) NIF cleaned!"
 
 ## Show NIF build info
-nif-info:
+zig-info:
+	@echo "Zig: $$(zig version 2>$(NULL) || echo 'not installed')"
+	@echo "ERL_INCLUDE: $(ERL_INCLUDE)"
 ifeq ($(shell uname -s),Darwin)
-	@$(MAKE) -C c_src info
-	@echo "Zig: $$(zig version 2>$(NULL) || echo 'not installed')"
-	@echo "ERL_INCLUDE: $(ERL_INCLUDE)"
+	@echo "Backend: Apple Accelerate"
+else ifeq ($(OS),Windows_NT)
+	@echo "Backend: Intel MKL"
 else
-	@echo "C NIF only supported on macOS"
-	@echo "Zig: $$(zig version 2>$(NULL) || echo 'not installed')"
-	@echo "ERL_INCLUDE: $(ERL_INCLUDE)"
+	@echo "Backend: Intel MKL + CUDA"
 endif
 
-## Full build including all NIFs
-build-all: build nif zig
-	@echo "$(GREEN)[OK]$(NC) Full build (Gleam + C NIF + Zig NIF) complete!"
+## Full build including NIF
+build-all: build zig
+	@echo "$(GREEN)[OK]$(NC) Full build (Gleam + NIF) complete!"
 
 # =============================================================================
 # SPECIFIC BENCHMARKS
@@ -291,7 +272,7 @@ help:
 	@echo "Main commands:"
 	@echo "  make build       - Build the project"
 	@echo "  make test        - Run tests"
-	@echo "  make bench       - Run benchmarks (saves to output/)"
+	@echo "  make bench       - Run benchmarks (saves to bench/reports/)"
 	@echo "  make demo        - Run demonstration"
 	@echo "  make docs        - Generate documentation"
 	@echo "  make fmt         - Format code"
@@ -299,13 +280,11 @@ help:
 	@echo "  make clean       - Clean build"
 	@echo "  make all         - Build + test + bench"
 	@echo ""
-	@echo "NIFs:"
-	@echo "  make nif         - Build Apple Accelerate NIF (macOS)"
-	@echo "  make zig         - Build Zig SIMD NIF (cross-platform)"
-	@echo "  make nif-clean   - Clean C NIF artifacts"
-	@echo "  make zig-clean   - Clean Zig NIF artifacts"
-	@echo "  make nif-info    - Show NIF build info"
-	@echo "  make build-all   - Build Gleam + C NIF + Zig NIF"
+	@echo "NIF (Native):"
+	@echo "  make zig         - Build NIF (cross-platform: MKL/CUDA/Accelerate)"
+	@echo "  make zig-clean   - Clean NIF artifacts"
+	@echo "  make zig-info    - Show NIF build info"
+	@echo "  make build-all   - Build Gleam + NIF"
 	@echo ""
 	@echo "Specific benchmarks:"
 	@echo "  make bench-int8  - Benchmark INT8"

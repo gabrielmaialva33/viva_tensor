@@ -4,14 +4,16 @@ REM viva_tensor - Script de Build para Windows
 REM =============================================================================
 REM
 REM Uso:
-REM   make build      - Compila o projeto
-REM   make test       - Roda os testes
-REM   make bench      - Roda benchmarks
-REM   make demo       - Roda demonstracao
-REM   make docs       - Gera documentacao
-REM   make clean      - Limpa build
-REM   make fmt        - Formata codigo
-REM   make help       - Mostra ajuda
+REM   make build       - Compila o projeto
+REM   make test        - Roda os testes
+REM   make bench       - Roda benchmarks Gleam
+REM   make bench-fused - Roda benchmark Fused Quantized Matmul (MKL 800+ GFLOPS!)
+REM   make demo        - Roda demonstracao
+REM   make docs        - Gera documentacao
+REM   make clean       - Limpa build
+REM   make fmt         - Formata codigo
+REM   make zig         - Build Zig NIF com MKL
+REM   make help        - Mostra ajuda
 REM
 REM =============================================================================
 
@@ -21,10 +23,23 @@ set "OUTPUT_DIR=output"
 set "DATE=%date:~-4%-%date:~3,2%-%date:~0,2%_%time:~0,2%-%time:~3,2%-%time:~6,2%"
 set "DATE=%DATE: =0%"
 
+REM Intel oneAPI / MKL paths (winget install Intel.oneMKL)
+set "ONEAPI_ROOT=C:\Program Files (x86)\Intel\oneAPI"
+if exist "%ONEAPI_ROOT%\mkl\latest\bin" (
+    set "PATH=%ONEAPI_ROOT%\mkl\latest\bin;%ONEAPI_ROOT%\compiler\latest\bin;%ONEAPI_ROOT%\tbb\latest\bin;%PATH%"
+)
+
+REM MKL tuning for maximum performance (i7-13700K = 24 threads)
+set MKL_NUM_THREADS=24
+set MKL_THREADING_LAYER=INTEL
+set KMP_AFFINITY=scatter
+set MKL_DYNAMIC=FALSE
+
 if "%1"=="" goto help
 if "%1"=="build" goto build
 if "%1"=="test" goto test
 if "%1"=="bench" goto bench
+if "%1"=="bench-fused" goto bench-fused
 if "%1"=="demo" goto demo
 if "%1"=="docs" goto docs
 if "%1"=="clean" goto clean
@@ -55,6 +70,18 @@ call :ensure_output
 echo [BENCH] Executando benchmarks...
 gleam run -m viva_tensor/benchmark_full > "%OUTPUT_DIR%\benchmark_%DATE%.txt" 2>&1
 echo [OK] Benchmark salvo em: %OUTPUT_DIR%\benchmark_%DATE%.txt
+goto end
+
+:bench-fused
+call :ensure_output
+echo [BENCH-FUSED] Fused Quantized Matmul Benchmark (MKL 800+ GFLOPS!)
+echo.
+echo MKL Config:
+echo   MKL_NUM_THREADS=%MKL_NUM_THREADS%
+echo   MKL_THREADING_LAYER=%MKL_THREADING_LAYER%
+echo   KMP_AFFINITY=%KMP_AFFINITY%
+echo.
+escript bench\bench_fused_windows.erl
 goto end
 
 :demo
@@ -139,20 +166,27 @@ echo viva_tensor - Script de Build para Windows
 echo ===========================================
 echo.
 echo Comandos:
-echo   make build      - Compila o projeto
-echo   make test       - Roda os testes
-echo   make bench      - Roda benchmarks (salva em output/)
-echo   make demo       - Roda demonstracao
-echo   make docs       - Gera documentacao
-echo   make fmt        - Formata codigo
-echo   make check      - Verifica tipos
-echo   make clean      - Limpa build
-echo   make deps       - Instala dependencias
-echo   make zig        - Build Zig SIMD NIF (requer Zig 0.15+)
-echo   make zig-clean  - Limpa artefatos Zig NIF
-echo   make build-all  - Build Gleam + Zig NIF
-echo   make all        - Build + test + bench
-echo   make help       - Mostra esta ajuda
+echo   make build       - Compila o projeto
+echo   make test        - Roda os testes
+echo   make bench       - Roda benchmarks Gleam (salva em output/)
+echo   make bench-fused - Roda Fused Quantized Matmul benchmark (MKL 800+ GFLOPS!)
+echo   make demo        - Roda demonstracao
+echo   make docs        - Gera documentacao
+echo   make fmt         - Formata codigo
+echo   make check       - Verifica tipos
+echo   make clean       - Limpa build
+echo   make deps        - Instala dependencias
+echo   make zig         - Build Zig SIMD NIF com MKL (requer Zig 0.15+)
+echo   make zig-clean   - Limpa artefatos Zig NIF
+echo   make build-all   - Build Gleam + Zig NIF
+echo   make all         - Build + test + bench
+echo   make help        - Mostra esta ajuda
+echo.
+echo MKL Performance:
+echo   MKL_NUM_THREADS=24  (use all i7-13700K cores)
+echo   MKL_THREADING_LAYER=INTEL
+echo   KMP_AFFINITY=scatter
+echo   Expected: 800+ GFLOPS for 5000x5000 matmul
 echo.
 goto end
 
