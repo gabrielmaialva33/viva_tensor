@@ -1,16 +1,46 @@
+# =============================================================================
+# viva_tensor .gitignore
+# =============================================================================
+
+# Build artifacts
 *.beam
 *.ez
 /build
-erl_crash.dump
-
-# NIF build artifacts
 *.o
+
+# NIF shared libraries
 *.so
+*.dll
+*.dylib
 c_src/*.o
 priv/*.so
+priv/*.dll
+
+# Zig build
 zig_src/.zig-cache/
 zig_src/zig-out/
-zig_src/*.dylib
-deps/
-*.dll
+
+# Erlang runtime
 erl_crash.dump
+deps/
+
+# Benchmark outputs (generated, not committed)
+bench/data/
+bench/reports/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*~
+.*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
