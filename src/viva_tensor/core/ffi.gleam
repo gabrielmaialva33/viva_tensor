@@ -466,7 +466,10 @@ pub fn nt_ones(shape: List(Int)) -> Result(NativeTensorRef, String) {
 }
 
 /// Create native tensor filled with value
-pub fn nt_fill(shape: List(Int), value: Float) -> Result(NativeTensorRef, String) {
+pub fn nt_fill(
+  shape: List(Int),
+  value: Float,
+) -> Result(NativeTensorRef, String) {
   nt_fill_ffi(shape, value)
 }
 
@@ -531,10 +534,7 @@ pub fn nt_negate(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
 }
 
 /// Native dot product: ref · ref → scalar
-pub fn nt_dot(
-  a: NativeTensorRef,
-  b: NativeTensorRef,
-) -> Result(Float, String) {
+pub fn nt_dot(a: NativeTensorRef, b: NativeTensorRef) -> Result(Float, String) {
   nt_dot_ffi(a, b)
 }
 
@@ -596,10 +596,7 @@ pub fn nt_log(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
 // Use with care - this breaks functional purity for performance.
 
 /// In-place add: a += b. Returns ok. MUTATES a.
-pub fn nt_add_mut(
-  a: NativeTensorRef,
-  b: NativeTensorRef,
-) -> Result(Nil, String) {
+pub fn nt_add_mut(a: NativeTensorRef, b: NativeTensorRef) -> Result(Nil, String) {
   nt_add_mut_ffi(a, b)
 }
 
@@ -663,7 +660,6 @@ pub fn nt_resonance_power(
   nt_resonance_power_ffi(data, exponent)
 }
 
-// NIF Resource FFI bindings
 @external(erlang, "viva_tensor_zig", "nt_zeros")
 fn nt_zeros_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
 
@@ -671,7 +667,10 @@ fn nt_zeros_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
 fn nt_ones_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_fill")
-fn nt_fill_ffi(shape: List(Int), value: Float) -> Result(NativeTensorRef, String)
+fn nt_fill_ffi(
+  shape: List(Int),
+  value: Float,
+) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_from_list")
 fn nt_from_list_ffi(
@@ -716,10 +715,7 @@ fn nt_scale_ffi(
 fn nt_negate_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_dot")
-fn nt_dot_ffi(
-  a: NativeTensorRef,
-  b: NativeTensorRef,
-) -> Result(Float, String)
+fn nt_dot_ffi(a: NativeTensorRef, b: NativeTensorRef) -> Result(Float, String)
 
 @external(erlang, "viva_tensor_zig", "nt_sum")
 fn nt_sum_ffi(a: NativeTensorRef) -> Result(Float, String)
@@ -756,16 +752,10 @@ fn nt_log_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
 
 // In-place mutation FFI
 @external(erlang, "viva_tensor_zig", "nt_add_mut")
-fn nt_add_mut_ffi(
-  a: NativeTensorRef,
-  b: NativeTensorRef,
-) -> Result(Nil, String)
+fn nt_add_mut_ffi(a: NativeTensorRef, b: NativeTensorRef) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_scale_mut")
-fn nt_scale_mut_ffi(
-  a: NativeTensorRef,
-  scalar: Float,
-) -> Result(Nil, String)
+fn nt_scale_mut_ffi(a: NativeTensorRef, scalar: Float) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_negate_mut")
 fn nt_negate_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
@@ -993,10 +983,16 @@ pub fn horde_kinetic_energy(horde: HordeRef) -> Result(Float, String) {
 fn horde_create_ffi(entity_count: Int, dims: Int) -> Result(HordeRef, String)
 
 @external(erlang, "viva_tensor_zig", "horde_set_positions")
-fn horde_set_positions_ffi(horde: HordeRef, data: List(Float)) -> Result(Nil, String)
+fn horde_set_positions_ffi(
+  horde: HordeRef,
+  data: List(Float),
+) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "horde_set_velocities")
-fn horde_set_velocities_ffi(horde: HordeRef, data: List(Float)) -> Result(Nil, String)
+fn horde_set_velocities_ffi(
+  horde: HordeRef,
+  data: List(Float),
+) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "horde_integrate")
 fn horde_integrate_ffi(horde: HordeRef, dt: Float) -> Result(Nil, String)
@@ -1065,7 +1061,10 @@ pub fn hdc_similarity(a: HdcVectorRef, b: HdcVectorRef) -> Result(Float, String)
 
 /// Circular permutation for sequence encoding
 /// encode(ABC) = A XOR perm(B,1) XOR perm(C,2)
-pub fn hdc_permute(vec: HdcVectorRef, shift: Int) -> Result(HdcVectorRef, String) {
+pub fn hdc_permute(
+  vec: HdcVectorRef,
+  shift: Int,
+) -> Result(HdcVectorRef, String) {
   hdc_permute_ffi(vec, shift)
 }
 
@@ -1082,13 +1081,132 @@ fn hdc_create_ffi(dim: Int) -> Result(HdcVectorRef, String)
 fn hdc_random_ffi(dim: Int, seed: Int) -> Result(HdcVectorRef, String)
 
 @external(erlang, "viva_tensor_zig", "hdc_bind")
-fn hdc_bind_ffi(a: HdcVectorRef, b: HdcVectorRef) -> Result(HdcVectorRef, String)
+fn hdc_bind_ffi(
+  a: HdcVectorRef,
+  b: HdcVectorRef,
+) -> Result(HdcVectorRef, String)
 
 @external(erlang, "viva_tensor_zig", "hdc_similarity")
 fn hdc_similarity_ffi(a: HdcVectorRef, b: HdcVectorRef) -> Result(Float, String)
 
 @external(erlang, "viva_tensor_zig", "hdc_permute")
-fn hdc_permute_ffi(vec: HdcVectorRef, shift: Int) -> Result(HdcVectorRef, String)
+fn hdc_permute_ffi(
+  vec: HdcVectorRef,
+  shift: Int,
+) -> Result(HdcVectorRef, String)
 
 @external(erlang, "viva_tensor_zig", "hdc_dim")
 fn hdc_dim_ffi(vec: HdcVectorRef) -> Result(Int, String)
+
+// =============================================================================
+// Quantization - NF4 / INT8 Compression
+// =============================================================================
+
+/// Matrix multiplication with NF4 quantized weights
+pub fn nt_matmul_nf4(
+  a: NativeTensorRef,
+  b_indices: List(Int),
+  b_scales: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+  block_size: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_matmul_nf4_ffi(a, b_indices, b_scales, m, n, k, block_size)
+}
+
+// Quantization FFI bindings
+@external(erlang, "viva_tensor_zig", "nt_matmul_nf4")
+fn nt_matmul_nf4_ffi(
+  a: NativeTensorRef,
+  b_indices: List(Int),
+  b_scales: List(Float),
+  m: Int,
+  n: Int,
+  k: Int,
+  block_size: Int,
+) -> Result(NativeTensorRef, String)
+
+// =============================================================================
+// CudaTensor - Persistent GPU Memory (FP32)
+// =============================================================================
+
+pub type CudaTensorRef
+
+@external(erlang, "viva_tensor_zig", "ct_from_list")
+pub fn ct_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(CudaTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "ct_to_list")
+pub fn ct_to_list(ref: CudaTensorRef) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "ct_shape")
+pub fn ct_shape(ref: CudaTensorRef) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "ct_matmul")
+pub fn ct_matmul(
+  a: CudaTensorRef,
+  b: CudaTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(CudaTensorRef, String)
+
+// =============================================================================
+// CudaTensor16 - FP16 Tensor Cores (330 TFLOPS)
+// =============================================================================
+
+pub type CudaTensor16Ref
+
+@external(erlang, "viva_tensor_zig", "ct16_available")
+pub fn ct16_available() -> Bool
+
+@external(erlang, "viva_tensor_zig", "ct16_from_list")
+pub fn ct16_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(CudaTensor16Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ct16_to_list")
+pub fn ct16_to_list(ref: CudaTensor16Ref) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "ct16_shape")
+pub fn ct16_shape(ref: CudaTensor16Ref) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "ct16_matmul")
+pub fn ct16_matmul(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(CudaTensor16Ref, String)
+
+// =============================================================================
+// SparseTensor - 2:4 Sparsity (660+ TFLOPS)
+// =============================================================================
+
+pub type SparseTensorRef
+
+@external(erlang, "viva_tensor_zig", "sparse_available")
+pub fn sparse_available() -> Bool
+
+@external(erlang, "viva_tensor_zig", "sparse_from_ct16")
+pub fn sparse_from_ct16(ref: CudaTensor16Ref) -> Result(SparseTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "sparse_shape")
+pub fn sparse_shape(ref: SparseTensorRef) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "sparse_compression_ratio")
+pub fn sparse_compression_ratio(ref: SparseTensorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "sparse_matmul")
+pub fn sparse_matmul(
+  a_sparse: SparseTensorRef,
+  b_dense: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(CudaTensor16Ref, String)

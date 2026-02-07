@@ -78,24 +78,27 @@ pub fn backend_name(backend: BlasBackend) -> String {
 /// Performance tier for the backend
 pub fn expected_gflops(backend: BlasBackend, matrix_size: Int) -> Int {
   case backend {
-    IntelMKL -> case matrix_size {
-      s if s >= 4000 -> 800
-      s if s >= 2000 -> 600
-      s if s >= 1000 -> 450
-      _ -> 300
-    }
-    OpenBLAS -> case matrix_size {
-      s if s >= 4000 -> 500
-      s if s >= 2000 -> 400
-      s if s >= 1000 -> 300
-      _ -> 200
-    }
-    ZigSIMD -> case matrix_size {
-      s if s >= 4000 -> 450
-      s if s >= 2000 -> 350
-      s if s >= 1000 -> 250
-      _ -> 150
-    }
+    IntelMKL ->
+      case matrix_size {
+        s if s >= 4000 -> 800
+        s if s >= 2000 -> 600
+        s if s >= 1000 -> 450
+        _ -> 300
+      }
+    OpenBLAS ->
+      case matrix_size {
+        s if s >= 4000 -> 500
+        s if s >= 2000 -> 400
+        s if s >= 1000 -> 300
+        _ -> 200
+      }
+    ZigSIMD ->
+      case matrix_size {
+        s if s >= 4000 -> 450
+        s if s >= 2000 -> 350
+        s if s >= 1000 -> 250
+        _ -> 150
+      }
     Unknown -> 100
   }
 }

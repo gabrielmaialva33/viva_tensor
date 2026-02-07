@@ -561,7 +561,10 @@ pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
 }
 
 /// Create native tensor filled with value
-pub fn native_fill(shape: List(Int), value: Float) -> Result(Tensor, TensorError) {
+pub fn native_fill(
+  shape: List(Int),
+  value: Float,
+) -> Result(Tensor, TensorError) {
   case ffi.nt_fill(shape, value) {
     Ok(ref) -> Ok(Native(ref: ref, shape: shape))
     Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))

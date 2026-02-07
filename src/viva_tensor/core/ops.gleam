@@ -305,7 +305,9 @@ pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
           let start = row_idx * n
           list.range(0, n - 1)
           |> list.fold(0.0, fn(acc, k) {
-            acc +. ffi.array_get(mat_arr, start + k) *. ffi.array_get(vec_arr, k)
+            acc
+            +. ffi.array_get(mat_arr, start + k)
+            *. ffi.array_get(vec_arr, k)
           })
         })
       tensor.new(result_data, [m])
@@ -333,7 +335,9 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
           |> list.map(fn(j) {
             list.range(0, n - 1)
             |> list.fold(0.0, fn(acc, k) {
-              acc +. ffi.array_get(a_arr, row_start + k) *. ffi.array_get(b_arr, k * p + j)
+              acc
+              +. ffi.array_get(a_arr, row_start + k)
+              *. ffi.array_get(b_arr, k * p + j)
             })
           })
         })
@@ -406,10 +410,7 @@ pub fn dot_auto(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
     True -> {
       let t0 = ffi.now_microseconds()
       // Try Native path first (zero list conversion)
-      let #(result, backend) = case
-        tensor.native_ref(a),
-        tensor.native_ref(b)
-      {
+      let #(result, backend) = case tensor.native_ref(a), tensor.native_ref(b) {
         Ok(ref_a), Ok(ref_b) ->
           case ffi.nt_dot(ref_a, ref_b) {
             Ok(r) -> #(Ok(r), "native")
@@ -465,16 +466,10 @@ pub fn matmul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
     [m, k], [k2, n] if k == k2 -> {
       let t0 = ffi.now_microseconds()
       // Try Native path first (zero list conversion)
-      let #(result, backend) = case
-        tensor.native_ref(a),
-        tensor.native_ref(b)
-      {
+      let #(result, backend) = case tensor.native_ref(a), tensor.native_ref(b) {
         Ok(ref_a), Ok(ref_b) ->
           case ffi.nt_matmul(ref_a, ref_b, m, n, k) {
-            Ok(ref_c) -> #(
-              Ok(tensor.from_native_ref(ref_c, [m, n])),
-              "native",
-            )
+            Ok(ref_c) -> #(Ok(tensor.from_native_ref(ref_c, [m, n])), "native")
             Error(_) -> matmul_list_fallback(a, b, m, n, k)
           }
         _, _ -> matmul_list_fallback(a, b, m, n, k)
@@ -615,10 +610,7 @@ pub fn add_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-fn add_list_fallback(
-  a: Tensor,
-  b: Tensor,
-) -> Result(Tensor, TensorError) {
+fn add_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   let a_data = tensor.to_list(a)
   let b_data = tensor.to_list(b)
   let result_data = case ffi.zig_is_loaded() {
@@ -648,10 +640,7 @@ pub fn sub_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-fn sub_list_fallback(
-  a: Tensor,
-  b: Tensor,
-) -> Result(Tensor, TensorError) {
+fn sub_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   let a_data = tensor.to_list(a)
   let b_data = tensor.to_list(b)
   let result_data = case ffi.zig_is_loaded() {
@@ -685,10 +674,7 @@ pub fn mul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
-fn mul_list_fallback(
-  a: Tensor,
-  b: Tensor,
-) -> Result(Tensor, TensorError) {
+fn mul_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   let a_data = tensor.to_list(a)
   let b_data = tensor.to_list(b)
   let result_data = case ffi.zig_is_loaded() {
