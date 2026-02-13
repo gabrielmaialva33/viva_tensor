@@ -95,7 +95,7 @@ bench: build ensure-output
 	@echo "$(YELLOW)[BENCH]$(NC) Running benchmarks..."
 	@echo "=== viva_tensor Benchmark - $(DATE) ===" > $(BENCH_OUTPUT)
 	@echo "" >> $(BENCH_OUTPUT)
-	gleam run -m bench/full >> $(BENCH_OUTPUT) 2>&1
+	gleam run -m viva_tensor/bench/full >> $(BENCH_OUTPUT) 2>&1
 	@echo "" >> $(BENCH_OUTPUT)
 	@echo "=== Benchmark Complete ===" >> $(BENCH_OUTPUT)
 	@echo "$(GREEN)[OK]$(NC) Benchmark saved to: $(BENCH_OUTPUT)"
@@ -111,7 +111,7 @@ metrics: build ensure-output
 demo: build ensure-output
 	@echo "$(YELLOW)[DEMO]$(NC) Running demonstration..."
 	@echo "=== viva_tensor Demo - $(DATE) ===" > $(DEMO_OUTPUT)
-	gleam run -m examples/demo >> $(DEMO_OUTPUT) 2>&1
+	gleam run -m viva_tensor/examples/demo >> $(DEMO_OUTPUT) 2>&1
 	@echo "$(GREEN)[OK]$(NC) Demo saved to: $(DEMO_OUTPUT)"
 
 ## Generate documentation
