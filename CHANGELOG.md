@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.1.0] - 2026-02-13
+
+### Highlights
+
+Release-ready build validated on Ubuntu with full test suite (187/187).
+Confirmed compatibility with [VIVA](https://github.com/gabrielmaialva33/viva) holographic mycelium networks (HRR binding/superposition, HoloNEAT neuroevolution, MAP-Elites quality-diversity).
+
+### Fixed
+
+- Move bench/examples under `viva_tensor` namespace for Hex.pm publishing compatibility
+
+### Verified
+
+- 187 tests passing (core tensor, operations, autograd, shapes, CNN, NIF)
+- Intel MKL NIF loads correctly (24 cores, compact affinity, DAZ+FTZ)
+- VIVA project builds cleanly against viva_tensor v2.1.0
+- All 14 GPU backends operational (FP32, FP16, INT8, FP8, sparse, fused, batched)
+
+---
+
 ## [2.0.0] - 2026-02-13
 
 ### Performance Scorecard

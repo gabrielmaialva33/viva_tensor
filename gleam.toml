@@ -1,5 +1,5 @@
 name = "viva_tensor"
-version = "2.0.0"
+version = "2.1.0"
 description = "High-performance tensor library for Gleam/BEAM with Zig NIF, Intel MKL (931 GFLOPS), CUDA Tensor Cores (1854 TOPS), and quantization"
 licences = ["MIT"]
 repository = { type = "github", user = "gabrielmaialva33", repo = "viva_tensor" }
