@@ -27,6 +27,7 @@
 // Users can import viva_tensor and get everything they need.
 
 import viva_tensor/tensor
+import viva_tensor/tflops as tflops_mod
 
 // --- Types ------------------------------------------------------------------
 
@@ -362,4 +363,38 @@ pub fn avg_pool2d(
 /// Global average pooling
 pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
   tensor.global_avg_pool2d(input)
+}
+
+// --- TFLOPS Benchmarking ----------------------------------------------------
+
+pub type TflopsBackend =
+  tflops_mod.Backend
+
+pub type TflopsResult =
+  tflops_mod.TflopsResult
+
+/// Measure TFLOPS for a single matmul operation
+pub fn measure_tflops(
+  backend: TflopsBackend,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> TflopsResult {
+  tflops_mod.measure_matmul(backend, m, n, k)
+}
+
+/// Measure averaged TFLOPS (warmup + iterations)
+pub fn measure_tflops_averaged(
+  backend: TflopsBackend,
+  m: Int,
+  n: Int,
+  k: Int,
+  iterations: Int,
+) -> TflopsResult {
+  tflops_mod.measure_matmul_averaged(backend, m, n, k, iterations)
+}
+
+/// Detect available compute backends
+pub fn detect_backends() -> List(TflopsBackend) {
+  tflops_mod.detect_backends()
 }

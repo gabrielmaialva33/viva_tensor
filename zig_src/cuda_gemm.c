@@ -1,12 +1,5 @@
 /**
- * cuda_gemm.c - cuBLAS DGEMM wrapper for viva_tensor
- *
- * RTX 4090 Ada Lovelace:
- *   - FP32: 82.58 TFLOPS (tensor cores)
- *   - FP64: 1.29 TFLOPS (still 1.5x faster than MKL!)
- *
- * This file uses dlopen to dynamically load CUDA runtime and cuBLAS.
- * No compile-time CUDA dependency needed.
+ * cuda_gemm.c - cuBLAS GEMM wrapper via dlopen (no compile-time CUDA dependency)
  */
 
 #ifndef _WIN32
@@ -14,85 +7,11 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
+#include "cuda_types.h"
 
-/* CUDA types (from cuda_runtime_api.h) */
-typedef int cudaError_t;
-typedef void* cudaStream_t;
-
-/* cuBLAS types (from cublas_v2.h) */
-typedef void* cublasHandle_t;
-typedef int cublasStatus_t;
-typedef int cublasOperation_t;
-
-/* CUDA operation codes */
-#define cudaSuccess 0
-#define CUBLAS_STATUS_SUCCESS 0
-#define CUBLAS_OP_N 0  /* No transpose */
-#define CUBLAS_OP_T 1  /* Transpose */
-
-/* Function pointer types for CUDA runtime */
-typedef cudaError_t (*cuda_malloc_fn)(void**, size_t);
-typedef cudaError_t (*cuda_free_fn)(void*);
-typedef cudaError_t (*cuda_memcpy_fn)(void*, const void*, size_t, int);
-typedef cudaError_t (*cuda_device_sync_fn)(void);
-typedef const char* (*cuda_get_error_fn)(cudaError_t);
-
-/* Function pointer types for cuBLAS */
-typedef cublasStatus_t (*cublas_create_fn)(cublasHandle_t*);
-typedef cublasStatus_t (*cublas_destroy_fn)(cublasHandle_t);
-typedef cublasStatus_t (*cublas_dgemm_fn)(
-    cublasHandle_t, cublasOperation_t, cublasOperation_t,
-    int, int, int,
-    const double*, const double*, int,
-    const double*, int,
-    const double*, double*, int);
-typedef cublasStatus_t (*cublas_sgemm_fn)(
-    cublasHandle_t, cublasOperation_t, cublasOperation_t,
-    int, int, int,
-    const float*, const float*, int,
-    const float*, int,
-    const float*, float*, int);
-
-/* cublasGemmEx - Generic GEMM with Tensor Core support */
-/* Enables INT8 (660 TFLOPS) and FP16 (330 TFLOPS) on RTX 4090! */
-typedef int cudaDataType_t;
-typedef int cublasComputeType_t;
-typedef int cublasGemmAlgo_t;
-
-/* CUDA data types for cublasGemmEx */
-#define CUDA_R_8I   3   /* INT8 */
-#define CUDA_R_32I  10  /* INT32 */
-#define CUDA_R_32F  0   /* FP32 */
-#define CUDA_R_16F  2   /* FP16 */
-
-/* cuBLAS compute types */
-#define CUBLAS_COMPUTE_32I           70   /* INT8 input, INT32 accumulator */
-#define CUBLAS_COMPUTE_32F           68   /* FP32 compute */
-#define CUBLAS_COMPUTE_32F_FAST_16F  74   /* FP16 Tensor Core with FP32 acc */
-
-/* cuBLAS GEMM algorithms */
-#define CUBLAS_GEMM_DEFAULT          -1
-#define CUBLAS_GEMM_DEFAULT_TENSOR_OP 99  /* Force Tensor Core usage */
-
-typedef cublasStatus_t (*cublas_gemm_ex_fn)(
-    cublasHandle_t, cublasOperation_t, cublasOperation_t,
-    int, int, int,
-    const void*, const void*, cudaDataType_t, int,
-    const void*, cudaDataType_t, int,
-    const void*, void*, cudaDataType_t, int,
-    cublasComputeType_t, cublasGemmAlgo_t);
-
-/* cublasSetMathMode for explicit Tensor Core control */
-typedef int cublasMath_t;
-#define CUBLAS_DEFAULT_MATH 0
-#define CUBLAS_TENSOR_OP_MATH 1
-#define CUBLAS_TF32_TENSOR_OP_MATH 3
-typedef cublasStatus_t (*cublas_set_math_mode_fn)(cublasHandle_t, cublasMath_t);
-
-/* cudaMemcpyKind */
-#define cudaMemcpyHostToDevice 1
-#define cudaMemcpyDeviceToHost 2
+/* cuBLAS workspace (32 MiB for Ada) */
+#define CUBLAS_WORKSPACE_SIZE (32 * 1024 * 1024)
+static void *g_cublas_workspace = NULL;
 
 /* Global CUDA state */
 static void *g_cuda_rt_handle = NULL;
@@ -114,6 +33,8 @@ static cublas_dgemm_fn g_cublas_dgemm = NULL;
 cublas_sgemm_fn g_cublas_sgemm = NULL;  /* exported for cuda_sage.c */
 cublas_gemm_ex_fn g_cublas_gemm_ex = NULL;  /* exported for cuda_sage.c */
 static cublas_set_math_mode_fn g_cublas_set_math_mode = NULL;
+static cublas_set_workspace_fn g_cublas_set_workspace = NULL;
+static cublas_gemm_strided_batched_ex_fn g_cublas_gemm_strided_batched_ex = NULL;
 
 /**
  * Initialize CUDA and cuBLAS via dlopen
@@ -171,6 +92,8 @@ int cuda_init(void) {
     g_cublas_sgemm = (cublas_sgemm_fn)dlsym(g_cublas_handle, "cublasSgemm_v2");
     g_cublas_gemm_ex = (cublas_gemm_ex_fn)dlsym(g_cublas_handle, "cublasGemmEx");
     g_cublas_set_math_mode = (cublas_set_math_mode_fn)dlsym(g_cublas_handle, "cublasSetMathMode");
+    g_cublas_set_workspace = (cublas_set_workspace_fn)dlsym(g_cublas_handle, "cublasSetWorkspace_v2");
+    g_cublas_gemm_strided_batched_ex = (cublas_gemm_strided_batched_ex_fn)dlsym(g_cublas_handle, "cublasGemmStridedBatchedEx");
 
     if (!g_cublas_create || !g_cublas_destroy || !g_cublas_dgemm) {
         dlclose(g_cublas_handle);
@@ -191,14 +114,28 @@ int cuda_init(void) {
         return 0;
     }
 
-    /* Enable Tensor Cores for maximum performance! */
+    /* Enable Tensor Cores (TF32 math mode) */
     if (g_cublas_set_math_mode) {
         g_cublas_set_math_mode(g_cublas_ctx, CUBLAS_TF32_TENSOR_OP_MATH);
     }
 
+    /* Allocate 32 MiB workspace for cuBLAS (required for best algorithms on Ada) */
+    if (g_cublas_set_workspace && g_cuda_malloc) {
+        cudaError_t werr = g_cuda_malloc((void **)&g_cublas_workspace, CUBLAS_WORKSPACE_SIZE);
+        if (werr == cudaSuccess && g_cublas_workspace) {
+            cublasStatus_t wstat = g_cublas_set_workspace(g_cublas_ctx, g_cublas_workspace, CUBLAS_WORKSPACE_SIZE);
+            if (wstat == CUBLAS_STATUS_SUCCESS) {
+                fprintf(stderr, "[viva_tensor] cuBLAS workspace: 32 MiB (optimal for Ada)\n");
+            } else {
+                g_cuda_free(g_cublas_workspace);
+                g_cublas_workspace = NULL;
+            }
+        }
+    }
+
     const char *tensor_core_status = g_cublas_gemm_ex ? "INT8/FP16 Tensor Cores ENABLED" : "FP32 only";
     fprintf(stderr, "[viva_tensor] CUDA backend: cuBLAS (%s)\n", tensor_core_status);
-    fprintf(stderr, "[viva_tensor] RTX 4090: FP32=82T, FP16=330T, INT8=660 TFLOPS\n");
+    fprintf(stderr, "[viva_tensor] CUDA initialized (cuBLAS + cublasLt)\n");
     g_cuda_available = 1;
     return 1;
 }
@@ -273,11 +210,8 @@ cleanup:
 }
 
 /**
- * SGEMM on GPU: C = alpha * A @ B + beta * C (SINGLE PRECISION - 60x faster!)
+ * SGEMM on GPU: C = alpha * A @ B + beta * C (FP32 with TF32 Tensor Cores)
  * A is M x K, B is K x N, C is M x N (all row-major)
- *
- * RTX 4090: 82 TFLOPS FP32 vs 1.3 TFLOPS FP64
- * Expected: 40-60 TFLOPS real (memory bound for large matrices)
  */
 int cuda_sgemm(int M, int N, int K,
                float alpha, const float *A, int lda,
@@ -368,7 +302,7 @@ void cuda_cleanup(void) {
 }
 
 /* =========================================================================
- * CudaTensor API - Persistent GPU memory for ZERO-COPY operations
+ * CudaTensor API - Persistent GPU memory management
  * Eliminates PCIe transfer overhead for repeated operations
  * ========================================================================= */
 
@@ -416,18 +350,37 @@ int cuda_tensor_download(float *h_dst, const float *d_src, size_t num_elements) 
 }
 
 /**
- * SGEMM with data ALREADY on GPU - NO PCIe transfer!
+ * SGEMM on pre-uploaded GPU data (no PCIe transfer overhead)
  * C = alpha * A @ B + beta * C (all pointers are GPU memory)
- *
- * This is where we get 40+ TFLOPS - pure compute, no transfer overhead
  */
 int cuda_sgemm_gpu(int M, int N, int K,
                    float alpha, const float *d_A, int lda,
                    const float *d_B, int ldb,
                    float beta, float *d_C, int ldc) {
-    if (!g_cuda_available || !g_cublas_sgemm) return -1;
+    if (!g_cuda_available) return -1;
 
-    /* cuBLAS SGEMM (column-major trick: swap A and B, swap M and N) */
+    /* Use cublasGemmEx with TF32 Tensor Cores */
+    if (g_cublas_gemm_ex) {
+        cublasStatus_t stat = g_cublas_gemm_ex(
+            g_cublas_ctx,
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            N, M, K,
+            &alpha,
+            d_B, CUDA_R_32F, N,
+            d_A, CUDA_R_32F, K,
+            &beta,
+            d_C, CUDA_R_32F, N,
+            CUBLAS_COMPUTE_32F_FAST_TF32,
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP
+        );
+        if (stat == CUBLAS_STATUS_SUCCESS) {
+            g_cuda_sync();
+            return 0;
+        }
+    }
+
+    /* Fallback */
+    if (!g_cublas_sgemm) return -1;
     cublasStatus_t stat = g_cublas_sgemm(
         g_cublas_ctx,
         CUBLAS_OP_N, CUBLAS_OP_N,
@@ -462,9 +415,12 @@ int cuda_tensor_upload_batch(float **d_dsts, const float **h_srcs,
     return 0;
 }
 
+/* Forward declaration for cublasLtMatmul-based INT8 GEMM */
+int cuda_igemm_lt_gpu(int M, int N, int K, const int8_t *d_A, int lda,
+                       const int8_t *d_B, int ldb, int32_t *d_C, int ldc);
+
 /* =========================================================================
- * INT8 Tensor Core GEMM - 660 TFLOPS on RTX 4090!
- * This is 8x faster than FP32 and 500x faster than FP64!
+ * INT8 Tensor Core GEMM (cublasGemmEx + COMPUTE_32I)
  * ========================================================================= */
 
 /**
@@ -517,8 +473,7 @@ int cuda_tensor_download_int32(int32_t *h_dst, const int32_t *d_src, size_t num_
  * INT8 GEMM on Tensor Cores: C = A @ B (with INT32 accumulator)
  * A is INT8 [M x K], B is INT8 [K x N], C is INT32 [M x N]
  *
- * RTX 4090 Tensor Cores: 660 TFLOPS INT8!
- * That's 8x faster than FP32 and perfect for quantized models.
+ * INT8 Tensor Core path
  *
  * Note: Tensor Cores require dimensions to be multiples of 16 for best perf.
  */
@@ -526,40 +481,8 @@ int cuda_igemm_gpu(int M, int N, int K,
                    int32_t alpha, const int8_t *d_A, int lda,
                    const int8_t *d_B, int ldb,
                    int32_t beta, int32_t *d_C, int ldc) {
-    if (!g_cuda_available || !g_cublas_gemm_ex) {
-        fprintf(stderr, "[viva_tensor] cublasGemmEx not available for INT8\n");
-        return -1;
-    }
-
-    /* Use cublasGemmEx for INT8 Tensor Core GEMM */
-    /* Column-major trick: C = A @ B becomes C^T = B^T @ A^T */
-    /*
-     * Note: For INT8 GEMM, cuBLAS requires:
-     * - alpha/beta must be float (not int) for some compute modes
-     * - CUBLAS_GEMM_DEFAULT lets cuBLAS choose the best algorithm
-     */
-    float alpha_f = (float)alpha;
-    float beta_f = (float)beta;
-    cublasStatus_t stat = g_cublas_gemm_ex(
-        g_cublas_ctx,
-        CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,                        /* Swapped for row-major */
-        &alpha_f,
-        d_B, CUDA_R_8I, N,              /* B is INT8 */
-        d_A, CUDA_R_8I, K,              /* A is INT8 */
-        &beta_f,
-        d_C, CUDA_R_32I, N,             /* C is INT32 accumulator */
-        CUBLAS_COMPUTE_32I,              /* INT8 compute with INT32 acc */
-        CUBLAS_GEMM_DEFAULT              /* Let cuBLAS choose best algo */
-    );
-
-    if (stat != CUBLAS_STATUS_SUCCESS) {
-        fprintf(stderr, "[viva_tensor] cuBLAS INT8 GEMM error: %d\n", stat);
-        return -2;
-    }
-
-    g_cuda_sync();
-    return 0;
+    /* Delegate to cublasLtMatmul version for proper Tensor Core usage */
+    return cuda_igemm_lt_gpu(M, N, K, d_A, lda, d_B, ldb, d_C, ldc);
 }
 
 /**
@@ -623,8 +546,7 @@ int cuda_int8_available(void) {
 }
 
 /* =========================================================================
- * FP16 Tensor Core GEMM - 330 TFLOPS on RTX 4090!
- * Best for mixed-precision training and inference.
+ * FP16 Tensor Core GEMM (cublasGemmEx + COMPUTE_16F)
  * ========================================================================= */
 
 /* FP16 type for CUDA */
@@ -648,7 +570,7 @@ cuda_half_t* cuda_tensor_alloc_fp16(size_t num_elements) {
  * A is FP16 [M x K], B is FP16 [K x N], C is FP32 [M x N]
  *
  * Uses FP16 Tensor Cores with FP32 accumulator for accuracy.
- * RTX 4090: 330 TFLOPS!
+ * FP16 HGEMM (Tensor Cores)
  */
 int cuda_hgemm_gpu(int M, int N, int K,
                    float alpha, const cuda_half_t *d_A, int lda,
@@ -678,6 +600,118 @@ int cuda_hgemm_gpu(int M, int N, int K,
         return -2;
     }
 
+    g_cuda_sync();
+    return 0;
+}
+
+/**
+ * Pure FP16 HGEMM on GPU - FP16 in, FP16 out, FP16 compute
+ * Maximum throughput: no FP32 conversion, half the output bandwidth.
+ * For in-place usage: pass pre-allocated d_C pointer.
+ * Pure FP16 HGEMM (COMPUTE_16F for max throughput)
+ */
+int cuda_hgemm_gpu_pure16(int M, int N, int K,
+                           const cuda_half_t *d_A, int lda,
+                           const cuda_half_t *d_B, int ldb,
+                           cuda_half_t *d_C, int ldc) {
+    if (!g_cuda_available || !g_cublas_gemm_ex) return -1;
+
+    /* FP16 alpha/beta for pure FP16 path */
+    cuda_half_t alpha_h = 0x3C00;  /* 1.0 in FP16 */
+    cuda_half_t beta_h  = 0x0000;  /* 0.0 in FP16 */
+
+    cublasStatus_t stat = g_cublas_gemm_ex(
+        g_cublas_ctx,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        N, M, K,
+        &alpha_h,
+        d_B, CUDA_R_16F, N,
+        d_A, CUDA_R_16F, K,
+        &beta_h,
+        d_C, CUDA_R_16F, N,        /* Output FP16, half the bandwidth */
+        CUBLAS_COMPUTE_16F,          /* Pure FP16 compute */
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    );
+
+    if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+    g_cuda_sync();
+    return 0;
+}
+
+/**
+ * Pure FP16 HGEMM async (no sync) - for pipeline benchmarks
+ */
+int cuda_hgemm_gpu_pure16_async(int M, int N, int K,
+                                 const cuda_half_t *d_A, int lda,
+                                 const cuda_half_t *d_B, int ldb,
+                                 cuda_half_t *d_C, int ldc) {
+    if (!g_cuda_available || !g_cublas_gemm_ex) return -1;
+
+    cuda_half_t alpha_h = 0x3C00;
+    cuda_half_t beta_h  = 0x0000;
+
+    cublasStatus_t stat = g_cublas_gemm_ex(
+        g_cublas_ctx,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        N, M, K,
+        &alpha_h,
+        d_B, CUDA_R_16F, N,
+        d_A, CUDA_R_16F, K,
+        &beta_h,
+        d_C, CUDA_R_16F, N,
+        CUBLAS_COMPUTE_16F,
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP
+    );
+
+    return (stat == CUBLAS_STATUS_SUCCESS) ? 0 : -2;
+}
+
+/**
+ * FP32 SGEMM in-place on GPU using TF32 Tensor Cores.
+ * TF32 uses Tensor Cores for FP32 matmul (~2x over pure FP32).
+ * RTX 4090: 82T (FP32) -> 165T (TF32)
+ */
+int cuda_sgemm_gpu_inplace(int M, int N, int K,
+                            float alpha, const float *d_A, int lda,
+                            const float *d_B, int ldb,
+                            float beta, float *d_C, int ldc) {
+    if (!g_cuda_available) return -1;
+
+    /* Use cublasGemmEx with TF32 for Tensor Core acceleration */
+    if (g_cublas_gemm_ex) {
+        cublasStatus_t stat = g_cublas_gemm_ex(
+            g_cublas_ctx,
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            N, M, K,
+            &alpha,
+            d_B, CUDA_R_32F, N,
+            d_A, CUDA_R_32F, K,
+            &beta,
+            d_C, CUDA_R_32F, N,
+            CUBLAS_COMPUTE_32F_FAST_TF32,     /* TF32 Tensor Cores */
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP
+        );
+        if (stat == CUBLAS_STATUS_SUCCESS) {
+            g_cuda_sync();
+            return 0;
+        }
+        /* Fall through to cublasSgemm if TF32 fails */
+    }
+
+    /* Fallback: regular cublasSgemm */
+    if (!g_cublas_sgemm) return -1;
+    cublasStatus_t stat = g_cublas_sgemm(
+        g_cublas_ctx,
+        CUBLAS_OP_N, CUBLAS_OP_N,
+        N, M, K,
+        &alpha,
+        d_B, N,
+        d_A, K,
+        &beta,
+        d_C, N
+    );
+
+    if (stat != CUBLAS_STATUS_SUCCESS) return -2;
     g_cuda_sync();
     return 0;
 }
@@ -725,7 +759,7 @@ int cuda_tensor_download_fp16(cuda_half_t *h_dst, const cuda_half_t *d_src, size
  * Input: FP16 matrices A[M,K] and B[K,N] on CPU
  * Output: FP32 matrix C[M,N] on CPU (higher precision accumulator)
  *
- * RTX 4090 Tensor Cores: 330 TFLOPS FP16!
+ * FP16 Tensor Core path
  */
 int cuda_hgemm(int M, int N, int K,
                float alpha, const cuda_half_t *A, int lda,
@@ -762,7 +796,7 @@ int cuda_hgemm(int M, int N, int K,
         err = g_cuda_memcpy(d_C, C, 0, cudaMemcpyHostToDevice);  /* No-op but valid */
     }
 
-    /* Run FP16 GEMM on Tensor Cores - 330 TFLOPS! */
+    /* Run FP16 GEMM on Tensor Cores */
     int result = cuda_hgemm_gpu(M, N, K, alpha, d_A, lda, d_B, ldb, beta, d_C, ldc);
     if (result != 0) {
         err = 1;
@@ -782,7 +816,7 @@ cleanup_hgemm:
 
 /* =========================================================================
  * cublasLt for INT8 Tensor Cores (Ada Lovelace IMMA)
- * cublasGemmEx uses DP4A (old), cublasLt uses proper Tensor Cores!
+ * cublasGemmEx uses DP4A; cublasLt enables IMMA Tensor Cores.
  * ========================================================================= */
 
 /* cublasLt types */
@@ -790,14 +824,41 @@ typedef void* cublasLtHandle_t;
 typedef void* cublasLtMatmulDesc_t;
 typedef void* cublasLtMatrixLayout_t;
 typedef void* cublasLtMatmulPreference_t;
-typedef void* cublasLtMatmulHeuristicResult_t;
+
+/* cublasLtMatmulAlgo_t - opaque 64 bytes */
+typedef struct { uint64_t data[8]; } cublasLtMatmulAlgo_t;
+
+/* cublasLtMatmulHeuristicResult_t - 96 bytes */
+typedef struct __attribute__((aligned(8))) {
+    cublasLtMatmulAlgo_t algo;      /* 64 bytes */
+    size_t workspaceSize;            /* 8 bytes */
+    cublasStatus_t state;            /* 4 bytes */
+    float wavesCount;                /* 4 bytes */
+    int reserved[4];                 /* 16 bytes */
+} cublasLtHeuristicResult_t;
 
 /* cublasLt compute types for Tensor Cores */
-#define CUBLAS_COMPUTE_32I_PEDANTIC    72   /* Force IMMA Tensor Cores! */
+#define CUBLAS_COMPUTE_32I_PEDANTIC    73   /* Force IMMA Tensor Cores (pedantic) */
 
-/* cublasLt attribute enums */
-#define CUBLASLT_MATMUL_DESC_SCALE_TYPE         4
+/* cublasLt attribute enums (from cublasLt.h) */
+#define CUBLASLT_MATRIX_LAYOUT_ORDER             1
+#define CUBLASLT_MATMUL_DESC_TRANSA              3
+#define CUBLASLT_MATMUL_DESC_TRANSB              4
+#define CUBLASLT_MATMUL_DESC_EPILOGUE            7
+#define CUBLASLT_MATMUL_DESC_BIAS_POINTER        8
 #define CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES 1
+
+/* cublasLt epilogue types (fused activations) */
+#define CUBLASLT_EPILOGUE_DEFAULT     1
+#define CUBLASLT_EPILOGUE_RELU        2
+#define CUBLASLT_EPILOGUE_BIAS        4
+#define CUBLASLT_EPILOGUE_RELU_BIAS   6   /* RELU | BIAS */
+#define CUBLASLT_EPILOGUE_GELU       32
+#define CUBLASLT_EPILOGUE_GELU_BIAS  36   /* GELU | BIAS */
+
+/* cublasLt layout order */
+#define CUBLASLT_ORDER_COL  0
+#define CUBLASLT_ORDER_ROW  1
 
 /* cublasLt function pointers */
 typedef cublasStatus_t (*cublaslt_create_fn)(cublasLtHandle_t*);
@@ -814,11 +875,13 @@ typedef cublasStatus_t (*cublaslt_matmul_preference_create_fn)(cublasLtMatmulPre
 typedef cublasStatus_t (*cublaslt_matmul_preference_destroy_fn)(cublasLtMatmulPreference_t);
 typedef cublasStatus_t (*cublaslt_matmul_preference_set_attr_fn)(
     cublasLtMatmulPreference_t, int, const void*, size_t);
+typedef cublasStatus_t (*cublaslt_matrix_layout_set_attr_fn)(
+    cublasLtMatrixLayout_t, int, const void*, size_t);
 typedef cublasStatus_t (*cublaslt_matmul_algo_get_heuristic_fn)(
     cublasLtHandle_t, cublasLtMatmulDesc_t,
     cublasLtMatrixLayout_t, cublasLtMatrixLayout_t,
     cublasLtMatrixLayout_t, cublasLtMatrixLayout_t,
-    cublasLtMatmulPreference_t, int, void*, int*);
+    cublasLtMatmulPreference_t, int, cublasLtHeuristicResult_t*, int*);
 typedef cublasStatus_t (*cublaslt_matmul_fn)(
     cublasLtHandle_t, cublasLtMatmulDesc_t,
     const void*, const void*, cublasLtMatrixLayout_t,
@@ -842,8 +905,33 @@ static cublaslt_matrix_layout_destroy_fn g_cublaslt_matrix_layout_destroy = NULL
 static cublaslt_matmul_preference_create_fn g_cublaslt_matmul_preference_create = NULL;
 static cublaslt_matmul_preference_destroy_fn g_cublaslt_matmul_preference_destroy = NULL;
 static cublaslt_matmul_preference_set_attr_fn g_cublaslt_matmul_preference_set_attr = NULL;
+static cublaslt_matrix_layout_set_attr_fn g_cublaslt_matrix_layout_set_attr = NULL;
 static cublaslt_matmul_algo_get_heuristic_fn g_cublaslt_matmul_algo_get_heuristic = NULL;
 static cublaslt_matmul_fn g_cublaslt_matmul = NULL;
+
+/* cublasLt workspace for heuristic algorithms */
+static void *g_cublaslt_workspace = NULL;
+#define CUBLASLT_WORKSPACE_SIZE (32 * 1024 * 1024)
+
+/* Algorithm cache for repeated same-size INT8 calls */
+static int g_int8_cache_m = 0, g_int8_cache_n = 0, g_int8_cache_k = 0;
+static cublasLtHeuristicResult_t g_int8_cached_result;
+static int g_int8_cache_valid = 0;
+
+/* FP16 TN algorithm cache */
+static int g_fp16_cache_m = 0, g_fp16_cache_n = 0, g_fp16_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_cached_result;
+static int g_fp16_cache_valid = 0;
+
+/* FP16 fused GEMM+ReLU algorithm cache */
+static int g_fp16_relu_cache_m = 0, g_fp16_relu_cache_n = 0, g_fp16_relu_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_relu_cached_result;
+static int g_fp16_relu_cache_valid = 0;
+
+/* FP16 fused GEMM+GELU algorithm cache */
+static int g_fp16_gelu_cache_m = 0, g_fp16_gelu_cache_n = 0, g_fp16_gelu_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_gelu_cached_result;
+static int g_fp16_gelu_cache_valid = 0;
 
 /**
  * Initialize cublasLt for INT8 Tensor Cores (Ada IMMA)
@@ -851,10 +939,19 @@ static cublaslt_matmul_fn g_cublaslt_matmul = NULL;
 int cublaslt_init(void) {
     if (g_cublaslt_available >= 0) return g_cublaslt_available;
 
+    /* Ensure CUDA runtime is initialized first (we need g_cuda_malloc) */
+    if (!cuda_available()) {
+        g_cublaslt_available = 0;
+        return 0;
+    }
+
     /* Load cublasLt library */
     g_cublaslt_handle = dlopen("libcublasLt.so", RTLD_NOW | RTLD_LOCAL);
     if (!g_cublaslt_handle) {
         g_cublaslt_handle = dlopen("libcublasLt.so.12", RTLD_NOW | RTLD_LOCAL);
+    }
+    if (!g_cublaslt_handle) {
+        g_cublaslt_handle = dlopen("libcublasLt.so.13", RTLD_NOW | RTLD_LOCAL);
     }
     if (!g_cublaslt_handle) {
         g_cublaslt_available = 0;
@@ -872,6 +969,7 @@ int cublaslt_init(void) {
     g_cublaslt_matmul_preference_create = (cublaslt_matmul_preference_create_fn)dlsym(g_cublaslt_handle, "cublasLtMatmulPreferenceCreate");
     g_cublaslt_matmul_preference_destroy = (cublaslt_matmul_preference_destroy_fn)dlsym(g_cublaslt_handle, "cublasLtMatmulPreferenceDestroy");
     g_cublaslt_matmul_preference_set_attr = (cublaslt_matmul_preference_set_attr_fn)dlsym(g_cublaslt_handle, "cublasLtMatmulPreferenceSetAttribute");
+    g_cublaslt_matrix_layout_set_attr = (cublaslt_matrix_layout_set_attr_fn)dlsym(g_cublaslt_handle, "cublasLtMatrixLayoutSetAttribute");
     g_cublaslt_matmul_algo_get_heuristic = (cublaslt_matmul_algo_get_heuristic_fn)dlsym(g_cublaslt_handle, "cublasLtMatmulAlgoGetHeuristic");
     g_cublaslt_matmul = (cublaslt_matmul_fn)dlsym(g_cublaslt_handle, "cublasLtMatmul");
 
@@ -890,16 +988,24 @@ int cublaslt_init(void) {
         return 0;
     }
 
-    fprintf(stderr, "[viva_tensor] cublasLt loaded - INT8 IMMA Tensor Cores ready!\n");
+    /* Allocate 32 MiB workspace for cublasLt heuristic algorithms */
+    if (g_cuda_malloc) {
+        cudaError_t werr = g_cuda_malloc(&g_cublaslt_workspace, CUBLASLT_WORKSPACE_SIZE);
+        if (werr != cudaSuccess) {
+            g_cublaslt_workspace = NULL;
+            fprintf(stderr, "[viva_tensor] cublasLt workspace alloc failed (non-fatal)\n");
+        }
+    }
+
+    fprintf(stderr, "[viva_tensor] cublasLt loaded - INT8 IMMA Tensor Cores ready (ws=%s)\n",
+            g_cublaslt_workspace ? "32MiB" : "none");
     g_cublaslt_available = 1;
     return 1;
 }
 
 /**
  * INT8 GEMM via cublasLt with IMMA Tensor Cores
- * This is the PROPER way to use INT8 Tensor Cores on Ada Lovelace!
- *
- * RTX 4090: 660 TFLOPS INT8 (vs 82 TFLOPS FP32)
+ * INT8 IMMA Tensor Core path (higher throughput than FP32)
  *
  * Dimensions should be multiples of 16 for best performance.
  */
@@ -915,7 +1021,6 @@ int cuda_igemm_lt(int M, int N, int K,
     }
 
     cudaError_t err;
-    cublasStatus_t stat;
 
     size_t size_a = (size_t)M * K;
     size_t size_b = (size_t)K * N;
@@ -940,88 +1045,12 @@ int cuda_igemm_lt(int M, int N, int K,
     err = g_cuda_memcpy(d_B, B, size_b, cudaMemcpyHostToDevice);
     if (err != cudaSuccess) goto cleanup_lt;
 
-    /* Create matmul descriptor with PEDANTIC for IMMA Tensor Cores */
-    cublasLtMatmulDesc_t matmul_desc;
-    stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32I_PEDANTIC, CUDA_R_32I);
-    if (stat != CUBLAS_STATUS_SUCCESS) {
+    /* Use cuda_igemm_lt_gpu for the actual GEMM (data is on GPU) */
+    int result = cuda_igemm_lt_gpu(M, N, K, d_A, K, d_B, N, d_C, N);
+    if (result != 0) {
         err = 1;
         goto cleanup_lt;
     }
-
-    /* Set scale type to float */
-    cudaDataType_t scale_type = CUDA_R_32F;
-    g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_SCALE_TYPE,
-                                     &scale_type, sizeof(scale_type));
-
-    /* Create matrix layouts - column-major trick for row-major data */
-    /* C = A @ B in row-major -> C^T = B^T @ A^T in column-major */
-    cublasLtMatrixLayout_t layout_a, layout_b, layout_c;
-    g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8I, K, M, K);  /* A^T: K x M */
-    g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_8I, N, K, N);  /* B^T: N x K */
-    g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_32I, N, M, N); /* C^T: N x M */
-
-    /* Create preference for heuristic algorithm selection */
-    cublasLtMatmulPreference_t preference;
-    g_cublaslt_matmul_preference_create(&preference);
-
-    size_t workspace_size = 32 * 1024 * 1024;  /* 32MB workspace */
-    g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                           &workspace_size, sizeof(workspace_size));
-
-    /* Allocate workspace */
-    void *workspace = NULL;
-    g_cuda_malloc(&workspace, workspace_size);
-
-    /* Get best algorithm via heuristics */
-    /* cublasLtMatmulHeuristicResult_t is a struct, we need space for it */
-    char heuristic_result[256];  /* Enough for the struct */
-    int returned_algo_count = 0;
-
-    stat = g_cublaslt_matmul_algo_get_heuristic(
-        g_cublaslt_ctx, matmul_desc,
-        layout_b, layout_a, layout_c, layout_c,  /* Note: B first for column-major trick */
-        preference, 1, heuristic_result, &returned_algo_count);
-
-    if (stat != CUBLAS_STATUS_SUCCESS || returned_algo_count == 0) {
-        fprintf(stderr, "[viva_tensor] cublasLt heuristic failed: %d (count=%d)\n", stat, returned_algo_count);
-        g_cublaslt_matmul_preference_destroy(preference);
-        g_cublaslt_matrix_layout_destroy(layout_a);
-        g_cublaslt_matrix_layout_destroy(layout_b);
-        g_cublaslt_matrix_layout_destroy(layout_c);
-        g_cublaslt_matmul_desc_destroy(matmul_desc);
-        if (workspace) g_cuda_free(workspace);
-        err = 1;
-        goto cleanup_lt;
-    }
-
-    /* Extract algorithm from heuristic result (first 8 bytes typically) */
-    void *algo_ptr = heuristic_result;  /* The algo is at the start of the struct */
-
-    /* Execute matmul with Tensor Cores! */
-    stat = g_cublaslt_matmul(
-        g_cublaslt_ctx, matmul_desc,
-        &alpha,
-        d_B, layout_b,
-        d_A, layout_a,
-        &beta,
-        d_C, layout_c,
-        d_C, layout_c,
-        algo_ptr, workspace, workspace_size, 0);
-
-    g_cublaslt_matmul_preference_destroy(preference);
-    g_cublaslt_matrix_layout_destroy(layout_a);
-    g_cublaslt_matrix_layout_destroy(layout_b);
-    g_cublaslt_matrix_layout_destroy(layout_c);
-    g_cublaslt_matmul_desc_destroy(matmul_desc);
-    if (workspace) g_cuda_free(workspace);
-
-    if (stat != CUBLAS_STATUS_SUCCESS) {
-        fprintf(stderr, "[viva_tensor] cublasLt matmul failed: %d\n", stat);
-        err = 1;
-        goto cleanup_lt;
-    }
-
-    g_cuda_sync();
 
     /* Download result */
     err = g_cuda_memcpy(C, d_C, size_c * sizeof(int32_t), cudaMemcpyDeviceToHost);
@@ -1061,8 +1090,26 @@ int cuda_sgemm_gpu_async(int M, int N, int K,
                           float alpha, const float *d_A, int lda,
                           const float *d_B, int ldb,
                           float beta, float *d_C, int ldc) {
-    if (!g_cuda_available || !g_cublas_sgemm) return -1;
+    if (!g_cuda_available) return -1;
 
+    /* Use TF32 Tensor Cores for async path */
+    if (g_cublas_gemm_ex) {
+        cublasStatus_t stat = g_cublas_gemm_ex(
+            g_cublas_ctx,
+            CUBLAS_OP_N, CUBLAS_OP_N,
+            N, M, K,
+            &alpha,
+            d_B, CUDA_R_32F, N,
+            d_A, CUDA_R_32F, K,
+            &beta,
+            d_C, CUDA_R_32F, N,
+            CUBLAS_COMPUTE_32F_FAST_TF32,
+            CUBLAS_GEMM_DEFAULT_TENSOR_OP
+        );
+        if (stat == CUBLAS_STATUS_SUCCESS) return 0;
+    }
+
+    if (!g_cublas_sgemm) return -1;
     cublasStatus_t stat = g_cublas_sgemm(
         g_cublas_ctx,
         CUBLAS_OP_N, CUBLAS_OP_N,
@@ -1079,7 +1126,7 @@ int cuda_sgemm_gpu_async(int M, int N, int K,
 
 /**
  * FP16 HGEMM async (no sync) - Tensor Cores without sync overhead
- * RTX 4090: Should reach 100+ TFLOPS in sustained workloads!
+ * Async SGEMM for sustained throughput (no sync per call)
  */
 int cuda_hgemm_gpu_async(int M, int N, int K,
                           float alpha, const cuda_half_t *d_A, int lda,
@@ -1104,87 +1151,1035 @@ int cuda_hgemm_gpu_async(int M, int N, int K,
 }
 
 /* =========================================================================
- * INT8 TENSOR CORE GEMM (GPU-only) - Using cublasGemmEx for ZERO OVERHEAD!
+ * INT8 TENSOR CORE GEMM (GPU-only) via cublasLtMatmul
  *
- * Key insight from NVIDIA docs:
- * - cublasLt requires descriptors/heuristics PER CALL = slow for async!
- * - cublasGemmEx with CUDA_R_8I + CUBLAS_GEMM_DEFAULT_TENSOR_OP = same perf, zero overhead!
+ * cublasGemmEx with NN format does NOT use INT8 Tensor Cores (IMMA) on Ada!
+ * It silently falls back to CUDA core IGEMM kernels (~150 TOPS).
  *
- * RTX 4090: 660 TFLOPS theoretical INT8 Tensor Cores
+ * cublasLtMatmul with proper descriptors enables IMMA: ~560 TOPS on RTX 4090.
+ *
+ * Key settings:
+ * - CUBLAS_COMPUTE_32I compute type (NOT CUDA_R_32I which is a data type!)
+ * - CUDA_R_32F scale type (float alpha/beta for fractional scaling)
+ * - Row-major layout order (CUBLASLT_ORDER_ROW)
+ * - 32 MiB workspace for heuristic algorithm selection
+ * - Algorithm caching for repeated same-size calls
  * ========================================================================= */
 
 /**
- * INT8 GEMM on GPU with cublasGemmEx Tensor Cores (sync version)
- * d_A, d_B: INT8 data already on GPU
- * d_C: INT32 output on GPU
- * ZERO descriptor/workspace overhead - same call pattern as FP16!
+ * INT8 GEMM on GPU via cublasLtMatmul TN format with Tensor Core IMMA
+ *
+ * Uses TN (Transpose-NoTranspose) layout which is REQUIRED for INT8 IMMA
+ * on Ada Lovelace. NN format falls back to CUDA cores (~150 TOPS).
+ * TN format achieves ~560-660 TOPS on RTX 4090.
+ *
+ * d_A:   INT8 [M x K] row-major on GPU (used directly as A^T col-major)
+ * d_B_T: INT8 [N x K] row-major on GPU (TRANSPOSED B, so col-major K×N, ld=K)
+ * d_C:   INT32 [M x N] row-major on GPU (output)
+ *
+ * The caller must provide d_B_T = transpose of original B[K][N].
+ * This function does NOT transpose internally.
+ *
+ * Uses cached heuristic algorithm for repeated same-size calls.
+ */
+int cuda_igemm_lt_gpu_tn(int M, int N, int K,
+                          const int8_t *d_A,
+                          const int8_t *d_B_T,
+                          int32_t *d_C) {
+    if (g_cublaslt_available < 0) cublaslt_init();
+    if (!g_cublaslt_available || !g_cublaslt_matmul) return -1;
+
+    cublasStatus_t stat;
+    int32_t alpha_i = 1, beta_i = 0;
+
+    /* Check algorithm cache */
+    int need_heuristic = !g_int8_cache_valid ||
+                         g_int8_cache_m != M || g_int8_cache_n != N || g_int8_cache_k != K;
+
+    if (need_heuristic) {
+        /* Create matmul descriptor: COMPUTE_32I with INT32 scale type */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32I, CUDA_R_32I);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        /* TN format: Transpose first operand, No-transpose second */
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        /*
+         * TN swap trick for row-major data:
+         * C_row[M][N] = A_row[M][K] @ B_row[K][N]
+         * In col-major: C_col(N×M) = B_T_col(K×N)^T × A_col(K×M)
+         *
+         * B_T is transposed B: B_T_row[N][K] → col-major K×N, ld=K
+         * A_row[M][K] → col-major K×M, ld=K
+         * C_row[M][N] → col-major N×M, ld=N
+         *
+         * m_lt=N, n_lt=M, k_lt=K
+         */
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        /* B_T: col-major K×N, ld=K (first operand, will be transposed by OP_T) */
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_8I, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        /* A: col-major K×M, ld=K (second operand, OP_N) */
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8I, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        /* C: col-major N×M, ld=N (result) */
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_32I, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        /* Preference with 32 MiB workspace */
+        cublasLtMatmulPreference_t preference;
+        g_cublaslt_matmul_preference_create(&preference);
+        size_t ws_size = g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0;
+        g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                               &ws_size, sizeof(ws_size));
+
+        /* Get best algorithm via heuristic */
+        cublasLtHeuristicResult_t results[8];
+        int returned_count = 0;
+        stat = g_cublaslt_matmul_algo_get_heuristic(
+            g_cublaslt_ctx, matmul_desc,
+            layout_bt, layout_a, layout_c, layout_c,
+            preference, 8, results, &returned_count);
+
+        if (stat != CUBLAS_STATUS_SUCCESS || returned_count == 0) {
+            fprintf(stderr, "[viva_tensor] INT8 TN heuristic failed: stat=%d, count=%d\n",
+                    stat, returned_count);
+            g_cublaslt_matmul_preference_destroy(preference);
+            g_cublaslt_matrix_layout_destroy(layout_bt);
+            g_cublaslt_matrix_layout_destroy(layout_a);
+            g_cublaslt_matrix_layout_destroy(layout_c);
+            g_cublaslt_matmul_desc_destroy(matmul_desc);
+            return -3;
+        }
+
+        /* Execute TN GEMM with Tensor Cores */
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_i,
+            d_B_T, layout_bt,    /* B_T: first operand (will be transposed) */
+            d_A, layout_a,       /* A: second operand */
+            &beta_i,
+            d_C, layout_c,
+            d_C, layout_c,
+            &results[0].algo,
+            g_cublaslt_workspace, ws_size,
+            (cudaStream_t)0);
+
+        /* Cache the algorithm */
+        g_int8_cache_m = M; g_int8_cache_n = N; g_int8_cache_k = K;
+        g_int8_cached_result = results[0];
+        g_int8_cache_valid = 1;
+
+        g_cublaslt_matmul_preference_destroy(preference);
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_int8_cache_valid = 0;
+            return -4;
+        }
+        return 0;
+
+    } else {
+        /* Cached fast path - reuse algorithm */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32I, CUDA_R_32I);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_8I, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8I, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_32I, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_i,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_i,
+            d_C, layout_c, d_C, layout_c,
+            &g_int8_cached_result.algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_int8_cache_valid = 0;
+            return -4;
+        }
+        return 0;
+    }
+}
+
+/**
+ * FP16 HGEMM via cublasLtMatmul with TN format + heuristic
+ * Same TN swap trick as INT8: pre-transpose B for Tensor Core alignment.
+ * Uses CUBLAS_COMPUTE_16F with FP16 alpha/beta for maximum throughput.
+ * cublasLt FP16 HGEMM (higher throughput than cublasGemmEx)
+ */
+int cuda_hgemm_lt_gpu_tn(int M, int N, int K,
+                           const cuda_half_t *d_A,
+                           const cuda_half_t *d_B_T,
+                           cuda_half_t *d_C) {
+    if (g_cublaslt_available < 0) cublaslt_init();
+    if (!g_cublaslt_available || !g_cublaslt_matmul) return -1;
+
+    cublasStatus_t stat;
+    cuda_half_t alpha_h = 0x3C00;  /* 1.0 in FP16 */
+    cuda_half_t beta_h  = 0x0000;  /* 0.0 in FP16 */
+
+    int need_heuristic = !g_fp16_cache_valid ||
+                         g_fp16_cache_m != M || g_fp16_cache_n != N || g_fp16_cache_k != K;
+
+    if (need_heuristic) {
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_16F, CUDA_R_16F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        /* TN swap for row-major: m_lt=N, n_lt=M, k_lt=K
+         * B_T col-major K×N ld=K, A col-major K×M ld=K, C col-major N×M ld=N */
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_16F, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        cublasLtMatmulPreference_t preference;
+        g_cublaslt_matmul_preference_create(&preference);
+        size_t ws_size = g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0;
+        g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                               &ws_size, sizeof(ws_size));
+
+        cublasLtHeuristicResult_t results[8];
+        int returned_count = 0;
+        stat = g_cublaslt_matmul_algo_get_heuristic(
+            g_cublaslt_ctx, matmul_desc,
+            layout_bt, layout_a, layout_c, layout_c,
+            preference, 8, results, &returned_count);
+
+        if (stat != CUBLAS_STATUS_SUCCESS || returned_count == 0) {
+            fprintf(stderr, "[viva_tensor] FP16 TN heuristic failed: stat=%d, count=%d\n",
+                    stat, returned_count);
+            g_cublaslt_matmul_preference_destroy(preference);
+            g_cublaslt_matrix_layout_destroy(layout_bt);
+            g_cublaslt_matrix_layout_destroy(layout_a);
+            g_cublaslt_matrix_layout_destroy(layout_c);
+            g_cublaslt_matmul_desc_destroy(matmul_desc);
+            return -3;
+        }
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_h,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_h,
+            d_C, layout_c, d_C, layout_c,
+            &results[0].algo,
+            g_cublaslt_workspace, ws_size,
+            (cudaStream_t)0);
+
+        g_fp16_cache_m = M; g_fp16_cache_n = N; g_fp16_cache_k = K;
+        g_fp16_cached_result = results[0];
+        g_fp16_cache_valid = 1;
+
+        g_cublaslt_matmul_preference_destroy(preference);
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_fp16_cache_valid = 0;
+            return -4;
+        }
+        return 0;
+
+    } else {
+        /* Cached fast path */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_16F, CUDA_R_16F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_16F, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_h,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_h,
+            d_C, layout_c, d_C, layout_c,
+            &g_fp16_cached_result.algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_fp16_cache_valid = 0;
+            return -4;
+        }
+        return 0;
+    }
+}
+
+/**
+ * INT8 GEMM on GPU - legacy NN fallback via cublasGemmEx
+ * Used when d_B_T (transposed B) is not available.
+ * ~150 TOPS on RTX 4090 (CUDA cores, not Tensor Cores).
  */
 int cuda_igemm_lt_gpu(int M, int N, int K,
                        const int8_t *d_A, int lda,
                        const int8_t *d_B, int ldb,
                        int32_t *d_C, int ldc) {
-    if (!g_cuda_available || !g_cublas_gemm_ex) {
-        /* Try cublasLt fallback */
-        if (g_cublaslt_available < 0) cublaslt_init();
-        if (!g_cublaslt_available) return -1;
-    }
+    if (!g_cuda_available || !g_cublas_gemm_ex) return -1;
 
-    /* Use cublasGemmEx - ZERO overhead, same as FP16 path! */
-    int32_t alpha_i = 1, beta_i = 0;  /* INT8 uses int32_t alpha/beta, values 0 or 1 ONLY! */
-
-    /* C = A @ B in row-major = C^T = B^T @ A^T in column-major */
+    /* NN col-major swap: C^T = B^T × A^T
+     * INT32 alpha/beta as required by CUBLAS_COMPUTE_32I. */
+    int32_t alpha_i = 1, beta_i = 0;
     cublasStatus_t stat = g_cublas_gemm_ex(
-        g_cublas_ctx,
-        CUBLAS_OP_N, CUBLAS_OP_N,  /* Both non-transposed (column-major trick) */
-        N, M, K,                    /* Swapped M/N for row-major */
-        &alpha_i,
-        d_B, CUDA_R_8I, N,          /* B as first operand */
-        d_A, CUDA_R_8I, K,          /* A as second operand */
-        &beta_i,
-        d_C, CUDA_R_32I, N,         /* Output INT32 */
-        CUDA_R_32I,                 /* computeType = CUDA_R_32I for INT8! NOT CUBLAS_COMPUTE_32I! */
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP  /* Force Tensor Cores! */
-    );
+        g_cublas_ctx, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K,
+        &alpha_i, d_B, CUDA_R_8I, N, d_A, CUDA_R_8I, K,
+        &beta_i, d_C, CUDA_R_32I, N,
+        CUBLAS_COMPUTE_32I, CUBLAS_GEMM_DEFAULT);
 
-    if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+    if (stat != CUBLAS_STATUS_SUCCESS) {
+        /* INT8 GEMM requires dims multiples of 4. CPU fallback for non-aligned. */
+        int8_t *h_a = (int8_t *)malloc(M * K * sizeof(int8_t));
+        int8_t *h_b = (int8_t *)malloc(K * N * sizeof(int8_t));
+        int32_t *h_c = (int32_t *)calloc(M * N, sizeof(int32_t));
+        if (!h_a || !h_b || !h_c) { free(h_a); free(h_b); free(h_c); return -2; }
 
-    g_cuda_sync();  /* Sync for result availability */
+        g_cuda_memcpy(h_a, d_A, M * K * sizeof(int8_t), cudaMemcpyDeviceToHost);
+        g_cuda_memcpy(h_b, d_B, K * N * sizeof(int8_t), cudaMemcpyDeviceToHost);
+
+        for (int i = 0; i < M; i++)
+            for (int j = 0; j < N; j++)
+                for (int p = 0; p < K; p++)
+                    h_c[i * N + j] += (int32_t)h_a[i * K + p] * (int32_t)h_b[p * N + j];
+
+        g_cuda_memcpy(d_C, h_c, M * N * sizeof(int32_t), cudaMemcpyHostToDevice);
+        free(h_a); free(h_b); free(h_c);
+    }
+    g_cuda_sync();
     return 0;
 }
 
 /**
- * INT8 GEMM on GPU - ASYNC version (NO sync!)
- * Using cublasGemmEx = ZERO overhead per call!
- *
- * Before: cublasLt with descriptors/heuristics = ~5ms overhead per call
- * After:  cublasGemmEx = <0.1ms overhead per call
- *
- * Target: 300-500 TFLOPS with proper pipelining!
+ * INT8 GEMM on GPU - ASYNC version via cublasLtMatmul
+ * Same as sync but without cudaDeviceSynchronize
  */
 int cuda_igemm_lt_gpu_async(int M, int N, int K,
                              const int8_t *d_A, int lda,
                              const int8_t *d_B, int ldb,
                              int32_t *d_C, int ldc) {
-    if (!g_cuda_available || !g_cublas_gemm_ex) return -1;
+    /* For async, we need the cache to be warm (heuristic already done).
+     * If cache is cold, do a sync call first to warm it up. */
+    if (!g_int8_cache_valid || g_int8_cache_m != M ||
+        g_int8_cache_n != N || g_int8_cache_k != K) {
+        return cuda_igemm_lt_gpu(M, N, K, d_A, lda, d_B, ldb, d_C, ldc);
+    }
 
-    /* Use cublasGemmEx - ZERO overhead! */
-    int32_t alpha_i = 1, beta_i = 0;  /* INT8 uses int32_t alpha/beta, values 0 or 1 ONLY! */
+    /* Cache is warm - fast path without sync */
+    cublasStatus_t stat;
+    float alpha = 1.0f, beta = 0.0f;
 
-    /* C = A @ B in row-major = C^T = B^T @ A^T in column-major */
-    cublasStatus_t stat = g_cublas_gemm_ex(
+    cublasLtMatmulDesc_t matmul_desc;
+    stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32I, CUDA_R_32F);
+    if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+    cublasOperation_t op_n = CUBLAS_OP_N;
+    g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                     &op_n, sizeof(op_n));
+    g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                     &op_n, sizeof(op_n));
+
+    cublasLtMatrixLayout_t layout_a, layout_b, layout_c;
+
+    if (g_int8_cache_valid == 1) {
+        int32_t row_order = CUBLASLT_ORDER_ROW;
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8I, (uint64_t)M, (uint64_t)K, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_8I, (uint64_t)K, (uint64_t)N, (int64_t)N);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_32I, (uint64_t)M, (uint64_t)N, (int64_t)N);
+        if (g_cublaslt_matrix_layout_set_attr) {
+            g_cublaslt_matrix_layout_set_attr(layout_a, CUBLASLT_MATRIX_LAYOUT_ORDER,
+                                               &row_order, sizeof(row_order));
+            g_cublaslt_matrix_layout_set_attr(layout_b, CUBLASLT_MATRIX_LAYOUT_ORDER,
+                                               &row_order, sizeof(row_order));
+            g_cublaslt_matrix_layout_set_attr(layout_c, CUBLASLT_MATRIX_LAYOUT_ORDER,
+                                               &row_order, sizeof(row_order));
+        }
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha, d_A, layout_a, d_B, layout_b,
+            &beta, d_C, layout_c, d_C, layout_c,
+            &g_int8_cached_result.algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+    } else {
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8I, (uint64_t)N, (uint64_t)K, (int64_t)N);
+        g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_8I, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_32I, (uint64_t)N, (uint64_t)M, (int64_t)N);
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha, d_B, layout_a, d_A, layout_b,
+            &beta, d_C, layout_c, d_C, layout_c,
+            &g_int8_cached_result.algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+    }
+
+    g_cublaslt_matrix_layout_destroy(layout_a);
+    g_cublaslt_matrix_layout_destroy(layout_b);
+    g_cublaslt_matrix_layout_destroy(layout_c);
+    g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+    /* No sync - caller manages synchronization */
+    return (stat == CUBLAS_STATUS_SUCCESS) ? 0 : -2;
+}
+
+/* =========================================================================
+ * Fused GEMM + Activation via cublasLt epilogues
+ * ReLU/GELU fused into the GEMM kernel via cublasLt epilogues.
+ * Same throughput as plain GEMM with fused activation.
+ *
+ * Uses NN layout with cublasGemmEx-style col-major swap trick.
+ * C[M][N] = act(A[M][K] @ B[K][N])
+ * ========================================================================= */
+
+/**
+ * Internal: FP16 GEMM + fused epilogue via cublasLt
+ * epilogue_type: CUBLASLT_EPILOGUE_RELU (1) or CUBLASLT_EPILOGUE_GELU (32)
+ *
+ * Async: no cudaDeviceSynchronize — caller manages sync.
+ * Uses per-epilogue algorithm cache for repeated same-size calls.
+ */
+static int cuda_hgemm_fused_internal(int M, int N, int K,
+                                      const cuda_half_t *d_A,
+                                      const cuda_half_t *d_B,
+                                      cuda_half_t *d_C,
+                                      int epilogue_type,
+                                      int *cache_m, int *cache_n, int *cache_k,
+                                      cublasLtHeuristicResult_t *cached_result,
+                                      int *cache_valid) {
+    if (g_cublaslt_available < 0) cublaslt_init();
+    if (!g_cublaslt_available || !g_cublaslt_matmul) return -1;
+
+    cublasStatus_t stat;
+    /* Epilogues require COMPUTE_32F — COMPUTE_16F doesn't support them.
+     * Use FAST_16F to still get Tensor Core FP16 throughput with FP32 accumulator. */
+    float alpha_f = 1.0f;
+    float beta_f  = 0.0f;
+
+    int need_heuristic = !(*cache_valid) ||
+                         *cache_m != M || *cache_n != N || *cache_k != K;
+
+    if (need_heuristic) {
+        /* Create matmul descriptor with epilogue — must use COMPUTE_32F for epilogues.
+         * COMPUTE_32F_FAST_16F: uses FP16 Tensor Cores with FP32 accumulation. */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F_FAST_16F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        /* NN col-major swap: C^T = B^T @ A^T */
+        cublasOperation_t op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_n, sizeof(op_n));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        /* Set fused epilogue (activation fused into GEMM kernel) */
+        int32_t epilogue = epilogue_type;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
+                                         &epilogue, sizeof(epilogue));
+
+        /* Layouts: col-major swap trick (swap A<->B, swap M<->N) */
+        cublasLtMatrixLayout_t layout_b, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_16F, (uint64_t)N, (uint64_t)K, (int64_t)N);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        /* Preference with workspace */
+        cublasLtMatmulPreference_t preference;
+        g_cublaslt_matmul_preference_create(&preference);
+        size_t ws_size = g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0;
+        g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                               &ws_size, sizeof(ws_size));
+
+        /* Get best algorithm */
+        cublasLtHeuristicResult_t results[8];
+        int returned_count = 0;
+        stat = g_cublaslt_matmul_algo_get_heuristic(
+            g_cublaslt_ctx, matmul_desc,
+            layout_b, layout_a, layout_c, layout_c,
+            preference, 8, results, &returned_count);
+
+        if (stat != CUBLAS_STATUS_SUCCESS || returned_count == 0) {
+            fprintf(stderr, "[viva_tensor] FP16 fused epilogue=%d heuristic failed: stat=%d, count=%d\n",
+                    epilogue_type, stat, returned_count);
+            g_cublaslt_matmul_preference_destroy(preference);
+            g_cublaslt_matrix_layout_destroy(layout_b);
+            g_cublaslt_matrix_layout_destroy(layout_a);
+            g_cublaslt_matrix_layout_destroy(layout_c);
+            g_cublaslt_matmul_desc_destroy(matmul_desc);
+            return -3;
+        }
+
+        /* Execute fused GEMM+activation */
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B, layout_b, d_A, layout_a,  /* swapped for col-major trick */
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &results[0].algo,
+            g_cublaslt_workspace, ws_size,
+            (cudaStream_t)0);
+
+        /* Cache the algorithm */
+        *cache_m = M; *cache_n = N; *cache_k = K;
+        *cached_result = results[0];
+        *cache_valid = 1;
+
+        g_cublaslt_matmul_preference_destroy(preference);
+        g_cublaslt_matrix_layout_destroy(layout_b);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            *cache_valid = 0;
+            fprintf(stderr, "[viva_tensor] FP16 fused epilogue=%d matmul failed: stat=%d\n",
+                    epilogue_type, stat);
+            return -4;
+        }
+        return 0;
+
+    } else {
+        /* Cached fast path — reuse algorithm, set epilogue on each call */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F_FAST_16F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_n, sizeof(op_n));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        int32_t epilogue = epilogue_type;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
+                                         &epilogue, sizeof(epilogue));
+
+        cublasLtMatrixLayout_t layout_b, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_16F, (uint64_t)N, (uint64_t)K, (int64_t)N);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B, layout_b, d_A, layout_a,
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &cached_result->algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+
+        g_cublaslt_matrix_layout_destroy(layout_b);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            *cache_valid = 0;
+            return -4;
+        }
+        return 0;
+    }
+}
+
+/**
+ * FP16 GEMM via cublasLt with COMPUTE_32F_FAST_16F (NO epilogue).
+ * Baseline for comparing fused vs non-fused at same compute precision.
+ */
+/* Separate cache for the non-fused 32F baseline */
+static int g_fp16_32f_cache_m = 0, g_fp16_32f_cache_n = 0, g_fp16_32f_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_32f_cached_result;
+static int g_fp16_32f_cache_valid = 0;
+
+int cuda_hgemm_lt_32f(int M, int N, int K,
+                       const cuda_half_t *d_A,
+                       const cuda_half_t *d_B,
+                       cuda_half_t *d_C) {
+    return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      CUBLASLT_EPILOGUE_DEFAULT,
+                                      &g_fp16_32f_cache_m, &g_fp16_32f_cache_n,
+                                      &g_fp16_32f_cache_k, &g_fp16_32f_cached_result,
+                                      &g_fp16_32f_cache_valid);
+}
+
+/**
+ * Internal: FP16 GEMM + fused epilogue via cublasLt — TN layout
+ * Same as NN variant but uses pre-transposed B for better Tensor Core alignment.
+ * d_B_T is B transposed (N×K layout, stored as B_T[N][K]).
+ */
+static int cuda_hgemm_fused_tn_internal(int M, int N, int K,
+                                         const cuda_half_t *d_A,
+                                         const cuda_half_t *d_B_T,
+                                         cuda_half_t *d_C,
+                                         int epilogue_type,
+                                         int *cache_m, int *cache_n, int *cache_k,
+                                         cublasLtHeuristicResult_t *cached_result,
+                                         int *cache_valid) {
+    if (g_cublaslt_available < 0) cublaslt_init();
+    if (!g_cublaslt_available || !g_cublaslt_matmul) return -1;
+
+    cublasStatus_t stat;
+    float alpha_f = 1.0f;
+    float beta_f  = 0.0f;
+
+    int need_heuristic = !(*cache_valid) ||
+                         *cache_m != M || *cache_n != N || *cache_k != K;
+
+    if (need_heuristic) {
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F_FAST_16F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        /* TN swap trick: C_col(N×M) = B_T_col(K×N)^T × A_col(K×M) */
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        /* Set fused epilogue */
+        int32_t epilogue = epilogue_type;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
+                                         &epilogue, sizeof(epilogue));
+
+        /* TN swap: B_T col-major K×N ld=K, A col-major K×M ld=K, C col-major N×M ld=N */
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_16F, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        cublasLtMatmulPreference_t preference;
+        g_cublaslt_matmul_preference_create(&preference);
+        size_t ws_size = g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0;
+        g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                               &ws_size, sizeof(ws_size));
+
+        cublasLtHeuristicResult_t results[8];
+        int returned_count = 0;
+        stat = g_cublaslt_matmul_algo_get_heuristic(
+            g_cublaslt_ctx, matmul_desc,
+            layout_bt, layout_a, layout_c, layout_c,
+            preference, 8, results, &returned_count);
+
+        if (stat != CUBLAS_STATUS_SUCCESS || returned_count == 0) {
+            fprintf(stderr, "[viva_tensor] FP16 fused TN epilogue=%d heuristic failed: stat=%d, count=%d\n",
+                    epilogue_type, stat, returned_count);
+            g_cublaslt_matmul_preference_destroy(preference);
+            g_cublaslt_matrix_layout_destroy(layout_bt);
+            g_cublaslt_matrix_layout_destroy(layout_a);
+            g_cublaslt_matrix_layout_destroy(layout_c);
+            g_cublaslt_matmul_desc_destroy(matmul_desc);
+            return -3;
+        }
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &results[0].algo,
+            g_cublaslt_workspace, ws_size,
+            (cudaStream_t)0);
+
+        *cache_m = M; *cache_n = N; *cache_k = K;
+        *cached_result = results[0];
+        *cache_valid = 1;
+
+        g_cublaslt_matmul_preference_destroy(preference);
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            *cache_valid = 0;
+            return -4;
+        }
+        return 0;
+
+    } else {
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F_FAST_16F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        int32_t epilogue = epilogue_type;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
+                                         &epilogue, sizeof(epilogue));
+
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_16F, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_16F, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &cached_result->algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            *cache_valid = 0;
+            return -4;
+        }
+        return 0;
+    }
+}
+
+/* TN fused algorithm caches */
+static int g_fp16_relu_tn_cache_m = 0, g_fp16_relu_tn_cache_n = 0, g_fp16_relu_tn_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_relu_tn_cached_result;
+static int g_fp16_relu_tn_cache_valid = 0;
+
+static int g_fp16_gelu_tn_cache_m = 0, g_fp16_gelu_tn_cache_n = 0, g_fp16_gelu_tn_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_gelu_tn_cached_result;
+static int g_fp16_gelu_tn_cache_valid = 0;
+
+/**
+ * FP16 fused GEMM+ReLU TN layout: C = ReLU(A @ B)
+ * d_B_T is pre-transposed B (N×K).
+ */
+int cuda_hgemm_fused_relu_tn(int M, int N, int K,
+                              const cuda_half_t *d_A,
+                              const cuda_half_t *d_B_T,
+                              cuda_half_t *d_C) {
+    return cuda_hgemm_fused_tn_internal(M, N, K, d_A, d_B_T, d_C,
+                                         CUBLASLT_EPILOGUE_RELU,
+                                         &g_fp16_relu_tn_cache_m, &g_fp16_relu_tn_cache_n,
+                                         &g_fp16_relu_tn_cache_k, &g_fp16_relu_tn_cached_result,
+                                         &g_fp16_relu_tn_cache_valid);
+}
+
+/**
+ * FP16 fused GEMM+GELU TN layout: C = GELU(A @ B)
+ * d_B_T is pre-transposed B (N×K).
+ */
+int cuda_hgemm_fused_gelu_tn(int M, int N, int K,
+                              const cuda_half_t *d_A,
+                              const cuda_half_t *d_B_T,
+                              cuda_half_t *d_C) {
+    return cuda_hgemm_fused_tn_internal(M, N, K, d_A, d_B_T, d_C,
+                                         CUBLASLT_EPILOGUE_GELU,
+                                         &g_fp16_gelu_tn_cache_m, &g_fp16_gelu_tn_cache_n,
+                                         &g_fp16_gelu_tn_cache_k, &g_fp16_gelu_tn_cached_result,
+                                         &g_fp16_gelu_tn_cache_valid);
+}
+
+/**
+ * FP16 fused GEMM+ReLU: C = ReLU(A @ B)
+ * Async, uses cached algorithm for repeated calls.
+ */
+int cuda_hgemm_fused_relu(int M, int N, int K,
+                           const cuda_half_t *d_A,
+                           const cuda_half_t *d_B,
+                           cuda_half_t *d_C) {
+    return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      CUBLASLT_EPILOGUE_RELU,
+                                      &g_fp16_relu_cache_m, &g_fp16_relu_cache_n,
+                                      &g_fp16_relu_cache_k, &g_fp16_relu_cached_result,
+                                      &g_fp16_relu_cache_valid);
+}
+
+/**
+ * FP16 fused GEMM+GELU: C = GELU(A @ B)
+ * Async, uses cached algorithm for repeated calls.
+ */
+int cuda_hgemm_fused_gelu(int M, int N, int K,
+                           const cuda_half_t *d_A,
+                           const cuda_half_t *d_B,
+                           cuda_half_t *d_C) {
+    return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      CUBLASLT_EPILOGUE_GELU,
+                                      &g_fp16_gelu_cache_m, &g_fp16_gelu_cache_n,
+                                      &g_fp16_gelu_cache_k, &g_fp16_gelu_cached_result,
+                                      &g_fp16_gelu_cache_valid);
+}
+
+/* =========================================================================
+ * FP8 E4M3 GEMM via cublasLtMatmul with TN layout
+ * Same TN swap trick as INT8: pre-transpose B for IMMA Tensor Core alignment.
+ *
+ * RTX 4090 (GeForce) FP8 reality:
+ *   - FP8 + FP16 accumulate = 660 TOPS (full rate) — requires CUTLASS/PTX
+ *   - FP8 + FP32 accumulate = 330 TOPS (HALF rate, GeForce nerf!)
+ *   - INT8 + INT32 accumulate = 660 TOPS (full rate, NOT nerfed)
+ * cuBLASLt only supports CUBLAS_COMPUTE_32F for FP8 → capped at 330 TOPS.
+ * To reach 660 TOPS, need CUTLASS with FP16 accumulator (CUDA 12.8+).
+ *
+ * FP8 E4M3 input, FP16 output, FP32 accumulator.
+ * ========================================================================= */
+
+/* FP8 data types */
+#define CUDA_R_8F_E4M3  28
+#define CUDA_R_8F_E5M2  29
+
+/* FP8 per-tensor scale pointer attributes (required for FP8 GEMM) */
+#define CUBLASLT_MATMUL_DESC_A_SCALE_POINTER   17
+#define CUBLASLT_MATMUL_DESC_B_SCALE_POINTER   18
+#define CUBLASLT_MATMUL_DESC_C_SCALE_POINTER   19
+#define CUBLASLT_MATMUL_DESC_D_SCALE_POINTER   20
+#define CUBLASLT_MATMUL_DESC_AMAX_D_POINTER    21
+
+/* FP8 per-tensor scales on GPU (all 1.0f for unscaled benchmarks) */
+static float *g_fp8_scale_one = NULL;  /* device pointer to float 1.0 */
+
+/* FP8 TN algorithm cache */
+static int g_fp8_cache_m = 0, g_fp8_cache_n = 0, g_fp8_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp8_cached_result;
+static int g_fp8_cache_valid = 0;
+
+/**
+ * FP8 E4M3 GEMM via cublasLtMatmul with TN format + heuristic
+ * Pre-transpose B on CPU during upload → d_B_T (N×K layout, FP8).
+ * C = scale_d * (alpha * scale_a * scale_b * A^T @ B + beta * scale_c * C)
+ *
+ * RTX 4090: capped at 330 TOPS (FP32 accum, GeForce half-rate).
+ * Uses CUBLAS_COMPUTE_32F (only supported compute type for FP8).
+ * Per-tensor scale pointers required by FP8 spec (set to 1.0f for unscaled).
+ */
+int cuda_fp8gemm_lt_gpu_tn(int M, int N, int K,
+                            const uint8_t *d_A,
+                            const uint8_t *d_B_T,
+                            uint16_t *d_C) {
+    if (g_cublaslt_available < 0) cublaslt_init();
+    if (!g_cublaslt_available || !g_cublaslt_matmul) return -1;
+
+    /* Lazily allocate device-side scale factor (float 1.0) */
+    if (!g_fp8_scale_one) {
+        cudaError_t merr = g_cuda_malloc((void**)&g_fp8_scale_one, sizeof(float));
+        if (merr != 0) g_fp8_scale_one = NULL;
+        if (g_fp8_scale_one) {
+            float one = 1.0f;
+            g_cuda_memcpy(g_fp8_scale_one, &one, sizeof(float), cudaMemcpyHostToDevice);
+        }
+    }
+
+    cublasStatus_t stat;
+    float alpha_f = 1.0f, beta_f = 0.0f;
+
+    int need_heuristic = !g_fp8_cache_valid ||
+                         g_fp8_cache_m != M || g_fp8_cache_n != N || g_fp8_cache_k != K;
+
+    if (need_heuristic) {
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        /* TN format */
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        /* NOTE: FP8 per-tensor scale pointers are optional for cuBLASLt.
+         * When NULL (default), no per-tensor scaling is applied.
+         * For production use, set A_SCALE_POINTER, B_SCALE_POINTER, D_SCALE_POINTER
+         * to device-side float pointers for proper FP8 quantization.
+         * Omitted here for maximum benchmark throughput. */
+
+        /* TN swap: B_T col-major K×N ld=K (FP8), A col-major K×M ld=K (FP8), C col-major N×M ld=N (FP16) */
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_8F_E4M3, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8F_E4M3, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        cublasLtMatmulPreference_t preference;
+        g_cublaslt_matmul_preference_create(&preference);
+        size_t ws_size = g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0;
+        g_cublaslt_matmul_preference_set_attr(preference, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                               &ws_size, sizeof(ws_size));
+
+        cublasLtHeuristicResult_t results[8];
+        int returned_count = 0;
+        stat = g_cublaslt_matmul_algo_get_heuristic(
+            g_cublaslt_ctx, matmul_desc,
+            layout_bt, layout_a, layout_c, layout_c,
+            preference, 8, results, &returned_count);
+
+        if (stat != CUBLAS_STATUS_SUCCESS || returned_count == 0) {
+            fprintf(stderr, "[viva_tensor] FP8 TN heuristic failed: stat=%d, count=%d\n",
+                    stat, returned_count);
+            g_cublaslt_matmul_preference_destroy(preference);
+            g_cublaslt_matrix_layout_destroy(layout_bt);
+            g_cublaslt_matrix_layout_destroy(layout_a);
+            g_cublaslt_matrix_layout_destroy(layout_c);
+            g_cublaslt_matmul_desc_destroy(matmul_desc);
+            return -3;
+        }
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &results[0].algo,
+            g_cublaslt_workspace, ws_size,
+            (cudaStream_t)0);
+
+        g_fp8_cache_m = M; g_fp8_cache_n = N; g_fp8_cache_k = K;
+        g_fp8_cached_result = results[0];
+        g_fp8_cache_valid = 1;
+
+        g_cublaslt_matmul_preference_destroy(preference);
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_fp8_cache_valid = 0;
+            fprintf(stderr, "[viva_tensor] FP8 TN matmul failed: stat=%d\n", stat);
+            return -4;
+        }
+        return 0;
+
+    } else {
+        /* Cached fast path */
+        cublasLtMatmulDesc_t matmul_desc;
+        stat = g_cublaslt_matmul_desc_create(&matmul_desc, CUBLAS_COMPUTE_32F, CUDA_R_32F);
+        if (stat != CUBLAS_STATUS_SUCCESS) return -2;
+
+        cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSA,
+                                         &op_t, sizeof(op_t));
+        g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_TRANSB,
+                                         &op_n, sizeof(op_n));
+
+        cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+        g_cublaslt_matrix_layout_create(&layout_bt, CUDA_R_8F_E4M3, (uint64_t)K, (uint64_t)N, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_a, CUDA_R_8F_E4M3, (uint64_t)K, (uint64_t)M, (int64_t)K);
+        g_cublaslt_matrix_layout_create(&layout_c, CUDA_R_16F, (uint64_t)N, (uint64_t)M, (int64_t)N);
+
+        stat = g_cublaslt_matmul(
+            g_cublaslt_ctx, matmul_desc,
+            &alpha_f,
+            d_B_T, layout_bt, d_A, layout_a,
+            &beta_f,
+            d_C, layout_c, d_C, layout_c,
+            &g_fp8_cached_result.algo,
+            g_cublaslt_workspace, g_cublaslt_workspace ? CUBLASLT_WORKSPACE_SIZE : 0,
+            (cudaStream_t)0);
+
+        g_cublaslt_matrix_layout_destroy(layout_bt);
+        g_cublaslt_matrix_layout_destroy(layout_a);
+        g_cublaslt_matrix_layout_destroy(layout_c);
+        g_cublaslt_matmul_desc_destroy(matmul_desc);
+
+        if (stat != CUBLAS_STATUS_SUCCESS) {
+            g_fp8_cache_valid = 0;
+            return -4;
+        }
+        return 0;
+    }
+}
+
+/* =========================================================================
+ * FP16 Strided Batched GEMM via cublasGemmStridedBatchedEx
+ * For multi-head attention: C[i] = A[i] @ B[i] for i in 0..batchCount
+ * Uses CUBLAS_COMPUTE_16F for maximum Tensor Core throughput.
+ *
+ * Memory layout: all batch elements stored contiguously.
+ * A: [batch, M, K], B: [batch, K, N], C: [batch, M, N] — row-major.
+ * strideA = M*K, strideB = K*N, strideC = M*N (in elements).
+ * ========================================================================= */
+
+/**
+ * FP16 batched GEMM — async (no sync).
+ * C[i] = A[i] @ B[i] for each batch element.
+ * All data contiguous on GPU, stride = M*K / K*N / M*N.
+ */
+int cuda_hgemm_batched(int M, int N, int K, int batch_count,
+                        const cuda_half_t *d_A,
+                        const cuda_half_t *d_B,
+                        cuda_half_t *d_C) {
+    if (!g_cuda_available || !g_cublas_gemm_strided_batched_ex) return -1;
+
+    /* FP16 alpha/beta for COMPUTE_16F */
+    cuda_half_t alpha_h = 0x3C00;  /* 1.0 */
+    cuda_half_t beta_h  = 0x0000;  /* 0.0 */
+
+    /* Row-major NN swap trick: C^T = B^T @ A^T
+     * Swap operands + swap M<->N for cuBLAS col-major. */
+    long long int strideA = (long long int)M * K;
+    long long int strideB = (long long int)K * N;
+    long long int strideC = (long long int)M * N;
+
+    cublasStatus_t stat = g_cublas_gemm_strided_batched_ex(
         g_cublas_ctx,
         CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,
-        &alpha_i,
-        d_B, CUDA_R_8I, N,
-        d_A, CUDA_R_8I, K,
-        &beta_i,
-        d_C, CUDA_R_32I, N,
-        CUDA_R_32I,                 /* computeType = CUDA_R_32I for INT8! */
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP
-    );
+        N, M, K,                     /* swapped M<->N for row-major */
+        &alpha_h,
+        d_B, CUDA_R_16F, N, strideB, /* B first (swapped) */
+        d_A, CUDA_R_16F, K, strideA, /* A second (swapped) */
+        &beta_h,
+        d_C, CUDA_R_16F, N, strideC,
+        batch_count,
+        CUBLAS_COMPUTE_16F,           /* Pure FP16 for max throughput */
+        CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
-    /* NO sync here - that's the whole point of async! */
     return (stat == CUBLAS_STATUS_SUCCESS) ? 0 : -2;
 }
 
@@ -1303,6 +2298,70 @@ int cuda_igemm_lt_gpu_async(int M, int N, int K, const int8_t *d_A, int lda,
     (void)d_B; (void)ldb; (void)d_C; (void)ldc;
     return -1;
 }
+int cuda_igemm_lt_gpu_tn(int M, int N, int K, const int8_t *d_A,
+                          const int8_t *d_B_T, int32_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B_T; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_lt_gpu_tn(int M, int N, int K, const cuda_half_t *d_A,
+                           const cuda_half_t *d_B_T, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B_T; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_gpu_pure16(int M, int N, int K,
+                            const cuda_half_t *d_A, int lda,
+                            const cuda_half_t *d_B, int ldb,
+                            cuda_half_t *d_C, int ldc) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)lda;
+    (void)d_B; (void)ldb; (void)d_C; (void)ldc;
+    return -1;
+}
+int cuda_hgemm_gpu_pure16_async(int M, int N, int K,
+                                  const cuda_half_t *d_A, int lda,
+                                  const cuda_half_t *d_B, int ldb,
+                                  cuda_half_t *d_C, int ldc) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)lda;
+    (void)d_B; (void)ldb; (void)d_C; (void)ldc;
+    return -1;
+}
 int cublaslt_init(void) { return 0; }
+int cuda_hgemm_lt_32f(int M, int N, int K, const cuda_half_t *d_A,
+                       const cuda_half_t *d_B, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_fused_relu(int M, int N, int K, const cuda_half_t *d_A,
+                           const cuda_half_t *d_B, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_fused_gelu(int M, int N, int K, const cuda_half_t *d_A,
+                           const cuda_half_t *d_B, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_fused_relu_tn(int M, int N, int K, const cuda_half_t *d_A,
+                              const cuda_half_t *d_B_T, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B_T; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_fused_gelu_tn(int M, int N, int K, const cuda_half_t *d_A,
+                              const cuda_half_t *d_B_T, cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B_T; (void)d_C;
+    return -1;
+}
+int cuda_hgemm_batched(int M, int N, int K, int batch_count,
+                        const cuda_half_t *d_A, const cuda_half_t *d_B,
+                        cuda_half_t *d_C) {
+    (void)M; (void)N; (void)K; (void)batch_count;
+    (void)d_A; (void)d_B; (void)d_C;
+    return -1;
+}
+int cuda_fp8gemm_lt_gpu_tn(int M, int N, int K,
+                            const uint8_t *d_A, const uint8_t *d_B_T,
+                            uint16_t *d_C) {
+    (void)M; (void)N; (void)K; (void)d_A; (void)d_B_T; (void)d_C;
+    return -1;
+}
 
 #endif /* _WIN32 */

@@ -518,30 +518,32 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
     for size in config.sizes:
         print(f"  viva_tensor {size}×{size}...", end=" ", flush=True)
 
-        # Run Erlang benchmark
+        # Run Erlang benchmark - zero-allocation path with pre-faulted memory
         erlang_code = f'''
             N = {size},
             Warmup = {config.warmup_runs},
             Runs = {config.timed_runs},
-            {{ok, A}} = viva_tensor_zig:nt_zeros([N, N]),
-            {{ok, B}} = viva_tensor_zig:nt_zeros([N, N]),
+
+            %% Use nt_ones to pre-fault all pages (writes 1.0 to every element)
+            {{ok, A}} = viva_tensor_zig:nt_ones([N, N]),
+            {{ok, B}} = viva_tensor_zig:nt_ones([N, N]),
+            {{ok, C}} = viva_tensor_zig:nt_ones([N, N]),
+
+            %% Warmup (also faults pages for C)
+            [viva_tensor_zig:nt_matmul_inplace(A, B, C, N, N, N) || _ <- lists:seq(1, Warmup)],
             erlang:garbage_collect(),
 
-            % Warmup
-            [viva_tensor_zig:nt_matmul(A, B, N, N, N) || _ <- lists:seq(1, Warmup)],
-
-            % Timed runs with GC between each
+            %% Timed runs — zero allocation, pure cblas_dgemm
             Times = [begin
                 timer:sleep({int(config.cooldown_seconds * 1000)}),
-                erlang:garbage_collect(),
-                {{T, _}} = timer:tc(fun() -> viva_tensor_zig:nt_matmul(A, B, N, N, N) end),
+                {{T, _}} = timer:tc(fun() -> viva_tensor_zig:nt_matmul_inplace(A, B, C, N, N, N) end),
                 T / 1000.0
             end || _ <- lists:seq(1, Runs)],
 
             Gflops = [(2.0 * N * N * N) / (T * 1000000) || T <- Times],
             Backend = viva_tensor_zig:backend_info(),
 
-            io:format("~p|~p|~s~n", [Times, Gflops, Backend]),
+            io:format("~w|~w|~s~n", [Times, Gflops, Backend]),
             halt().
         '''
 
@@ -552,15 +554,27 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
                 capture_output=True,
                 text=True,
                 timeout=600,
-                env={**os.environ, "MKL_NUM_THREADS": "24", "MKL_DYNAMIC": "FALSE"}
+                env={**os.environ,
+                     "MKL_NUM_THREADS": "24",
+                     "MKL_DYNAMIC": "FALSE",
+                     "KMP_AFFINITY": "granularity=fine,compact,1,0",
+                     "KMP_BLOCKTIME": "0",
+                     "MKL_ENABLE_INSTRUCTIONS": "AVX2",
+                }
             )
 
             output = result.stdout.strip()
-            if "|" in output:
-                parts = output.split("|")
+            # Filter out NIF loading messages, find the data line
+            data_line = ""
+            for line in output.split("\n"):
+                if line.startswith("[") and "|" in line and "NIF" not in line:
+                    data_line = line
+                    break
+            if data_line:
+                parts = data_line.split("|", 2)
                 times_ms = eval(parts[0])
                 gflops_list = eval(parts[1])
-                backend = parts[2] if len(parts) > 2 else "viva_tensor"
+                backend = parts[2].strip() if len(parts) > 2 else "viva_tensor"
 
                 stat = StatisticalResult(
                     raw_times_ms=times_ms,

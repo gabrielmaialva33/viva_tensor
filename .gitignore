@@ -16,6 +16,13 @@ c_src/*.o
 priv/*.so
 priv/*.dll
 
+# Static archives (built from source via nvcc/ar)
+*.a
+
+# CUDA glibc compatibility fix (local workaround)
+cuda_fix/
+zig_src/cuda_fix/
+
 # Zig build
 zig_src/.zig-cache/
 zig_src/zig-out/

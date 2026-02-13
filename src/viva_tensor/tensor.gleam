@@ -14,11 +14,16 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
+import viva_tensor/core/error.{
+  BroadcastError, DimensionError, InvalidShape, ShapeMismatch,
+}
+import viva_tensor/core/ffi.{type ErlangArray}
 
 // --- Types ---
 
-/// Opaque type for Erlang :array
-pub type ErlangArray
+/// Re-export TensorError so other modules can reference tensor.TensorError
+pub type TensorError =
+  error.TensorError
 
 /// Tensor with NumPy-style strides for zero-copy views
 /// - storage: contiguous data buffer (Erlang array for O(1) access)
@@ -36,14 +41,6 @@ pub type Tensor {
     strides: List(Int),
     offset: Int,
   )
-}
-
-/// Tensor operation errors
-pub type TensorError {
-  ShapeMismatch(expected: List(Int), got: List(Int))
-  InvalidShape(reason: String)
-  DimensionError(reason: String)
-  BroadcastError(a: List(Int), b: List(Int))
 }
 
 // --- Constructors ---
@@ -142,7 +139,7 @@ pub fn get_data(t: Tensor) -> List(Float) {
             let #(i, s) = pair
             acc + i * s
           })
-        array_get(storage, idx)
+        ffi.array_get(storage, idx)
       })
     }
   }
@@ -205,7 +202,7 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
           let #(i, s) = pair
           acc + i * s
         })
-      Ok(array_get(storage, flat_idx))
+      Ok(ffi.array_get(storage, flat_idx))
     }
   }
 }
@@ -441,7 +438,7 @@ pub fn variance(t: Tensor) -> Float {
 
 /// Standard deviation: sqrt(Var(X))
 pub fn std(t: Tensor) -> Float {
-  float_sqrt(variance(t))
+  ffi.sqrt(variance(t))
 }
 
 /// Sum along a specific axis
@@ -998,7 +995,7 @@ pub fn slice(
 pub fn norm(t: Tensor) -> Float {
   let data = get_data(t)
   let sum_sq = list.fold(data, 0.0, fn(acc, x) { acc +. x *. x })
-  float_sqrt(sum_sq)
+  ffi.sqrt(sum_sq)
 }
 
 /// Normalize to unit length: x / ||x||_2
@@ -1022,7 +1019,7 @@ pub fn random_uniform(shape: List(Int)) -> Tensor {
   let size_val = list.fold(shape, 1, fn(acc, dim) { acc * dim })
   let data =
     list.range(1, size_val)
-    |> list.map(fn(_) { random_float() })
+    |> list.map(fn(_) { ffi.random_uniform() })
   Tensor(data: data, shape: shape)
 }
 
@@ -1037,12 +1034,11 @@ pub fn random_normal(
   let data =
     list.range(1, size_val)
     |> list.map(fn(_) {
-      let u1 = float.max(random_float(), 0.0001)
-      let u2 = random_float()
+      let u1 = float.max(ffi.random_uniform(), 0.0001)
+      let u2 = ffi.random_uniform()
       // Box-Muller: z = sqrt(-2*ln(u1)) * cos(2*pi*u2)
       let z =
-        float_sqrt(-2.0 *. float_log(u1))
-        *. float_cos(2.0 *. 3.14159265359 *. u2)
+        ffi.sqrt(-2.0 *. ffi.log(u1)) *. ffi.cos(2.0 *. 3.14159265359 *. u2)
       mean_val +. z *. std_val
     })
   Tensor(data: data, shape: shape)
@@ -1054,11 +1050,11 @@ pub fn random_normal(
 /// limit = sqrt(6 / (fan_in + fan_out))
 /// W ~ Uniform(-limit, limit)
 pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
-  let limit = float_sqrt(6.0 /. int.to_float(fan_in + fan_out))
+  let limit = ffi.sqrt(6.0 /. int.to_float(fan_in + fan_out))
   let data =
     list.range(1, fan_in * fan_out)
     |> list.map(fn(_) {
-      let r = random_float()
+      let r = ffi.random_uniform()
       r *. 2.0 *. limit -. limit
     })
   // Shape [fan_out, fan_in] follows PyTorch convention: W @ x where x is [fan_in]
@@ -1071,7 +1067,7 @@ pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
 /// std = sqrt(2 / fan_in)
 /// W ~ Normal(0, std)
 pub fn he_init(fan_in: Int, fan_out: Int) -> Tensor {
-  let std_val = float_sqrt(2.0 /. int.to_float(fan_in))
+  let std_val = ffi.sqrt(2.0 /. int.to_float(fan_in))
   // Shape [fan_out, fan_in] follows PyTorch convention
   random_normal([fan_out, fan_in], 0.0, std_val)
 }
@@ -1105,7 +1101,7 @@ pub fn broadcast_shape(
   b: List(Int),
 ) -> Result(List(Int), TensorError) {
   case can_broadcast(a, b) {
-    False -> Error(BroadcastError(a, b))
+    False -> Error(BroadcastError(shape_a: a, shape_b: b))
     True -> {
       let max_rank = int.max(list.length(a), list.length(b))
       let diff_a = max_rank - list.length(a)
@@ -1132,7 +1128,7 @@ pub fn broadcast_to(
   target_shape: List(Int),
 ) -> Result(Tensor, TensorError) {
   case can_broadcast(t.shape, target_shape) {
-    False -> Error(BroadcastError(t.shape, target_shape))
+    False -> Error(BroadcastError(shape_a: t.shape, shape_b: target_shape))
     True -> {
       case t.shape == target_shape {
         True -> Ok(t)
@@ -1221,7 +1217,7 @@ pub fn to_strided(t: Tensor) -> Tensor {
   case t {
     StridedTensor(_, _, _, _) -> t
     Tensor(data, shape) -> {
-      let storage = list_to_array(data)
+      let storage = ffi.list_to_array(data)
       let strides = compute_strides(shape)
       StridedTensor(storage: storage, shape: shape, strides: strides, offset: 0)
     }
@@ -1295,7 +1291,7 @@ pub fn get_fast(t: Tensor, index: Int) -> Result(Float, TensorError) {
           let #(idx, stride) = pair
           acc + idx * stride
         })
-      Ok(array_get(storage, flat_idx))
+      Ok(ffi.array_get(storage, flat_idx))
     }
   }
 }
@@ -1308,7 +1304,7 @@ pub fn get2d_fast(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
       case shape, strides {
         [_rows, _cols], [s0, s1] -> {
           let flat_idx = offset + row * s0 + col * s1
-          Ok(array_get(storage, flat_idx))
+          Ok(ffi.array_get(storage, flat_idx))
         }
         _, _ -> Error(DimensionError("Tensor is not 2D"))
       }
@@ -1336,14 +1332,6 @@ fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
       |> list.drop(index)
       |> list.first
   }
-}
-
-fn array_get(arr: ErlangArray, index: Int) -> Float {
-  array_get_ffi(arr, index)
-}
-
-fn list_to_array(lst: List(Float)) -> ErlangArray {
-  list_to_array_ffi(lst)
 }
 
 fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {
@@ -1610,8 +1598,8 @@ fn conv2d_simple(
   let out_w = { pw - kw } / config.stride_w + 1
 
   // Convert to arrays for O(1) access
-  let in_arr = list_to_array_ffi(get_data(padded))
-  let k_arr = list_to_array_ffi(get_data(kernel))
+  let in_arr = ffi.list_to_array(get_data(padded))
+  let k_arr = ffi.list_to_array(get_data(kernel))
 
   // Compute output using direct array access
   let output =
@@ -1728,8 +1716,8 @@ fn conv2d_dot_product(
         False -> {
           let in_idx = { row + kr } * in_w + { col + kc }
           let k_idx = kr * kw + kc
-          let in_val = array_get_ffi(in_arr, in_idx)
-          let k_val = array_get_ffi(k_arr, k_idx)
+          let in_val = ffi.array_get(in_arr, in_idx)
+          let k_val = ffi.array_get(k_arr, k_idx)
 
           conv2d_dot_product(
             in_arr,
@@ -1766,8 +1754,8 @@ fn conv2d_multichannel(
   let k_spatial = kh * kw
 
   // Convert to arrays for O(1) access
-  let in_arr = list_to_array_ffi(get_data(input))
-  let k_arr = list_to_array_ffi(get_data(kernel))
+  let in_arr = ffi.list_to_array(get_data(input))
+  let k_arr = ffi.list_to_array(get_data(kernel))
 
   let output =
     conv2d_mc_loop(
@@ -1987,11 +1975,11 @@ fn conv2d_kernel_sum(
           let c_pos = col + kc
 
           let in_val = case r >= 0 && r < h && c_pos >= 0 && c_pos < w {
-            True -> array_get_ffi(in_arr, ch_offset + r * w + c_pos)
+            True -> ffi.array_get(in_arr, ch_offset + r * w + c_pos)
             False -> 0.0
           }
 
-          let k_val = array_get_ffi(k_arr, k_offset + kr * kw + kc)
+          let k_val = ffi.array_get(k_arr, k_offset + kr * kw + kc)
 
           conv2d_kernel_sum(
             in_arr,
@@ -2035,8 +2023,8 @@ fn conv2d_full(
   let k_filter_size = c_in * k_spatial
 
   // Convert to arrays for O(1) access
-  let in_arr = list_to_array_ffi(get_data(input))
-  let k_arr = list_to_array_ffi(get_data(kernel))
+  let in_arr = ffi.list_to_array(get_data(input))
+  let k_arr = ffi.list_to_array(get_data(kernel))
 
   let output =
     conv2d_full_loop(
@@ -2324,7 +2312,7 @@ pub fn max_pool2d(
   stride_w: Int,
 ) -> Result(Tensor, TensorError) {
   let shp = shape(input)
-  let arr = list_to_array_ffi(get_data(input))
+  let arr = ffi.list_to_array(get_data(input))
 
   case shp {
     [h, w] -> {
@@ -2654,7 +2642,7 @@ fn pool_window(
           )
         False -> {
           let idx = base + { row + pr } * w + { col + pc }
-          let val = array_get_ffi(arr, idx)
+          let val = ffi.array_get(arr, idx)
 
           let new_acc = case is_max {
             True ->
@@ -2693,7 +2681,7 @@ pub fn avg_pool2d(
   stride_w: Int,
 ) -> Result(Tensor, TensorError) {
   let shp = shape(input)
-  let arr = list_to_array_ffi(get_data(input))
+  let arr = ffi.list_to_array(get_data(input))
 
   case shp {
     [h, w] -> {
@@ -2810,23 +2798,3 @@ fn string_join(strings: List(String), sep: String) -> String {
     [s, ..rest] -> s <> sep <> string_join(rest, sep)
   }
 }
-
-// --- FFI (Erlang externals) ---
-
-@external(erlang, "math", "sqrt")
-fn float_sqrt(x: Float) -> Float
-
-@external(erlang, "math", "log")
-fn float_log(x: Float) -> Float
-
-@external(erlang, "math", "cos")
-fn float_cos(x: Float) -> Float
-
-@external(erlang, "rand", "uniform")
-fn random_float() -> Float
-
-@external(erlang, "viva_tensor_ffi", "list_to_array")
-fn list_to_array_ffi(lst: List(Float)) -> ErlangArray
-
-@external(erlang, "viva_tensor_ffi", "array_get")
-fn array_get_ffi(arr: ErlangArray, index: Int) -> Float

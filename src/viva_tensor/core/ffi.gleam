@@ -1185,6 +1185,36 @@ pub fn ct16_matmul(
 ) -> Result(CudaTensor16Ref, String)
 
 // =============================================================================
+// CudaInt8Tensor - INT8 IMMA Tensor Cores (660 TOPS)
+// =============================================================================
+
+pub type CudaInt8TensorRef
+
+@external(erlang, "viva_tensor_zig", "ct_int8_available")
+pub fn ct_int8_available() -> Bool
+
+@external(erlang, "viva_tensor_zig", "ct_int8_from_list")
+pub fn ct_int8_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(CudaInt8TensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "ct_int8_to_list")
+pub fn ct_int8_to_list(ref: CudaInt8TensorRef) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "ct_int8_shape")
+pub fn ct_int8_shape(ref: CudaInt8TensorRef) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "ct_int8_matmul")
+pub fn ct_int8_matmul(
+  a: CudaInt8TensorRef,
+  b: CudaInt8TensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(CudaInt8TensorRef, String)
+
+// =============================================================================
 // SparseTensor - 2:4 Sparsity (660+ TFLOPS)
 // =============================================================================
 

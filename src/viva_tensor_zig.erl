@@ -23,7 +23,7 @@
     nt_to_list/1, nt_shape/1, nt_size/1,
     nt_add/2, nt_sub/2, nt_mul/2, nt_scale/2, nt_negate/1,
     nt_dot/2, nt_sum/1, nt_max/1, nt_min/1,
-    nt_matmul/5, nt_matmul_blas/5, nt_matmul_cuda/5, nt_matmul_cuda_fp32/5,
+    nt_matmul/5, nt_matmul_inplace/6, nt_matmul_blas/5, nt_matmul_cuda/5, nt_matmul_cuda_fp32/5,
     nt_matmul_int8_tc/5, nt_int8_tc_available/0, %% INT8 Tensor Cores (old DP4A)
     nt_matmul_fp16_tc/5, nt_fp16_tc_available/0, %% FP16 Tensor Cores - 330 TFLOPS!
     nt_matmul_int8_lt/5, nt_int8_lt_available/0, %% cublasLt IMMA Tensor Cores - 660 TFLOPS!
@@ -61,12 +61,14 @@
 
 %% CudaTensor - Persistent GPU memory (Linux only, RTX 4090: 40+ TFLOPS!)
 -export([
-    ct_from_list/2, ct_to_list/1, ct_shape/1, ct_matmul/5
+    ct_from_list/2, ct_to_list/1, ct_shape/1, ct_matmul/5,
+    ct_matmul_inplace/6   %% Zero-allocation FP32 GPU matmul
 ]).
 
 %% CudaTensor16 - FP16 Tensor Cores with ZERO-COPY (Linux only, 330 TFLOPS!)
 -export([
-    ct16_from_list/2, ct16_to_list/1, ct16_shape/1, ct16_matmul/5, ct16_available/0
+    ct16_from_list/2, ct16_to_list/1, ct16_shape/1, ct16_matmul/5, ct16_available/0,
+    ct16_matmul_inplace/6   %% Pure FP16→FP16 zero-allocation (max throughput!)
 ]).
 
 %% Async CUDA - No sync overhead for pipeline benchmarks (100+ TFLOPS!)
@@ -84,7 +86,27 @@
     ct_int8_to_list/1,        %% Download INT32 accumulator from GPU
     ct_int8_shape/1,          %% Get tensor shape
     ct_int8_matmul/5,         %% INT8 GEMM with Tensor Cores (sync)
-    ct_int8_matmul_async/5    %% INT8 GEMM async (NO sync!) - 300+ TFLOPS target!
+    ct_int8_matmul_inplace/6, %% INT8 zero-allocation matmul
+    ct_int8_matmul_async/5,   %% INT8 GEMM async (NO sync!) - 300+ TFLOPS target!
+    ct16_matmul_bench/7,      %% FP16 batch bench (loop in C, zero Erlang overhead)
+    ct_int8_matmul_bench/7,   %% INT8 batch bench (loop in C, zero Erlang overhead)
+    ct16_matmul_lt_32f_bench/7,     %% cublasLt FP16 COMPUTE_32F_FAST_16F baseline bench
+    ct16_matmul_fused_relu/6,       %% FP16 GEMM+ReLU fused (activation FREE!)
+    ct16_matmul_fused_gelu/6,       %% FP16 GEMM+GELU fused (activation FREE!)
+    ct16_matmul_fused_relu_bench/7, %% FP16 GEMM+ReLU bench loop in C
+    ct16_matmul_fused_gelu_bench/7, %% FP16 GEMM+GELU bench loop in C
+    ct16_matmul_fused_relu_tn_bench/7, %% FP16 GEMM+ReLU TN layout bench
+    ct16_matmul_fused_gelu_tn_bench/7, %% FP16 GEMM+GELU TN layout bench
+    ct16_matmul_batched_bench/5,       %% FP16 batched GEMM bench (M,N,K,Batch,Iters)
+    fp8_matmul_lt_tn_bench/4,          %% FP8 E4M3 cublasLt TN bench (M,N,K,Iters) -> 330 TOPS
+    cutlass_fp8_f16acc_bench/4,        %% CUTLASS FP8 + FP16 accum bench -> 660 TOPS!
+    cutlass_fp8_f32acc_bench/4,        %% CUTLASS FP8 + FP32 accum bench -> 330 TOPS
+    cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
+    cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
+    cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
+    cusparselt_fp8_sparse_bench/4,    %% cuSPARSELt FP8 E4M3 2:4 sparse (M,N,K,Iters)
+    cusparselt_fp16_sparse_bench/4,   %% cuSPARSELt FP16 2:4 sparse (M,N,K,Iters)
+    cutlass_int4_sparse_bench/6      %% CUTLASS INT4 2:4 sparse (M,N,K,Iters,Config,SplitK)
 ]).
 
 %% SparseTensor - 2:4 Sparsity with cuSPARSELt (Linux only, 660+ TFLOPS!)
@@ -94,7 +116,15 @@
     sparse_shape/1,             %% SparseTensor -> [Rows, Cols]
     sparse_compression_ratio/1, %% SparseTensor -> float() (~2.0x)
     sparse_matmul/5,            %% SparseTensor @ CudaTensor16 -> CudaTensor16 (660 TFLOPS!)
-    sparse_available/0          %% Is cuSPARSELt available?
+    sparse_matmul_inplace/6,    %% In-place sparse GEMM (zero alloc, async)
+    sparse_matmul_bench/7,      %% C-loop sparse GEMM bench (zero overhead)
+    sparse_matmul_bench_tn/7,   %% C-loop TN layout bench (B transposed)
+    sparse_available/0,         %% Is cuSPARSELt available?
+    %% INT8 Sparse — 1320 TOPS (2x of 660T dense INT8!)
+    sparse_from_int8/1,         %% CudaInt8Tensor -> SparseTensor (prune + compress)
+    sparse_matmul_int8/5,       %% SparseTensor @ CudaInt8Tensor -> CudaInt8Tensor (1320 TOPS!)
+    sparse_matmul_int8_inplace/6, %% In-place sparse INT8 GEMM (zero alloc, async)
+    sparse_matmul_int8_bench/7  %% C-loop sparse INT8 GEMM bench (zero overhead)
 ]).
 
 %% SageAttention - INT8 QK^T + FP8 (2-5x faster than FlashAttention!)
@@ -340,6 +370,7 @@ nt_min(_Ref) -> erlang:nif_error(nif_not_loaded).
 
 %% Matrix ops
 nt_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_matmul_inplace(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_blas(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda_fp32(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
@@ -418,6 +449,7 @@ ct_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
 ct_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct_matmul_inplace(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% CudaTensor16 - FP16 Tensor Cores with ZERO-COPY (330 TFLOPS!)
@@ -428,6 +460,7 @@ ct16_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
 ct16_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct16_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_inplace(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 ct16_available() -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
@@ -446,7 +479,32 @@ ct_int8_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
 ct_int8_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct_int8_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
 ct_int8_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct_int8_matmul_inplace(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 ct_int8_matmul_async(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct_int8_matmul_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+
+%% ==========================================================================
+%% Fused GEMM+Activation - cublasLt epilogues (ReLU/GELU FREE!)
+%% Activation fused into GEMM kernel: same TFLOPS as plain GEMM.
+%% ==========================================================================
+ct16_matmul_lt_32f_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_relu(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_gelu(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_relu_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_gelu_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_relu_tn_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_fused_gelu_tn_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+ct16_matmul_batched_bench(_M, _N, _K, _BatchCount, _Iters) -> erlang:nif_error(nif_not_loaded).
+fp8_matmul_lt_tn_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_fp8_f16acc_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_fp8_f32acc_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
+cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
+cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).
+cusparselt_fp8_sparse_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cusparselt_fp16_sparse_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_int4_sparse_bench(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% SparseTensor - 2:4 Sparsity with cuSPARSELt (660+ TFLOPS!)
@@ -457,7 +515,16 @@ sparse_from_ct16(_CudaTensor16Ref) -> erlang:nif_error(nif_not_loaded).
 sparse_shape(_SparseTensorRef) -> erlang:nif_error(nif_not_loaded).
 sparse_compression_ratio(_SparseTensorRef) -> erlang:nif_error(nif_not_loaded).
 sparse_matmul(_SparseTensor, _CudaTensor16B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_inplace(_SparseTensor, _CT16B, _CT16C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_bench(_SparseTensor, _CT16B, _CT16C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_bench_tn(_SparseTensor, _CT16B, _CT16C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 sparse_available() -> erlang:nif_error(nif_not_loaded).
+
+%% INT8 Sparse — 1320 TOPS (2x of 660T dense INT8!)
+sparse_from_int8(_CudaInt8TensorRef) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_int8(_SparseTensor, _CudaInt8TensorB, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_int8_inplace(_SparseTensor, _Int8B, _Int8C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+sparse_matmul_int8_bench(_SparseTensor, _Int8B, _Int8C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% SageAttention - INT8 QK^T + FP8 (2-5x faster than FlashAttention!)

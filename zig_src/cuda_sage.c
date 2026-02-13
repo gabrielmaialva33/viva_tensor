@@ -1,19 +1,6 @@
 /**
- * cuda_sage.c - SageAttention kernels for viva_tensor
- *
+ * cuda_sage.c - SageAttention kernels (INT8 QK^T + FP8 PV)
  * Adapted from: https://github.com/thu-ml/SageAttention (Apache 2.0)
- * Port: Pure C with dlopen (no PyTorch/ATen dependency)
- *
- * Features:
- *   - FP8 GEMM (E4M3, E5M2) via cuBLAS
- *   - INT8 per-block quantization kernel
- *   - Softmax CUDA kernel
- *   - SageAttention: INT8 QK^T + FP16/FP8 PV
- *
- * RTX 4090 Ada Lovelace:
- *   - FP8 E4M3: 660+ TFLOPS
- *   - INT8: 660 TFLOPS
- *   - Expected SageAttention: 2-5x faster than FlashAttention
  */
 
 #ifndef _WIN32
@@ -21,16 +8,15 @@
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <math.h>
+#include "cuda_types.h"
 
-/* MKL for BLAS (linked via build.zig) */
+/* MKL for CPU SGEMM fallback */
 #ifdef USE_MKL_DIRECT
 #include <mkl.h>
 #define USE_MKL_SGEMM 1
 #else
-/* Fallback: declare cblas_sgemm manually */
 typedef enum { CblasRowMajor=101, CblasColMajor=102 } CBLAS_LAYOUT;
 typedef enum { CblasNoTrans=111, CblasTrans=112 } CBLAS_TRANSPOSE;
 extern void cblas_sgemm(CBLAS_LAYOUT, CBLAS_TRANSPOSE, CBLAS_TRANSPOSE,
@@ -39,91 +25,8 @@ extern void cblas_sgemm(CBLAS_LAYOUT, CBLAS_TRANSPOSE, CBLAS_TRANSPOSE,
 #define USE_MKL_SGEMM 1
 #endif
 
-/* Import CUDA functions from cuda_gemm.c */
 extern int cuda_init(void);
 extern int cuda_available(void);
-
-/* CUDA runtime functions (defined in cuda_gemm.c) */
-typedef int cudaError_t;
-typedef void* cudaStream_t;
-typedef int (*cuda_malloc_fn)(void**, size_t);
-typedef int (*cuda_free_fn)(void*);
-typedef int (*cuda_memcpy_fn)(void*, const void*, size_t, int);
-typedef int (*cuda_device_sync_fn)(void);
-
-extern cuda_malloc_fn g_cuda_malloc;
-extern cuda_free_fn g_cuda_free;
-extern cuda_memcpy_fn g_cuda_memcpy;
-extern cuda_device_sync_fn g_cuda_sync;
-
-/* cuBLAS types */
-typedef void* cublasHandle_t;
-typedef int cublasStatus_t;
-typedef int cublasOperation_t;
-typedef int cudaDataType_t;
-typedef int cublasComputeType_t;
-typedef int cublasGemmAlgo_t;
-
-/* CUDA constants */
-#define cudaSuccess 0
-#define CUBLAS_STATUS_SUCCESS 0
-#define CUBLAS_OP_N 0
-#define CUBLAS_OP_T 1
-#define cudaMemcpyHostToDevice 1
-#define cudaMemcpyDeviceToHost 2
-
-/* cuBLAS data types - FP8 added! */
-#define CUDA_R_8F_E4M3  28  /* FP8 E4M3 (Ada/Hopper) */
-#define CUDA_R_8F_E5M2  29  /* FP8 E5M2 (Ada/Hopper) */
-#define CUDA_R_8I       3   /* INT8 */
-#define CUDA_R_32I      10  /* INT32 */
-#define CUDA_R_32F      0   /* FP32 */
-#define CUDA_R_16F      2   /* FP16 */
-#define CUDA_R_16BF     14  /* BF16 */
-
-/* cuBLAS compute types */
-#define CUBLAS_COMPUTE_32I           70
-#define CUBLAS_COMPUTE_32F           68
-#define CUBLAS_COMPUTE_32F_FAST_16F  74
-#define CUBLAS_COMPUTE_32F_FAST_16BF 75
-
-/* cuBLAS GEMM algorithms */
-#define CUBLAS_GEMM_DEFAULT          -1
-#define CUBLAS_GEMM_DEFAULT_TENSOR_OP 99
-
-/* FP8 type (8-bit) */
-typedef uint8_t fp8_e4m3_t;
-typedef uint8_t fp8_e5m2_t;
-
-/* cublasGemmEx function pointer (from cuda_gemm.c) */
-typedef cublasStatus_t (*cublas_gemm_ex_fn)(
-    cublasHandle_t, cublasOperation_t, cublasOperation_t,
-    int, int, int,
-    const void*, const void*, cudaDataType_t, int,
-    const void*, cudaDataType_t, int,
-    const void*, void*, cudaDataType_t, int,
-    cublasComputeType_t, cublasGemmAlgo_t);
-
-/* cuBLAS context from cuda_gemm.c */
-extern cublasHandle_t g_cublas_ctx;
-extern cublas_gemm_ex_fn g_cublas_gemm_ex;
-
-/* CUDA kernel launching via NVRTC */
-typedef void* CUmodule;
-typedef void* CUfunction;
-typedef void* CUstream;
-typedef int CUresult;
-
-typedef CUresult (*cuModuleLoadData_fn)(CUmodule*, const void*);
-typedef CUresult (*cuModuleGetFunction_fn)(CUfunction*, CUmodule, const char*);
-typedef CUresult (*cuLaunchKernel_fn)(CUfunction, unsigned, unsigned, unsigned,
-                                       unsigned, unsigned, unsigned,
-                                       unsigned, CUstream, void**, void**);
-
-static void* g_cuda_driver_handle = NULL;
-static cuModuleLoadData_fn g_cuModuleLoadData = NULL;
-static cuModuleGetFunction_fn g_cuModuleGetFunction = NULL;
-static cuLaunchKernel_fn g_cuLaunchKernel = NULL;
 
 /* =========================================================================
  * FP8 GEMM - E4M3 and E5M2 on RTX 4090 Tensor Cores
@@ -164,7 +67,7 @@ int cuda_tensor_download_fp8(fp8_e4m3_t *h_dst, const fp8_e4m3_t *d_src, size_t 
  * FP8 E4M3 GEMM: C = alpha * A @ B + beta * C
  * A is FP8 [M x K], B is FP8 [K x N], C is FP32 [M x N]
  *
- * RTX 4090: Up to 660 TFLOPS with FP8!
+ * Uses FP8 E4M3 Tensor Cores when available (Ada/Hopper)
  */
 int cuda_fp8gemm_gpu(int M, int N, int K,
                      float alpha, const fp8_e4m3_t *d_A, int lda,
@@ -407,7 +310,7 @@ int dequant_int8_per_block_cpu(
 
 /* =========================================================================
  * Softmax (CPU fallback)
- * GPU kernel would be much faster for large tensors
+ * GPU kernel would avoid the device-host roundtrip for large tensors
  * ========================================================================= */
 
 /**
@@ -448,7 +351,7 @@ int softmax_cpu(float *output, const float *input, size_t batch, size_t dim) {
  * Standard attention: softmax(Q @ K^T / sqrt(d)) @ V
  * Sage attention:
  *   1. Quantize Q, K to INT8 per-block
- *   2. QK^T via INT8 Tensor Cores (660 TFLOPS!)
+ *   2. QK^T via INT8 Tensor Cores
  *   3. Dequant + softmax
  *   4. P @ V in FP16 or FP8
  * ========================================================================= */
@@ -462,7 +365,6 @@ int softmax_cpu(float *output, const float *input, size_t batch, size_t dim) {
  * O: [batch, heads, seq_q, head_dim] - Output
  *
  * Uses MKL cblas_sgemm for both Q@K^T and attn@V
- * Performance: 700-800 GFLOPS on Intel i7 (vs 0.5 GFLOPS naive loops)
  */
 int sage_attention_cpu(
     float *O,           /* Output */
@@ -572,8 +474,8 @@ extern cublas_sgemm_fn g_cublas_sgemm;
 /**
  * SageAttention on GPU using cuBLAS
  *
- * Uses cuBLAS SGEMM for both matmuls (82 TFLOPS FP32)
- * Softmax computed on CPU (GPU kernel would be even faster)
+ * Uses cuBLAS SGEMM for both matmuls
+ * Softmax computed on CPU (a GPU softmax kernel would avoid the roundtrip)
  *
  * Data stays on GPU except for softmax intermediate step
  */
