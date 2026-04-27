@@ -332,6 +332,26 @@ pub fn matmul_gelu_accelerated_into(
   cuda.matmul_gelu_accelerated_into(out, a, b)
 }
 
+/// Write `out = relu(a @ b + bias)` using the FP16 Tensor Core fused epilogue.
+pub fn linear_relu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+) -> Result(Nil, TensorError) {
+  cuda.linear_relu_accelerated_into(out, a, b, bias)
+}
+
+/// Write `out = gelu(a @ b + bias)` using the FP16 Tensor Core fused epilogue.
+pub fn linear_gelu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+) -> Result(Nil, TensorError) {
+  cuda.linear_gelu_accelerated_into(out, a, b, bias)
+}
+
 /// Download an accelerated tensor back to a regular CPU tensor.
 pub fn accelerated_to_tensor(
   t: AcceleratedTensor,
