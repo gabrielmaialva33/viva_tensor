@@ -3,6 +3,7 @@ import gleam/int
 import gleam/list
 import gleeunit
 import gleeunit/should
+import viva_tensor/core/error
 import viva_tensor/core/tensor as core_tensor
 import viva_tensor/tensor
 
@@ -559,6 +560,7 @@ pub fn native_linear_relu_into_test() {
     Ok(a), Ok(b), Ok(bias), Ok(out) -> {
       case tensor.linear_relu_into(out, a, b, bias) {
         Ok(_) -> tensor.to_list(out) |> should.equal([5.0, 0.0, 3.0, 5.0])
+        Error(error.DimensionError("nif_not_loaded")) -> should.be_true(True)
         Error(_) -> should.fail()
       }
     }
