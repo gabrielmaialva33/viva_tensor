@@ -21,31 +21,26 @@ pub type LogNumber =
   ffi.LnsTensorRef
 
 /// Convert standard f64 tensor to LNS format
-pub fn from_tensor(ref: ffi.NativeTensorRef) -> LogNumber {
-  let assert Ok(lns) = ffi.lns_from_f64(ref)
-  lns
+pub fn from_tensor(ref: ffi.NativeTensorRef) -> Result(LogNumber, String) {
+  ffi.lns_from_f64(ref)
 }
 
 /// Convert LNS tensor back to standard f64 tensor
-pub fn to_tensor(lns: LogNumber) -> ffi.NativeTensorRef {
-  let assert Ok(ref) = ffi.lns_to_f64(lns)
-  ref
+pub fn to_tensor(lns: LogNumber) -> Result(ffi.NativeTensorRef, String) {
+  ffi.lns_to_f64(lns)
 }
 
 /// Multiply two LNS tensors (Addition in log-domain)
-pub fn mul(a: LogNumber, b: LogNumber) -> LogNumber {
-  let assert Ok(res) = ffi.lns_mul(a, b)
-  res
+pub fn mul(a: LogNumber, b: LogNumber) -> Result(LogNumber, String) {
+  ffi.lns_mul(a, b)
 }
 
 /// Divide two LNS tensors (Subtraction in log-domain)
-pub fn div(a: LogNumber, b: LogNumber) -> LogNumber {
-  let assert Ok(res) = ffi.lns_div(a, b)
-  res
+pub fn div(a: LogNumber, b: LogNumber) -> Result(LogNumber, String) {
+  ffi.lns_div(a, b)
 }
 
 /// Square root of LNS tensor (Bit shift / division by 2 in log-domain)
-pub fn sqrt(a: LogNumber) -> LogNumber {
-  let assert Ok(res) = ffi.lns_sqrt(a)
-  res
+pub fn sqrt(a: LogNumber) -> Result(LogNumber, String) {
+  ffi.lns_sqrt(a)
 }
