@@ -469,6 +469,75 @@ pub fn elementwise_adds_broadcast_views_test() {
   }
 }
 
+pub fn map2_test() {
+  let a = tensor.from_list([1.0, 2.0, 3.0])
+  let b = tensor.from_list([10.0, 20.0, 30.0])
+
+  case tensor.map2(a, b, fn(x, y) { x *. y +. 1.0 }) {
+    Ok(result) -> tensor.to_list(result) |> should.equal([11.0, 41.0, 91.0])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn native_broadcast_to_returns_native_view_test() {
+  case tensor.native_from_list([1.0, 2.0, 3.0], [3]) {
+    Ok(native) -> {
+      case tensor.broadcast_to(native, [2, 3]) {
+        Ok(view) -> {
+          tensor.is_native(view) |> should.be_true()
+          tensor.shape(view) |> should.equal([2, 3])
+          tensor.to_list(view)
+          |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.be_true(True)
+  }
+}
+
+pub fn native_add_into_accepts_broadcast_views_test() {
+  case
+  tensor.native_from_list([1.0, 2.0, 3.0], [3]),
+  tensor.native_from_list([10.0], [1]),
+  tensor.native_zeros([2, 3])
+  {
+    Ok(row), Ok(scalar), Ok(out) -> {
+      case
+      tensor.broadcast_to(row, [2, 3]),
+      tensor.broadcast_to(scalar, [2, 3])
+      {
+        Ok(a), Ok(b) -> {
+          case tensor.add_into(out, a, b) {
+            Ok(_) ->
+            tensor.to_list(out)
+            |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
+            Error(_) -> should.fail()
+          }
+        }
+        _, _ -> should.fail()
+      }
+    }
+    _, _, _ -> should.be_true(True)
+  }
+}
+
+pub fn native_matmul_into_test() {
+  case
+  tensor.native_from_list([1.0, 2.0, 3.0, 4.0], [2, 2]),
+  tensor.native_from_list([5.0, 6.0, 7.0, 8.0], [2, 2]),
+  tensor.native_zeros([2, 2])
+  {
+    Ok(a), Ok(b), Ok(out) -> {
+      case tensor.matmul_into(out, a, b) {
+        Ok(_) -> tensor.to_list(out) |> should.equal([19.0, 22.0, 43.0, 50.0])
+        Error(_) -> should.fail()
+      }
+    }
+    _, _, _ -> should.be_true(True)
+  }
+}
+
 // =============================================================================
 // STRIDED OPERATIONS (extended)
 // =============================================================================
