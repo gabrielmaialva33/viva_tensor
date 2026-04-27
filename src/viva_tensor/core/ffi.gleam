@@ -498,8 +498,8 @@ pub fn nt_size(ref: NativeTensorRef) -> Result(Int, String) {
 
 /// Broadcast native tensor to target shape as a zero-copy native view.
 pub fn nt_broadcast_to(
-ref: NativeTensorRef,
-shape: List(Int),
+  ref: NativeTensorRef,
+  shape: List(Int),
 ) -> Result(NativeTensorRef, String) {
   nt_broadcast_to_ffi(ref, shape)
 }
@@ -574,12 +574,12 @@ pub fn nt_matmul(
 
 /// Native matmul into preallocated output: out = [m,k] @ [k,n].
 pub fn nt_matmul_inplace(
-a: NativeTensorRef,
-b: NativeTensorRef,
-out: NativeTensorRef,
-m: Int,
-n: Int,
-k: Int,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  out: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
 ) -> Result(Nil, String) {
   nt_matmul_inplace_ffi(a, b, out, m, n, k)
 }
@@ -637,36 +637,36 @@ pub fn nt_relu_mut(a: NativeTensorRef) -> Result(Nil, String) {
 
 /// Write out = a + b into preallocated native output.
 pub fn nt_add_into(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String) {
   nt_add_into_ffi(out, a, b)
 }
 
 /// Write out = a - b into preallocated native output.
 pub fn nt_sub_into(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String) {
   nt_sub_into_ffi(out, a, b)
 }
 
 /// Write out = a * b into preallocated native output.
 pub fn nt_mul_into(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String) {
   nt_mul_into_ffi(out, a, b)
 }
 
 /// Write out = a * scalar into preallocated native output.
 pub fn nt_scale_into(
-out: NativeTensorRef,
-a: NativeTensorRef,
-scalar: Float,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  scalar: Float,
 ) -> Result(Nil, String) {
   nt_scale_into_ffi(out, a, scalar)
 }
@@ -759,8 +759,8 @@ fn nt_size_ffi(ref: NativeTensorRef) -> Result(Int, String)
 
 @external(erlang, "viva_tensor_zig", "nt_broadcast_to")
 fn nt_broadcast_to_ffi(
-ref: NativeTensorRef,
-shape: List(Int),
+  ref: NativeTensorRef,
+  shape: List(Int),
 ) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_add")
@@ -813,12 +813,12 @@ fn nt_matmul_ffi(
 
 @external(erlang, "viva_tensor_zig", "nt_matmul_inplace")
 fn nt_matmul_inplace_ffi(
-a: NativeTensorRef,
-b: NativeTensorRef,
-out: NativeTensorRef,
-m: Int,
-n: Int,
-k: Int,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  out: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
 ) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_transpose")
@@ -851,30 +851,30 @@ fn nt_relu_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_add_into")
 fn nt_add_into_ffi(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_sub_into")
 fn nt_sub_into_ffi(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_mul_into")
 fn nt_mul_into_ffi(
-out: NativeTensorRef,
-a: NativeTensorRef,
-b: NativeTensorRef,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
 ) -> Result(Nil, String)
 
 @external(erlang, "viva_tensor_zig", "nt_scale_into")
 fn nt_scale_into_ffi(
-out: NativeTensorRef,
-a: NativeTensorRef,
-scalar: Float,
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  scalar: Float,
 ) -> Result(Nil, String)
 
 // Retro / fused kernel FFI

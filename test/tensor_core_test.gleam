@@ -444,7 +444,7 @@ pub fn broadcast_to_returns_zero_stride_view_test() {
 
       case b {
         tensor.StridedTensor(_, _, strides, _) ->
-        strides |> should.equal([0, 1])
+          strides |> should.equal([0, 1])
         _ -> should.fail()
       }
     }
@@ -460,8 +460,8 @@ pub fn elementwise_adds_broadcast_views_test() {
     Ok(a), Ok(b) -> {
       case tensor.add(a, b) {
         Ok(result) ->
-        tensor.to_list(result)
-        |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
+          tensor.to_list(result)
+          |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
         Error(_) -> should.fail()
       }
     }
@@ -498,20 +498,20 @@ pub fn native_broadcast_to_returns_native_view_test() {
 
 pub fn native_add_into_accepts_broadcast_views_test() {
   case
-  tensor.native_from_list([1.0, 2.0, 3.0], [3]),
-  tensor.native_from_list([10.0], [1]),
-  tensor.native_zeros([2, 3])
+    tensor.native_from_list([1.0, 2.0, 3.0], [3]),
+    tensor.native_from_list([10.0], [1]),
+    tensor.native_zeros([2, 3])
   {
     Ok(row), Ok(scalar), Ok(out) -> {
       case
-      tensor.broadcast_to(row, [2, 3]),
-      tensor.broadcast_to(scalar, [2, 3])
+        tensor.broadcast_to(row, [2, 3]),
+        tensor.broadcast_to(scalar, [2, 3])
       {
         Ok(a), Ok(b) -> {
           case tensor.add_into(out, a, b) {
             Ok(_) ->
-            tensor.to_list(out)
-            |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
+              tensor.to_list(out)
+              |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
             Error(_) -> should.fail()
           }
         }
@@ -524,9 +524,9 @@ pub fn native_add_into_accepts_broadcast_views_test() {
 
 pub fn native_matmul_into_test() {
   case
-  tensor.native_from_list([1.0, 2.0, 3.0, 4.0], [2, 2]),
-  tensor.native_from_list([5.0, 6.0, 7.0, 8.0], [2, 2]),
-  tensor.native_zeros([2, 2])
+    tensor.native_from_list([1.0, 2.0, 3.0, 4.0], [2, 2]),
+    tensor.native_from_list([5.0, 6.0, 7.0, 8.0], [2, 2]),
+    tensor.native_zeros([2, 2])
   {
     Ok(a), Ok(b), Ok(out) -> {
       case tensor.matmul_into(out, a, b) {
@@ -535,6 +535,34 @@ pub fn native_matmul_into_test() {
       }
     }
     _, _, _ -> should.be_true(True)
+  }
+}
+
+pub fn linear_relu_test() {
+  let a = tensor.Tensor(data: [1.0, -2.0, 3.0, 4.0], shape: [2, 2])
+  let b = tensor.Tensor(data: [2.0, 1.0, -1.0, 3.0], shape: [2, 2])
+  let bias = tensor.from_list([1.0, -10.0])
+
+  case tensor.linear_relu(a, b, bias) {
+    Ok(result) -> tensor.to_list(result) |> should.equal([5.0, 0.0, 3.0, 5.0])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn native_linear_relu_into_test() {
+  case
+    tensor.native_from_list([1.0, -2.0, 3.0, 4.0], [2, 2]),
+    tensor.native_from_list([2.0, 1.0, -1.0, 3.0], [2, 2]),
+    tensor.native_from_list([1.0, -10.0], [2]),
+    tensor.native_zeros([2, 2])
+  {
+    Ok(a), Ok(b), Ok(bias), Ok(out) -> {
+      case tensor.linear_relu_into(out, a, b, bias) {
+        Ok(_) -> tensor.to_list(out) |> should.equal([5.0, 0.0, 3.0, 5.0])
+        Error(_) -> should.fail()
+      }
+    }
+    _, _, _, _ -> should.be_true(True)
   }
 }
 
