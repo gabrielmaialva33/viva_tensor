@@ -36,6 +36,10 @@ pub fn main() {
   io.println("\n━━━ ZERO-COPY (Strided) vs COPY ━━━")
   bench_strided()
 
+  // 6. Native zero-allocation output buffers
+  io.println("\n━━━ NATIVE INTO OPS (Zero Allocation Output) ━━━")
+  bench_native_into()
+
   io.println("\n╔════════════════════════════════════════════════════════════╗")
   io.println("║  BENCHMARKS COMPLETE - Gleam tensor lib ready for battle!  ║")
   io.println("╚════════════════════════════════════════════════════════════╝")
@@ -206,4 +210,83 @@ fn bench_strided() {
 
   // Show the speed difference
   io.println("\n⚡ Zero-copy transpose is O(1) vs O(n²) for copy!")
+}
+
+fn bench_native_into() {
+  case
+    tensor.native_ones([1000, 100]),
+    tensor.native_ones([100]),
+    tensor.native_zeros([1000, 100])
+  {
+    Ok(a), Ok(row), Ok(out) -> {
+      case tensor.broadcast_to(row, [1000, 100]) {
+        Ok(row_bc) ->
+          bench.run(
+            [bench.Input("native [1000,100] + [100]", #(a, row_bc, out))],
+            [
+              bench.Function("add_broadcast alloc", fn(input) {
+                let #(x, y, _) = input
+                fn() {
+                  let _ = tensor.add_broadcast(x, y)
+                  Nil
+                }
+              }),
+              bench.Function("add_into reused", fn(input) {
+                let #(x, y, z) = input
+                fn() {
+                  let _ = tensor.add_into(z, x, y)
+                  Nil
+                }
+              }),
+            ],
+            [bench.Duration(1000), bench.Warmup(100)],
+          )
+          |> bench.table([bench.IPS, bench.Min, bench.Mean])
+          |> io.println()
+        Error(_) ->
+          io.println("Native broadcast unavailable; skipping add_into bench")
+      }
+    }
+    _, _, _ -> io.println("Native NIF unavailable; skipping add_into bench")
+  }
+
+  case
+    tensor.native_ones([128, 128]),
+    tensor.native_ones([128, 128]),
+    tensor.native_ones([128]),
+    tensor.native_zeros([128, 128])
+  {
+    Ok(a), Ok(b), Ok(bias), Ok(out) ->
+      bench.run(
+        [bench.Input("native 128x128 linear", #(a, b, bias, out))],
+        [
+          bench.Function("linear_relu alloc", fn(input) {
+            let #(x, y, z, _) = input
+            fn() {
+              let _ = tensor.linear_relu(x, y, z)
+              Nil
+            }
+          }),
+          bench.Function("linear_relu_into reused", fn(input) {
+            let #(x, y, z, out) = input
+            fn() {
+              let _ = tensor.linear_relu_into(out, x, y, z)
+              Nil
+            }
+          }),
+          bench.Function("matmul_into reused", fn(input) {
+            let #(x, y, _, out) = input
+            fn() {
+              let _ = tensor.matmul_into(out, x, y)
+              Nil
+            }
+          }),
+        ],
+        [bench.Duration(1000), bench.Warmup(100)],
+      )
+      |> bench.table([bench.IPS, bench.Min, bench.Mean])
+      |> io.println()
+    _, _, _, _ ->
+      io.println("Native NIF unavailable; skipping linear_into bench")
+  }
 }
