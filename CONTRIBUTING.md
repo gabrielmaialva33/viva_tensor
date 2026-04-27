@@ -1,6 +1,8 @@
 # Contributing
 
-Thanks for helping improve viva_tensor. This project is a Gleam tensor library with native BEAM/NIF acceleration through Zig, C, MKL, CUDA, and specialized kernels. Contributions should keep the public Gleam API small, documented, and predictable while allowing native backends to evolve behind internal modules.
+Thanks for helping improve viva_tensor. This project is a Gleam tensor library with native BEAM/NIF acceleration through
+Zig, C, MKL, CUDA, and specialized kernels. Contributions should keep the public Gleam API small, documented, and
+predictable while allowing native backends to evolve behind internal modules.
 
 ## Project Layout
 
@@ -48,7 +50,8 @@ CUDA tests may require running outside restricted sandboxes so the BEAM process 
 
 ## Benchmarks
 
-Use benchmarks to support performance claims. Prefer comparing against a clear baseline and include hardware, driver, CUDA/MKL versions, matrix sizes, warmup, iteration count, and whether timings include upload/download.
+Use benchmarks to support performance claims. Prefer comparing against a clear baseline and include hardware, driver,
+CUDA/MKL versions, matrix sizes, warmup, iteration count, and whether timings include upload/download.
 
 Common commands:
 
@@ -81,4 +84,5 @@ Keep pull requests focused. A good PR explains:
 - Which checks and benchmarks were run.
 - Any hardware-specific assumptions.
 
-Bug fixes should include regression tests when practical. Performance changes should include enough benchmark detail for another contributor to reproduce or challenge the result.
+Bug fixes should include regression tests when practical. Performance changes should include enough benchmark detail for
+another contributor to reproduce or challenge the result.

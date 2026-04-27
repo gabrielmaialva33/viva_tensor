@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-viva_tensor is a pure Gleam tensor library targeting the Erlang runtime (BEAM). It provides NumPy-inspired tensor operations with memory optimization through quantization (INT8, NF4, AWQ). The tagline "Memory × 8" reflects NF4's ability to compress 24GB VRAM to effectively handle 192GB of data.
+viva_tensor is a pure Gleam tensor library targeting the Erlang runtime (BEAM). It provides NumPy-inspired tensor
+operations with memory optimization through quantization (INT8, NF4, AWQ). The tagline "Memory × 8" reflects NF4's
+ability to compress 24GB VRAM to effectively handle 192GB of data.
 
 ## Build Commands
 
@@ -100,12 +102,14 @@ pub type NF4
 ### Module Responsibilities
 
 **core/tensor.gleam**: Tensor construction and accessors
+
 - `new`, `zeros`, `ones`, `fill` - constructors
 - `shape`, `size`, `rank`, `to_list` - accessors
 - `get`, `get2d`, `get_row`, `get_col` - indexing
 - Strided tensor support for zero-copy ops
 
 **core/ops.gleam**: Mathematical operations
+
 - Element-wise: `add`, `sub`, `mul`, `div`, `negate`
 - Reductions: `sum`, `mean`, `max`, `min`, `variance`
 - Matrix: `matmul`, `transpose`, `dot`, `outer`
@@ -113,11 +117,13 @@ pub type NF4
 - Broadcasting: `add_broadcast`, `mul_broadcast`, `broadcast_to`
 
 **core/shape.gleam**: Shape manipulation
+
 - `reshape`, `flatten`, `squeeze`, `unsqueeze`
 - `slice`, `take_first`, `take_last`
 - `concat`, `concat_axis`, `stack`
 
 **nn/autograd.gleam**: Automatic differentiation
+
 - `Tape` - computation graph
 - `Variable` - tracked tensor
 - `Traced(a)` - state monad for traced operations
@@ -133,10 +139,12 @@ pub type NF4
 ## Testing
 
 Tests are organized by domain:
+
 - [test/viva_tensor_test.gleam](test/viva_tensor_test.gleam) - Core tensor tests
 - [test/autograd_test.gleam](test/autograd_test.gleam) - Autograd tests
 
 Test categories:
+
 - Tensor constructors (zeros, ones, from_list, random)
 - Element-wise operations (add, sub, mul, div with broadcasting)
 - Reductions (sum, mean, max, min, variance)
@@ -148,9 +156,9 @@ Test categories:
 ## Adding New Operations
 
 1. Add function to appropriate module:
-   - Math operations → `core/ops.gleam`
-   - Shape operations → `core/shape.gleam`
-   - NN operations → `nn/` directory
+  - Math operations → `core/ops.gleam`
+  - Shape operations → `core/shape.gleam`
+  - NN operations → `nn/` directory
 2. Return `Result(Tensor, TensorError)` for fallible operations
 3. Add public re-export in [viva_tensor.gleam](src/viva_tensor.gleam) if needed
 4. Add tests in appropriate test file

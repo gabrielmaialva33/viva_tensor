@@ -1,6 +1,8 @@
 # Code of Conduct
 
-viva_tensor is an open-source project for high-performance tensor computing in Gleam. We want the project to be a useful, technical, and respectful space for contributors across Gleam, BEAM, CUDA, numerical computing, and systems programming backgrounds.
+viva_tensor is an open-source project for high-performance tensor computing in Gleam. We want the project to be a
+useful, technical, and respectful space for contributors across Gleam, BEAM, CUDA, numerical computing, and systems
+programming backgrounds.
 
 This code is adapted from the Contributor Covenant, version 2.1.
 
@@ -24,14 +26,18 @@ Examples of behavior that is not acceptable:
 
 ## Scope
 
-This code applies in project spaces, including issues, pull requests, discussions, release channels, documentation, and community conversations where someone is representing the project.
+This code applies in project spaces, including issues, pull requests, discussions, release channels, documentation, and
+community conversations where someone is representing the project.
 
 ## Enforcement
 
-Maintainers are responsible for clarifying standards and may remove comments, close issues, reject contributions, or temporarily/permanently restrict participation when behavior harms the project or community.
+Maintainers are responsible for clarifying standards and may remove comments, close issues, reject contributions, or
+temporarily/permanently restrict participation when behavior harms the project or community.
 
-Report concerns privately through GitHub Security Advisories when the report involves a vulnerability. For conduct concerns that are not security-sensitive, contact a maintainer privately through GitHub.
+Report concerns privately through GitHub Security Advisories when the report involves a vulnerability. For conduct
+concerns that are not security-sensitive, contact a maintainer privately through GitHub.
 
 ## Attribution
 
-This code is adapted from the Contributor Covenant, version 2.1: https://www.contributor-covenant.org/version/2/1/code_of_conduct/
+This code is adapted from the Contributor Covenant, version
+2.1: https://www.contributor-covenant.org/version/2/1/code_of_conduct/

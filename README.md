@@ -16,29 +16,29 @@
 
 ### GPU Tensor Cores (RTX 4090)
 
-| Backend | Throughput | % of Peak |
-|:--------|----------:|----------:|
-| FP8 E4M3 (CUTLASS) | **660 TOPS** | 100% |
-| INT8 Dense (IMMA) | **604 TOPS** | 92% |
-| FP16 Dense (cublasGemmEx) | **284 TFLOPS** | 86% |
-| FP32/TF32 (cuBLAS) | **84.5 TFLOPS** | 102% |
-| Fused GEMM+ReLU | **162 TFLOPS** | free activation |
+| Backend                   |      Throughput |       % of Peak |
+|:--------------------------|----------------:|----------------:|
+| FP8 E4M3 (CUTLASS)        |    **660 TOPS** |            100% |
+| INT8 Dense (IMMA)         |    **604 TOPS** |             92% |
+| FP16 Dense (cublasGemmEx) |  **284 TFLOPS** |             86% |
+| FP32/TF32 (cuBLAS)        | **84.5 TFLOPS** |            102% |
+| Fused GEMM+ReLU           |  **162 TFLOPS** | free activation |
 
 ### GPU 2:4 Structured Sparsity
 
-| Backend | Throughput | % of Peak |
-|:--------|----------:|----------:|
-| INT4 Sparse (CUTLASS) | **1854 TOPS** | 70% |
-| INT8 Sparse (cuSPARSELt) | **1094 TOPS** | 83% |
-| INT8 Sparse (CUTLASS) | **841 TOPS** | 64% |
-| FP8 Sparse (cuSPARSELt) | **702 TOPS** | 53% |
-| FP16 Sparse (cuSPARSELt) | **355 TFLOPS** | 53% |
+| Backend                  |     Throughput | % of Peak |
+|:-------------------------|---------------:|----------:|
+| INT4 Sparse (CUTLASS)    |  **1854 TOPS** |       70% |
+| INT8 Sparse (cuSPARSELt) |  **1094 TOPS** |       83% |
+| INT8 Sparse (CUTLASS)    |   **841 TOPS** |       64% |
+| FP8 Sparse (cuSPARSELt)  |   **702 TOPS** |       53% |
+| FP16 Sparse (cuSPARSELt) | **355 TFLOPS** |       53% |
 
 ### CPU (Intel MKL)
 
-| Size | viva_tensor | PyTorch | NumPy | vs PyTorch |
-|:----:|:-----------:|:-------:|:-----:|:----------:|
-| 5000x5000 | **931 GFLOPS** | 620 | 368 | **+50%** |
+|   Size    |  viva_tensor   | PyTorch | NumPy | vs PyTorch |
+|:---------:|:--------------:|:-------:|:-----:|:----------:|
+| 5000x5000 | **931 GFLOPS** |   620   |  368  |  **+50%**  |
 
 > Xeon 24-core (AVX2), MKL dgemm FP64, compact affinity, MADV_HUGEPAGE.
 > All numbers verified with CUDA events and IQR outlier removal.
@@ -149,11 +149,11 @@ mindmap
 
 ### Quantization
 
-| Method | Compression | Quality | Use Case |
-|:------:|:-----------:|:-------:|:--------:|
-| INT8 | 4x | 96% | Inference |
-| NF4 | 7.5x | 99% | QLoRA Fine-tuning |
-| AWQ | 7.7x | 97% | Edge Deployment |
+| Method | Compression | Quality |     Use Case      |
+|:------:|:-----------:|:-------:|:-----------------:|
+|  INT8  |     4x      |   96%   |     Inference     |
+|  NF4   |    7.5x     |   99%   | QLoRA Fine-tuning |
+|  AWQ   |    7.7x     |   97%   |  Edge Deployment  |
 
 ## Build
 
