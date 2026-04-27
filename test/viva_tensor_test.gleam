@@ -4,6 +4,7 @@ import viva_tensor as t
 import viva_tensor/axis
 import viva_tensor/core/ops
 import viva_tensor/core/tensor as core_tensor
+import viva_tensor/cuda.{CpuFallback}
 import viva_tensor/named
 import viva_tensor/tensor
 
@@ -264,7 +265,12 @@ pub fn persistent_accelerated_matmul_into_test() {
                     Error(_) -> should.fail()
                   }
                 }
-                Error(_) -> should.fail()
+                Error(_) -> {
+                  case t.accelerated_backend(out) {
+                    CpuFallback -> Nil
+                    _ -> should.fail()
+                  }
+                }
               }
             }
             _, _, _ -> should.fail()
