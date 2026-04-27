@@ -156,8 +156,8 @@ pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
 
 /// Create a native-backed tensor filled with a value.
 pub fn native_fill(
-shape: List(Int),
-value: Float,
+  shape: List(Int),
+  value: Float,
 ) -> Result(Tensor, TensorError) {
   case ffi.nt_fill(shape, value) {
     Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
@@ -167,20 +167,20 @@ value: Float,
 
 /// Create a native-backed tensor from row-major list data.
 pub fn native_from_list(
-data: List(Float),
-shape: List(Int),
+  data: List(Float),
+  shape: List(Int),
 ) -> Result(Tensor, TensorError) {
   let expected_size = list.fold(shape, 1, fn(acc, dim) { acc * dim })
   let actual_size = list.length(data)
 
   case expected_size == actual_size {
     False ->
-    Error(InvalidShape(
-    "Expected "
-    <> int.to_string(expected_size)
-    <> " elements, got "
-    <> int.to_string(actual_size),
-    ))
+      Error(InvalidShape(
+        "Expected "
+        <> int.to_string(expected_size)
+        <> " elements, got "
+        <> int.to_string(actual_size),
+      ))
     True -> {
       case ffi.nt_from_list(data, shape) {
         Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
@@ -279,14 +279,14 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
         DimensionError("Index " <> int.to_string(index) <> " out of bounds")
       })
     NativeTensor(ref, _) ->
-    case ffi.nt_to_list(ref) {
-      Ok(data) ->
-      list_at_float(data, index)
-      |> result.map_error(fn(_) {
-        DimensionError("Index " <> int.to_string(index) <> " out of bounds")
-      })
-      Error(reason) -> Error(DimensionError(reason))
-    }
+      case ffi.nt_to_list(ref) {
+        Ok(data) ->
+          list_at_float(data, index)
+          |> result.map_error(fn(_) {
+            DimensionError("Index " <> int.to_string(index) <> " out of bounds")
+          })
+        Error(reason) -> Error(DimensionError(reason))
+      }
     StridedTensor(storage, shape, strides, offset) -> {
       let indices = flat_to_multi(index, shape)
       let flat_idx =
@@ -366,9 +366,9 @@ pub fn map_indexed(t: Tensor, f: fn(Float, Int) -> Float) -> Tensor {
 
 /// Apply a binary function element-wise over tensors with the same shape.
 pub fn map2(
-a: Tensor,
-b: Tensor,
-f: fn(Float, Float) -> Float,
+  a: Tensor,
+  b: Tensor,
+  f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
     True -> elementwise_fallback(a, b, f)
@@ -380,15 +380,15 @@ f: fn(Float, Float) -> Float,
 pub fn add(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
     True ->
-    case a, b {
-      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
-        case ffi.nt_add(a_ref, b_ref) {
-          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
-          Error(_) -> add_dense(a, b)
+      case a, b {
+        NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+          case ffi.nt_add(a_ref, b_ref) {
+            Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+            Error(_) -> add_dense(a, b)
+          }
         }
+        _, _ -> add_dense(a, b)
       }
-      _, _ -> add_dense(a, b)
-    }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
 }
@@ -401,15 +401,15 @@ fn add_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 pub fn sub(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
     True ->
-    case a, b {
-      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
-        case ffi.nt_sub(a_ref, b_ref) {
-          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
-          Error(_) -> sub_dense(a, b)
+      case a, b {
+        NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+          case ffi.nt_sub(a_ref, b_ref) {
+            Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+            Error(_) -> sub_dense(a, b)
+          }
         }
+        _, _ -> sub_dense(a, b)
       }
-      _, _ -> sub_dense(a, b)
-    }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
 }
@@ -423,15 +423,15 @@ fn sub_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 pub fn mul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
     True ->
-    case a, b {
-      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
-        case ffi.nt_mul(a_ref, b_ref) {
-          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
-          Error(_) -> mul_dense(a, b)
+      case a, b {
+        NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+          case ffi.nt_mul(a_ref, b_ref) {
+            Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+            Error(_) -> mul_dense(a, b)
+          }
         }
+        _, _ -> mul_dense(a, b)
       }
-      _, _ -> mul_dense(a, b)
-    }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
 }
@@ -462,17 +462,17 @@ pub fn mul_into(out: Tensor, a: Tensor, b: Tensor) -> Result(Nil, TensorError) {
 
 /// Write out = a * scalar into a preallocated native tensor.
 pub fn scale_into(
-out: Tensor,
-a: Tensor,
-scalar: Float,
+  out: Tensor,
+  a: Tensor,
+  scalar: Float,
 ) -> Result(Nil, TensorError) {
   case out.shape == a.shape {
     False -> Error(ShapeMismatch(expected: a.shape, got: out.shape))
     True -> {
       case out, a {
         NativeTensor(out_ref, _), NativeTensor(a_ref, _) ->
-        ffi.nt_scale_into(out_ref, a_ref, scalar)
-        |> result.map_error(fn(reason) { DimensionError(reason) })
+          ffi.nt_scale_into(out_ref, a_ref, scalar)
+          |> result.map_error(fn(reason) { DimensionError(reason) })
         _, _ -> Error(DimensionError("scale_into requires native tensors"))
       }
     }
@@ -481,17 +481,17 @@ scalar: Float,
 
 /// Write out = a @ b into a preallocated native tensor.
 pub fn matmul_into(
-out: Tensor,
-a: Tensor,
-b: Tensor,
+  out: Tensor,
+  a: Tensor,
+  b: Tensor,
 ) -> Result(Nil, TensorError) {
   case a.shape, b.shape, out.shape {
     [m, n], [n2, p], [out_m, out_p] if n == n2 && m == out_m && p == out_p -> {
       case out, a, b {
         NativeTensor(out_ref, _), NativeTensor(a_ref, _), NativeTensor(b_ref, _)
         ->
-        ffi.nt_matmul_inplace(a_ref, b_ref, out_ref, m, p, n)
-        |> result.map_error(fn(reason) { DimensionError(reason) })
+          ffi.nt_matmul_inplace(a_ref, b_ref, out_ref, m, p, n)
+          |> result.map_error(fn(reason) { DimensionError(reason) })
         _, _, _ -> Error(DimensionError("matmul_into requires native tensors"))
       }
     }
@@ -500,12 +500,98 @@ b: Tensor,
   }
 }
 
+/// Fused linear layer with ReLU: max(0, a @ b + bias).
+pub fn linear_relu(
+  a: Tensor,
+  b: Tensor,
+  bias: Tensor,
+) -> Result(Tensor, TensorError) {
+  case a.shape, b.shape, bias.shape {
+    [m, k], [k2, n], [bias_n] if k == k2 && n == bias_n -> {
+      case a, b, bias {
+        NativeTensor(a_ref, _),
+          NativeTensor(b_ref, _),
+          NativeTensor(bias_ref, _)
+        -> {
+          case ffi.nt_fused_linear_relu(a_ref, b_ref, bias_ref, m, n, k) {
+            Ok(result_ref) -> Ok(NativeTensor(ref: result_ref, shape: [m, n]))
+            Error(_) -> linear_relu_dense(a, b, bias, m, n)
+          }
+        }
+        _, _, _ -> linear_relu_dense(a, b, bias, m, n)
+      }
+    }
+    [_, _], [_, n], [bias_n] ->
+      Error(ShapeMismatch(expected: [n], got: [bias_n]))
+    _, _, _ -> Error(DimensionError("Expected [m,k], [k,n], and [n] bias"))
+  }
+}
+
+/// Write out = max(0, a @ b + bias) into a preallocated native tensor.
+pub fn linear_relu_into(
+  out: Tensor,
+  a: Tensor,
+  b: Tensor,
+  bias: Tensor,
+) -> Result(Nil, TensorError) {
+  case a.shape, b.shape, bias.shape, out.shape {
+    [m, k], [k2, n], [bias_n], [out_m, out_n]
+      if k == k2 && n == bias_n && m == out_m && n == out_n
+    -> {
+      case out, a, b, bias {
+        NativeTensor(out_ref, _),
+          NativeTensor(a_ref, _),
+          NativeTensor(b_ref, _),
+          NativeTensor(bias_ref, _)
+        ->
+          ffi.nt_fused_linear_relu_into(
+            out_ref,
+            a_ref,
+            b_ref,
+            bias_ref,
+            m,
+            n,
+            k,
+          )
+          |> result.map_error(fn(reason) { DimensionError(reason) })
+        _, _, _, _ ->
+          Error(DimensionError("linear_relu_into requires native tensors"))
+      }
+    }
+    [m, _], [_, n], _, _ ->
+      Error(ShapeMismatch(expected: [m, n], got: out.shape))
+    _, _, _, _ ->
+      Error(DimensionError("Expected [m,k], [k,n], [n], and [m,n] output"))
+  }
+}
+
+fn linear_relu_dense(
+  a: Tensor,
+  b: Tensor,
+  bias: Tensor,
+  m: Int,
+  n: Int,
+) -> Result(Tensor, TensorError) {
+  use product <- result.try(matmul(a, b))
+  let data =
+    list.range(0, m * n - 1)
+    |> list.map(fn(i) {
+      let value =
+        get_element_or_zero(product, i) +. get_element_or_zero(bias, i % n)
+      case value >. 0.0 {
+        True -> value
+        False -> 0.0
+      }
+    })
+  Ok(Tensor(data: data, shape: [m, n]))
+}
+
 fn native_binary_into(
-out: Tensor,
-a: Tensor,
-b: Tensor,
-op: fn(NativeTensorRef, NativeTensorRef, NativeTensorRef) ->
-Result(Nil, String),
+  out: Tensor,
+  a: Tensor,
+  b: Tensor,
+  op: fn(NativeTensorRef, NativeTensorRef, NativeTensorRef) ->
+    Result(Nil, String),
 ) -> Result(Nil, TensorError) {
   case a.shape == b.shape && out.shape == a.shape {
     False -> Error(ShapeMismatch(expected: a.shape, got: out.shape))
@@ -513,19 +599,19 @@ Result(Nil, String),
       case out, a, b {
         NativeTensor(out_ref, _), NativeTensor(a_ref, _), NativeTensor(b_ref, _)
         ->
-        op(out_ref, a_ref, b_ref)
-        |> result.map_error(fn(reason) { DimensionError(reason) })
+          op(out_ref, a_ref, b_ref)
+          |> result.map_error(fn(reason) { DimensionError(reason) })
         _, _, _ ->
-        Error(DimensionError("into operations require native tensors"))
+          Error(DimensionError("into operations require native tensors"))
       }
     }
   }
 }
 
 fn elementwise_fallback(
-a: Tensor,
-b: Tensor,
-f: fn(Float, Float) -> Float,
+  a: Tensor,
+  b: Tensor,
+  f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   case is_native(a) || is_native(b) {
     True -> materialized_elementwise(a, b, f)
@@ -542,9 +628,9 @@ f: fn(Float, Float) -> Float,
 }
 
 fn materialized_elementwise(
-a: Tensor,
-b: Tensor,
-f: fn(Float, Float) -> Float,
+  a: Tensor,
+  b: Tensor,
+  f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   let a_data = get_data(a)
   let b_data = get_data(b)
@@ -553,17 +639,17 @@ f: fn(Float, Float) -> Float,
 }
 
 fn indexed_elementwise(
-a: Tensor,
-b: Tensor,
-f: fn(Float, Float) -> Float,
+  a: Tensor,
+  b: Tensor,
+  f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   let data =
-  list.range(0, size(a) - 1)
-  |> list.map(fn(i) {
-    let x = get_element_or_zero(a, i)
-    let y = get_element_or_zero(b, i)
-    f(x, y)
-  })
+    list.range(0, size(a) - 1)
+    |> list.map(fn(i) {
+      let x = get_element_or_zero(a, i)
+      let y = get_element_or_zero(b, i)
+      f(x, y)
+    })
   Ok(Tensor(data: data, shape: a.shape))
 }
 
@@ -852,15 +938,15 @@ fn compute_index_with_axis(
 pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   case rank(a) == 1 && rank(b) == 1 && size(a) == size(b) {
     True ->
-    case a, b {
-      NativeTensor(a_ref, _), NativeTensor(b_ref, _) -> {
-        case ffi.nt_dot(a_ref, b_ref) {
-          Ok(value) -> Ok(value)
-          Error(_) -> dot_dense(a, b)
+      case a, b {
+        NativeTensor(a_ref, _), NativeTensor(b_ref, _) -> {
+          case ffi.nt_dot(a_ref, b_ref) {
+            Ok(value) -> Ok(value)
+            Error(_) -> dot_dense(a, b)
+          }
         }
+        _, _ -> dot_dense(a, b)
       }
-      _, _ -> dot_dense(a, b)
-    }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
 }
@@ -920,31 +1006,31 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 }
 
 fn matmul_dense(
-a: Tensor,
-b: Tensor,
-m: Int,
-n: Int,
-p: Int,
+  a: Tensor,
+  b: Tensor,
+  m: Int,
+  n: Int,
+  p: Int,
 ) -> Result(Tensor, TensorError) {
   let result_data =
-  list.range(0, m - 1)
-  |> list.flat_map(fn(i) {
-    list.range(0, p - 1)
-    |> list.map(fn(j) {
-      list.range(0, n - 1)
-      |> list.fold(0.0, fn(acc, k) {
-        let a_ik = case get2d(a, i, k) {
-          Ok(v) -> v
-          Error(_) -> 0.0
-        }
-        let b_kj = case get2d(b, k, j) {
-          Ok(v) -> v
-          Error(_) -> 0.0
-        }
-        acc +. a_ik *. b_kj
+    list.range(0, m - 1)
+    |> list.flat_map(fn(i) {
+      list.range(0, p - 1)
+      |> list.map(fn(j) {
+        list.range(0, n - 1)
+        |> list.fold(0.0, fn(acc, k) {
+          let a_ik = case get2d(a, i, k) {
+            Ok(v) -> v
+            Error(_) -> 0.0
+          }
+          let b_kj = case get2d(b, k, j) {
+            Ok(v) -> v
+            Error(_) -> 0.0
+          }
+          acc +. a_ik *. b_kj
+        })
       })
     })
-  })
   Ok(Tensor(data: result_data, shape: [m, p]))
 }
 
@@ -968,11 +1054,11 @@ pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
 
 fn transpose_dense(t: Tensor, m: Int, n: Int) -> Result(Tensor, TensorError) {
   let result_data =
-  list.range(0, n - 1)
-  |> list.flat_map(fn(j) {
-    list.range(0, m - 1)
-    |> list.filter_map(fn(i) { get2d(t, i, j) })
-  })
+    list.range(0, n - 1)
+    |> list.flat_map(fn(j) {
+      list.range(0, m - 1)
+      |> list.filter_map(fn(i) { get2d(t, i, j) })
+    })
   Ok(Tensor(data: result_data, shape: [n, m]))
 }
 
@@ -1048,13 +1134,13 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
 
   case old_size == new_size {
     True ->
-    case t {
-      NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
-      _ -> {
-        let data = get_data(t)
-        Ok(Tensor(data: data, shape: new_shape))
+      case t {
+        NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
+        _ -> {
+          let data = get_data(t)
+          Ok(Tensor(data: data, shape: new_shape))
+        }
       }
-    }
     False ->
       Error(InvalidShape(
         "Cannot reshape: size mismatch ("
@@ -1497,32 +1583,32 @@ pub fn broadcast_to(
             Tensor(data, shape) -> {
               let storage = ffi.list_to_array(data)
               let strides =
-              broadcast_strides(shape, compute_strides(shape), target_shape)
+                broadcast_strides(shape, compute_strides(shape), target_shape)
               Ok(StridedTensor(
-              storage: storage,
-              shape: target_shape,
-              strides: strides,
-              offset: 0,
+                storage: storage,
+                shape: target_shape,
+                strides: strides,
+                offset: 0,
               ))
             }
             StridedTensor(storage, shape, strides, offset) -> {
               let view_strides = broadcast_strides(shape, strides, target_shape)
               Ok(StridedTensor(
-              storage: storage,
-              shape: target_shape,
-              strides: view_strides,
-              offset: offset,
+                storage: storage,
+                shape: target_shape,
+                strides: view_strides,
+                offset: offset,
               ))
             }
             NativeTensor(ref, _) ->
-            case ffi.nt_broadcast_to(ref, target_shape) {
-              Ok(view_ref) ->
-              Ok(NativeTensor(ref: view_ref, shape: target_shape))
-              Error(_) -> {
-                let data = broadcast_data(t, target_shape)
-                Ok(Tensor(data: data, shape: target_shape))
+              case ffi.nt_broadcast_to(ref, target_shape) {
+                Ok(view_ref) ->
+                  Ok(NativeTensor(ref: view_ref, shape: target_shape))
+                Error(_) -> {
+                  let data = broadcast_data(t, target_shape)
+                  Ok(Tensor(data: data, shape: target_shape))
+                }
               }
-            }
           }
         }
       }
@@ -1630,10 +1716,10 @@ pub fn to_strided(t: Tensor) -> Tensor {
       let storage = ffi.list_to_array(data)
       let strides = compute_strides(t.shape)
       StridedTensor(
-      storage: storage,
-      shape: t.shape,
-      strides: strides,
-      offset: 0,
+        storage: storage,
+        shape: t.shape,
+        strides: strides,
+        offset: 0,
       )
     }
   }
@@ -1777,9 +1863,9 @@ fn compute_strides(shape: List(Int)) -> List(Int) {
 }
 
 fn broadcast_strides(
-src_shape: List(Int),
-src_strides: List(Int),
-target_shape: List(Int),
+  src_shape: List(Int),
+  src_strides: List(Int),
+  target_shape: List(Int),
 ) -> List(Int) {
   let diff = list.length(target_shape) - list.length(src_shape)
   let padded_shape = list.append(list.repeat(1, diff), src_shape)
