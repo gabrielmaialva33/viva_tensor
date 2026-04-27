@@ -168,14 +168,47 @@ pub fn div(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.div(a, b)
 }
 
+/// Write out = a + b into a preallocated native tensor.
+pub fn add_into(out: Tensor, a: Tensor, b: Tensor) -> Result(Nil, TensorError) {
+  tensor.add_into(out, a, b)
+}
+
+/// Write out = a - b into a preallocated native tensor.
+pub fn sub_into(out: Tensor, a: Tensor, b: Tensor) -> Result(Nil, TensorError) {
+  tensor.sub_into(out, a, b)
+}
+
+/// Write out = a * b into a preallocated native tensor.
+pub fn mul_into(out: Tensor, a: Tensor, b: Tensor) -> Result(Nil, TensorError) {
+  tensor.mul_into(out, a, b)
+}
+
 /// Scale by constant
 pub fn scale(t: Tensor, s: Float) -> Tensor {
   tensor.scale(t, s)
 }
 
+/// Write out = a * scalar into a preallocated native tensor.
+pub fn scale_into(
+out: Tensor,
+a: Tensor,
+scalar: Float,
+) -> Result(Nil, TensorError) {
+  tensor.scale_into(out, a, scalar)
+}
+
 /// Apply function to each element
 pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
   tensor.map(t, f)
+}
+
+/// Apply a binary function element-wise over tensors with the same shape.
+pub fn map2(
+a: Tensor,
+b: Tensor,
+f: fn(Float, Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  tensor.map2(a, b, f)
 }
 
 // --- Reductions -------------------------------------------------------------
@@ -230,6 +263,15 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 /// Matrix-matrix multiplication
 pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul(a, b)
+}
+
+/// Write out = a @ b into a preallocated native tensor.
+pub fn matmul_into(
+out: Tensor,
+a: Tensor,
+b: Tensor,
+) -> Result(Nil, TensorError) {
+  tensor.matmul_into(out, a, b)
 }
 
 /// Matrix-vector multiplication
