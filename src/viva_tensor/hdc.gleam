@@ -14,14 +14,14 @@
 //// ## Example
 ////
 //// ```gleam
+//// import gleam/result
 //// import viva_tensor/hdc
 ////
-//// let a = hdc.random(seed: 1)
-//// let b = hdc.random(seed: 2)
-//// let c = hdc.bind(a, b)
+//// use a <- result.try(hdc.random(dim: hdc.default_dim, seed: 1))
+//// use b <- result.try(hdc.random(dim: hdc.default_dim, seed: 2))
+//// use c <- result.try(hdc.bind(a, b))
 ////
-//// hdc.similarity(c, a) // -> 0.5 (orthogonal)
-//// hdc.similarity(hdc.bind(c, b), a) // -> 1.0 (retrieved)
+//// hdc.similarity(c, a)
 //// ```
 
 import viva_tensor/core/ffi
@@ -34,24 +34,21 @@ pub type HyperVector =
 pub const default_dim = 10_048
 
 /// Create a new empty hypervector (all zeros)
-pub fn new(dim: Int) -> HyperVector {
-  let assert Ok(vec) = ffi.hdc_create(dim)
-  vec
+pub fn new(dim: Int) -> Result(HyperVector, String) {
+  ffi.hdc_create(dim)
 }
 
 /// Create a random hypervector
-pub fn random(dim: Int, seed: Int) -> HyperVector {
-  let assert Ok(vec) = ffi.hdc_random(dim, seed)
-  vec
+pub fn random(dim: Int, seed: Int) -> Result(HyperVector, String) {
+  ffi.hdc_random(dim, seed)
 }
 
 /// Bind two hypervectors (XOR)
 ///
 /// Use to associate concepts: bind(role, filler)
 /// e.g., bind(key_name, "Alice")
-pub fn bind(a: HyperVector, b: HyperVector) -> HyperVector {
-  let assert Ok(res) = ffi.hdc_bind(a, b)
-  res
+pub fn bind(a: HyperVector, b: HyperVector) -> Result(HyperVector, String) {
+  ffi.hdc_bind(a, b)
 }
 
 /// Calculate similarity between two vectors
@@ -60,22 +57,19 @@ pub fn bind(a: HyperVector, b: HyperVector) -> HyperVector {
 /// 1.0 = Identical
 /// 0.5 = Orthogonal (Unrelated)
 /// 0.0 = Opposite (but in HDC usually everything is >= 0.5)
-pub fn similarity(a: HyperVector, b: HyperVector) -> Float {
-  let assert Ok(sim) = ffi.hdc_similarity(a, b)
-  sim
+pub fn similarity(a: HyperVector, b: HyperVector) -> Result(Float, String) {
+  ffi.hdc_similarity(a, b)
 }
 
 /// Permute vector (cyclic shift)
 ///
 /// Use to encode sequence or order.
 /// permute(A, 1) is different from A, but related.
-pub fn permute(vec: HyperVector, shift: Int) -> HyperVector {
-  let assert Ok(res) = ffi.hdc_permute(vec, shift)
-  res
+pub fn permute(vec: HyperVector, shift: Int) -> Result(HyperVector, String) {
+  ffi.hdc_permute(vec, shift)
 }
 
 /// Get dimensionality of the vector
-pub fn dim(vec: HyperVector) -> Int {
-  let assert Ok(d) = ffi.hdc_dim(vec)
-  d
+pub fn dim(vec: HyperVector) -> Result(Int, String) {
+  ffi.hdc_dim(vec)
 }
