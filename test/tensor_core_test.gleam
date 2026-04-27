@@ -433,6 +433,42 @@ pub fn broadcast_shape_incompatible_test() {
   tensor.broadcast_shape([2, 3], [4, 5]) |> should.be_error()
 }
 
+pub fn broadcast_to_returns_zero_stride_view_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+
+  case tensor.broadcast_to(t, [2, 3]) {
+    Ok(b) -> {
+      tensor.shape(b) |> should.equal([2, 3])
+      tensor.to_list(b) |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+      tensor.is_contiguous(b) |> should.be_false()
+
+      case b {
+        tensor.StridedTensor(_, _, strides, _) ->
+        strides |> should.equal([0, 1])
+        _ -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn elementwise_adds_broadcast_views_test() {
+  let row = tensor.from_list([1.0, 2.0, 3.0])
+  let scalar = tensor.from_list([10.0])
+
+  case tensor.broadcast_to(row, [2, 3]), tensor.broadcast_to(scalar, [2, 3]) {
+    Ok(a), Ok(b) -> {
+      case tensor.add(a, b) {
+        Ok(result) ->
+        tensor.to_list(result)
+        |> should.equal([11.0, 12.0, 13.0, 11.0, 12.0, 13.0])
+        Error(_) -> should.fail()
+      }
+    }
+    _, _ -> should.fail()
+  }
+}
+
 // =============================================================================
 // STRIDED OPERATIONS (extended)
 // =============================================================================
