@@ -53,8 +53,8 @@ let compressed = nf4.quantize(tensor, nf4.default_config())
 
 | Método | Compressão | Eficiência |
 |:-------|:----------:|:----------:|
-| INT8 | 4x | 40% |
-| NF4 | 7.5x | 77% |
-| AWQ | 7.7x | 53% |
+| INT8   |     4x     |    40%     |
+| NF4    |    7.5x    |    77%     |
+| AWQ    |    7.7x    |    53%     |
 
 **[Referência API →](api.md)**

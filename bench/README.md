@@ -17,14 +17,14 @@ Rscript bench/analysis.R
 
 ## Arquivos
 
-| Arquivo | Descrição |
-|---------|-----------|
-| `benchmark.py` | Benchmark principal - Bootstrap CI, Mann-Whitney U, Cliff's delta |
-| `analysis.R` | Análise estatística avançada com ggplot2 |
-| `benchmark_compare.py` | Comparativo simples entre bibliotecas |
-| `run_benchmarks.sh` | Runner para CI/CD |
-| `bench_*.erl` | Benchmarks Erlang específicos |
-| `bench_*.bat` | Scripts Windows |
+| Arquivo                | Descrição                                                         |
+|------------------------|-------------------------------------------------------------------|
+| `benchmark.py`         | Benchmark principal - Bootstrap CI, Mann-Whitney U, Cliff's delta |
+| `analysis.R`           | Análise estatística avançada com ggplot2                          |
+| `benchmark_compare.py` | Comparativo simples entre bibliotecas                             |
+| `run_benchmarks.sh`    | Runner para CI/CD                                                 |
+| `bench_*.erl`          | Benchmarks Erlang específicos                                     |
+| `bench_*.bat`          | Scripts Windows                                                   |
 
 ## Output
 

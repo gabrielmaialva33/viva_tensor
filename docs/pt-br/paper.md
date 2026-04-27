@@ -19,10 +19,10 @@ graph LR
 
 LLMs são **memory-bound**, não compute-bound.
 
-| Modelo | FP32 | NF4 |
-|:-------|:----:|:---:|
-| LLaMA-7B | 28 GB | 3.7 GB |
-| LLaMA-70B | 280 GB | 37 GB |
+| Modelo    |  FP32  |  NF4   |
+|:----------|:------:|:------:|
+| LLaMA-7B  | 28 GB  | 3.7 GB |
+| LLaMA-70B | 280 GB | 37 GB  |
 
 ---
 
@@ -78,9 +78,9 @@ flowchart LR
 
 | Método | Compressão | Eficiência |
 |:-------|:----------:|:----------:|
-| INT8 | 4x | 40% |
-| NF4 | 7.5x | 77% |
-| AWQ | 7.7x | 53% |
+| INT8   |     4x     |    40%     |
+| NF4    |    7.5x    |    77%     |
+| AWQ    |    7.7x    |    53%     |
 
 ---
 
@@ -103,11 +103,11 @@ graph TB
     BEAM --> Propriedades
 ```
 
-| Propriedade | Threads | BEAM |
-|:------------|:-------:|:----:|
-| Overhead | 1 MB | 2 KB |
-| Max concorrente | 1K | 1M |
-| Isolamento | Compartilhado | Isolado |
+| Propriedade     |    Threads    |  BEAM   |
+|:----------------|:-------------:|:-------:|
+| Overhead        |     1 MB      |  2 KB   |
+| Max concorrente |      1K       |   1M    |
+| Isolamento      | Compartilhado | Isolado |
 
 ---
 

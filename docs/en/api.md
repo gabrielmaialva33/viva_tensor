@@ -12,22 +12,22 @@ pub type Tensor {
 
 ### Creation
 
-| Function | Description |
-|:---------|:------------|
+| Function                 | Description      |
+|:-------------------------|:-----------------|
 | `from_list(data, shape)` | Create from list |
-| `zeros(shape)` | Zero tensor |
-| `ones(shape)` | Ones tensor |
-| `random_uniform(shape)` | Values [0,1] |
+| `zeros(shape)`           | Zero tensor      |
+| `ones(shape)`            | Ones tensor      |
+| `random_uniform(shape)`  | Values [0,1]     |
 
 ### Operations
 
-| Function | Description |
-|:---------|:------------|
-| `add(a, b)` | Element-wise sum |
-| `mul(a, b)` | Element-wise multiply |
-| `scale(t, s)` | Scale by constant |
-| `sum(t)` | Total sum |
-| `mean(t)` | Mean |
+| Function      | Description           |
+|:--------------|:----------------------|
+| `add(a, b)`   | Element-wise sum      |
+| `mul(a, b)`   | Element-wise multiply |
+| `scale(t, s)` | Scale by constant     |
+| `sum(t)`      | Total sum             |
+| `mean(t)`     | Mean                  |
 
 ---
 
@@ -53,12 +53,12 @@ pub type NF4Tensor {
 
 ### Functions
 
-| Function | Description |
-|:---------|:------------|
-| `default_config()` | Default config (block=64) |
-| `quantize(t, config)` | Quantize tensor |
-| `dequantize(nf4)` | Restore FP32 |
-| `nf4_levels()` | List 16 levels |
+| Function              | Description               |
+|:----------------------|:--------------------------|
+| `default_config()`    | Default config (block=64) |
+| `quantize(t, config)` | Quantize tensor           |
+| `dequantize(nf4)`     | Restore FP32              |
+| `nf4_levels()`        | List 16 levels            |
 
 ---
 
@@ -79,12 +79,12 @@ pub type AWQConfig {
 
 ### Functions
 
-| Function | Description |
-|:---------|:------------|
-| `default_config()` | Default config |
-| `quantize_awq(w, cal, cfg)` | Quantize with calibration |
-| `dequantize_awq(awq)` | Restore FP32 |
-| `collect_activation_stats(data)` | Collect stats |
+| Function                         | Description               |
+|:---------------------------------|:--------------------------|
+| `default_config()`               | Default config            |
+| `quantize_awq(w, cal, cfg)`      | Quantize with calibration |
+| `dequantize_awq(awq)`            | Restore FP32              |
+| `collect_activation_stats(data)` | Collect stats             |
 
 ---
 
@@ -100,10 +100,10 @@ pub type FlashConfig {
 
 ### Functions
 
-| Function | Description |
-|:---------|:------------|
-| `default_config()` | Default config |
-| `flash_attention_forward(q, k, v, cfg)` | Forward pass |
+| Function                                | Description    |
+|:----------------------------------------|:---------------|
+| `default_config()`                      | Default config |
+| `flash_attention_forward(q, k, v, cfg)` | Forward pass   |
 
 ---
 
@@ -111,11 +111,11 @@ pub type FlashConfig {
 
 ### Functions
 
-| Function | Description |
-|:---------|:------------|
+| Function                | Description       |
+|:------------------------|:------------------|
 | `apply_2_4_sparsity(t)` | Apply 2:4 pattern |
-| `compress_sparse(s)` | Remove zeros |
-| `decompress_sparse(c)` | Restore |
+| `compress_sparse(s)`    | Remove zeros      |
+| `decompress_sparse(c)`  | Restore           |
 
 ---
 
@@ -123,8 +123,8 @@ pub type FlashConfig {
 
 ### Functions
 
-| Function | Description |
-|:---------|:------------|
-| `compute_sqnr(orig, quant)` | SQNR in dB |
-| `compute_mse(orig, quant)` | Mean squared error |
-| `theoretical_sqnr(bits)` | Theoretical max SQNR |
+| Function                    | Description          |
+|:----------------------------|:---------------------|
+| `compute_sqnr(orig, quant)` | SQNR in dB           |
+| `compute_mse(orig, quant)`  | Mean squared error   |
+| `theoretical_sqnr(bits)`    | Theoretical max SQNR |
