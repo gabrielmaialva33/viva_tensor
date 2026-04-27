@@ -8,7 +8,22 @@ links = [
   { title = "Paper", href = "https://github.com/gabrielmaialva33/viva_tensor/blob/main/docs/en/paper.md" },
 ]
 
+gleam = ">= 1.14.0"
 target = "erlang"
+internal_modules = [
+  "viva_tensor/backend",
+  "viva_tensor/backend/*",
+  "viva_tensor/bench",
+  "viva_tensor/bench/*",
+  "viva_tensor/benchmark",
+  "viva_tensor/core",
+  "viva_tensor/core/*",
+  "viva_tensor/examples",
+  "viva_tensor/examples/*",
+  "viva_tensor/metrics",
+  "viva_tensor/optim",
+  "viva_tensor/optim/*",
+]
 
 [dependencies]
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
@@ -17,3 +32,13 @@ viva_telemetry = ">= 1.0.0 and < 2.0.0"
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"
 gleamy_bench = ">= 0.6.0 and < 1.0.0"
+
+[[documentation.pages]]
+title = "API Guide"
+path = "api.html"
+source = "./docs/en/api.md"
+
+[[documentation.pages]]
+title = "Technical Paper"
+path = "paper.html"
+source = "./docs/en/paper.md"
