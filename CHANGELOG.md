@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file.
 
-## [1.0.100] - 2026-04-27
+## [2.2.100] - 2026-04-27
 
 ### Highlights
 
@@ -106,6 +106,11 @@ quality-diversity).
   development; low-level CUDA, tensor implementation, benchmark, and helper
   modules are now marked internal so they stay out of generated package
   documentation.
+- Neural-network, quantization, sparse, telemetry, and BLAS helper modules are
+  also hidden from generated package documentation until their public error
+  types and resource ownership contracts are stable.
+- Autograd backward functions now propagate `TensorError` instead of using
+  `let assert` or `panic` inside library gradient code.
 - HDC, Horde, LNS, and quantization FFI wrappers return `Result(_, String)`
   instead of panicking through `let assert Ok` so NIF failures propagate
   cleanly.
