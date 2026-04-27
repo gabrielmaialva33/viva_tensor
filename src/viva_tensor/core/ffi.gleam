@@ -496,6 +496,14 @@ pub fn nt_size(ref: NativeTensorRef) -> Result(Int, String) {
   nt_size_ffi(ref)
 }
 
+/// Broadcast native tensor to target shape as a zero-copy native view.
+pub fn nt_broadcast_to(
+ref: NativeTensorRef,
+shape: List(Int),
+) -> Result(NativeTensorRef, String) {
+  nt_broadcast_to_ffi(ref, shape)
+}
+
 /// Native add: ref + ref → ref (zero copy)
 pub fn nt_add(
   a: NativeTensorRef,
@@ -564,6 +572,18 @@ pub fn nt_matmul(
   nt_matmul_ffi(a, b, m, n, k)
 }
 
+/// Native matmul into preallocated output: out = [m,k] @ [k,n].
+pub fn nt_matmul_inplace(
+a: NativeTensorRef,
+b: NativeTensorRef,
+out: NativeTensorRef,
+m: Int,
+n: Int,
+k: Int,
+) -> Result(Nil, String) {
+  nt_matmul_inplace_ffi(a, b, out, m, n, k)
+}
+
 /// Native transpose: [m,n] → [n,m] contiguous copy
 pub fn nt_transpose(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
   nt_transpose_ffi(a)
@@ -615,6 +635,42 @@ pub fn nt_relu_mut(a: NativeTensorRef) -> Result(Nil, String) {
   nt_relu_mut_ffi(a)
 }
 
+/// Write out = a + b into preallocated native output.
+pub fn nt_add_into(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String) {
+  nt_add_into_ffi(out, a, b)
+}
+
+/// Write out = a - b into preallocated native output.
+pub fn nt_sub_into(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String) {
+  nt_sub_into_ffi(out, a, b)
+}
+
+/// Write out = a * b into preallocated native output.
+pub fn nt_mul_into(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String) {
+  nt_mul_into_ffi(out, a, b)
+}
+
+/// Write out = a * scalar into preallocated native output.
+pub fn nt_scale_into(
+out: NativeTensorRef,
+a: NativeTensorRef,
+scalar: Float,
+) -> Result(Nil, String) {
+  nt_scale_into_ffi(out, a, scalar)
+}
+
 // --- Retro / Fused Kernels ---
 
 /// Saturn Blend: result = texture + (shade - bias)
@@ -638,6 +694,20 @@ pub fn nt_fused_linear_relu(
   k: Int,
 ) -> Result(NativeTensorRef, String) {
   nt_fused_linear_relu_ffi(a, b, bias, m, n, k)
+}
+
+/// Fused MatMul + Bias + ReLU into preallocated output:
+/// out = max(0, a @ b + bias)
+pub fn nt_fused_linear_relu_into(
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  bias: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String) {
+  nt_fused_linear_relu_into_ffi(out, a, b, bias, m, n, k)
 }
 
 /// Resonance Multiply: LNS element-wise multiply.
@@ -687,6 +757,12 @@ fn nt_shape_ffi(ref: NativeTensorRef) -> Result(List(Int), String)
 @external(erlang, "viva_tensor_zig", "nt_size")
 fn nt_size_ffi(ref: NativeTensorRef) -> Result(Int, String)
 
+@external(erlang, "viva_tensor_zig", "nt_broadcast_to")
+fn nt_broadcast_to_ffi(
+ref: NativeTensorRef,
+shape: List(Int),
+) -> Result(NativeTensorRef, String)
+
 @external(erlang, "viva_tensor_zig", "nt_add")
 fn nt_add_ffi(
   a: NativeTensorRef,
@@ -735,6 +811,16 @@ fn nt_matmul_ffi(
   k: Int,
 ) -> Result(NativeTensorRef, String)
 
+@external(erlang, "viva_tensor_zig", "nt_matmul_inplace")
+fn nt_matmul_inplace_ffi(
+a: NativeTensorRef,
+b: NativeTensorRef,
+out: NativeTensorRef,
+m: Int,
+n: Int,
+k: Int,
+) -> Result(Nil, String)
+
 @external(erlang, "viva_tensor_zig", "nt_transpose")
 fn nt_transpose_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
 
@@ -763,6 +849,34 @@ fn nt_negate_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
 @external(erlang, "viva_tensor_zig", "nt_relu_mut")
 fn nt_relu_mut_ffi(a: NativeTensorRef) -> Result(Nil, String)
 
+@external(erlang, "viva_tensor_zig", "nt_add_into")
+fn nt_add_into_ffi(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_sub_into")
+fn nt_sub_into_ffi(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_mul_into")
+fn nt_mul_into_ffi(
+out: NativeTensorRef,
+a: NativeTensorRef,
+b: NativeTensorRef,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "nt_scale_into")
+fn nt_scale_into_ffi(
+out: NativeTensorRef,
+a: NativeTensorRef,
+scalar: Float,
+) -> Result(Nil, String)
+
 // Retro / fused kernel FFI
 @external(erlang, "viva_tensor_zig", "nt_saturn_blend")
 fn nt_saturn_blend_ffi(
@@ -780,6 +894,17 @@ fn nt_fused_linear_relu_ffi(
   n: Int,
   k: Int,
 ) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_fused_linear_relu_into")
+fn nt_fused_linear_relu_into_ffi(
+  out: NativeTensorRef,
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  bias: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
 
 // Resonance kernel FFI (Log-Number System)
 @external(erlang, "viva_tensor_zig", "nt_resonance_mul")
