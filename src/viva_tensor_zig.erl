@@ -20,7 +20,7 @@
 %% NIF Resource API - zero-copy tensor operations
 -export([
     nt_zeros/1, nt_ones/1, nt_fill/2, nt_from_list/2,
-    nt_to_list/1, nt_shape/1, nt_size/1,
+    nt_to_list/1, nt_shape/1, nt_size/1, nt_broadcast_to/2,
     nt_add/2, nt_sub/2, nt_mul/2, nt_scale/2, nt_negate/1,
     nt_dot/2, nt_sum/1, nt_max/1, nt_min/1,
     nt_matmul/5, nt_matmul_inplace/6, nt_matmul_blas/5, nt_matmul_cuda/5, nt_matmul_cuda_fp32/5,
@@ -31,8 +31,9 @@
     nt_relu/1, nt_sigmoid/1, nt_exp/1, nt_log/1,
     %% In-place mutation (zero allocation)
     nt_add_mut/2, nt_scale_mut/2, nt_negate_mut/1, nt_relu_mut/1,
+    nt_add_into/3, nt_sub_into/3, nt_mul_into/3, nt_scale_into/3,
     %% Retro / fused kernels
-    nt_saturn_blend/3, nt_fused_linear_relu/6,
+    nt_saturn_blend/3, nt_fused_linear_relu/6, nt_fused_linear_relu_into/7,
     %% Resonance kernels (Log-Number System) - f64
     nt_resonance_mul/2, nt_resonance_power/2
 ]).
@@ -354,6 +355,7 @@ nt_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_size(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_broadcast_to(_Ref, _Shape) -> erlang:nif_error(nif_not_loaded).
 
 %% Element-wise ops
 nt_add(_A, _B) -> erlang:nif_error(nif_not_loaded).
@@ -393,10 +395,15 @@ nt_add_mut(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_scale_mut(_Ref, _Scalar) -> erlang:nif_error(nif_not_loaded).
 nt_negate_mut(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_relu_mut(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_add_into(_Out, _A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_sub_into(_Out, _A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_mul_into(_Out, _A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_scale_into(_Out, _A, _Scalar) -> erlang:nif_error(nif_not_loaded).
 
 %% Retro / fused kernels
 nt_saturn_blend(_Texture, _Shade, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_fused_linear_relu(_A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_fused_linear_relu_into(_Out, _A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 
 %% Resonance kernels (Log-Number System) - f64
 nt_resonance_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
