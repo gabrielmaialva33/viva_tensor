@@ -6,11 +6,11 @@ supply-chain assumptions.
 
 ## Supported Versions
 
-| Version | Supported                                       |
-|---------|-------------------------------------------------|
-| `1.0.x` | Yes                                             |
-| `2.x`   | No, treated as premature development versioning |
-| `< 1.0` | No                                              |
+| Version          | Supported                                |
+|------------------|------------------------------------------|
+| `2.2.x`          | Yes                                      |
+| `2.0.x`, `2.1.x` | No, retired as premature releases on Hex |
+| `< 2.0`          | No                                       |
 
 ## Reporting a Vulnerability
 
