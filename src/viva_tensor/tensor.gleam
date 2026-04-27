@@ -17,7 +17,7 @@ import gleam/result
 import viva_tensor/core/error.{
   BroadcastError, DimensionError, InvalidShape, ShapeMismatch,
 }
-import viva_tensor/core/ffi.{type ErlangArray}
+import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 
 // --- Types ---
 
@@ -41,6 +41,7 @@ pub type Tensor {
     strides: List(Int),
     offset: Int,
   )
+  NativeTensor(ref: NativeTensorRef, shape: List(Int))
 }
 
 // --- Constructors ---
@@ -114,6 +115,81 @@ pub fn matrix(
   }
 }
 
+/// Wrap an existing native NIF resource as a Tensor.
+///
+/// The caller is responsible for passing the correct shape for the resource.
+pub fn from_native_ref(ref: NativeTensorRef, shape: List(Int)) -> Tensor {
+  NativeTensor(ref: ref, shape: shape)
+}
+
+/// Extract the native NIF resource when this tensor is native-backed.
+pub fn native_ref(t: Tensor) -> Result(NativeTensorRef, Nil) {
+  case t {
+    NativeTensor(ref, _) -> Ok(ref)
+    _ -> Error(Nil)
+  }
+}
+
+/// Check whether this tensor stores data in native NIF memory.
+pub fn is_native(t: Tensor) -> Bool {
+  case t {
+    NativeTensor(_, _) -> True
+    _ -> False
+  }
+}
+
+/// Create a native-backed tensor of zeros.
+pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
+  case ffi.nt_zeros(shape) {
+    Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error(reason) -> Error(InvalidShape(reason))
+  }
+}
+
+/// Create a native-backed tensor of ones.
+pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
+  case ffi.nt_ones(shape) {
+    Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error(reason) -> Error(InvalidShape(reason))
+  }
+}
+
+/// Create a native-backed tensor filled with a value.
+pub fn native_fill(
+shape: List(Int),
+value: Float,
+) -> Result(Tensor, TensorError) {
+  case ffi.nt_fill(shape, value) {
+    Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error(reason) -> Error(InvalidShape(reason))
+  }
+}
+
+/// Create a native-backed tensor from row-major list data.
+pub fn native_from_list(
+data: List(Float),
+shape: List(Int),
+) -> Result(Tensor, TensorError) {
+  let expected_size = list.fold(shape, 1, fn(acc, dim) { acc * dim })
+  let actual_size = list.length(data)
+
+  case expected_size == actual_size {
+    False ->
+    Error(InvalidShape(
+    "Expected "
+    <> int.to_string(expected_size)
+    <> " elements, got "
+    <> int.to_string(actual_size),
+    ))
+    True -> {
+      case ffi.nt_from_list(data, shape) {
+        Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+        Error(reason) -> Error(InvalidShape(reason))
+      }
+    }
+  }
+}
+
 // --- Properties ---
 
 /// Get tensor shape
@@ -121,6 +197,7 @@ pub fn shape(t: Tensor) -> List(Int) {
   case t {
     Tensor(_, s) -> s
     StridedTensor(_, s, _, _) -> s
+    NativeTensor(_, s) -> s
   }
 }
 
@@ -128,6 +205,12 @@ pub fn shape(t: Tensor) -> List(Int) {
 pub fn get_data(t: Tensor) -> List(Float) {
   case t {
     Tensor(data, _) -> data
+    NativeTensor(ref, _) -> {
+      case ffi.nt_to_list(ref) {
+        Ok(data) -> data
+        Error(_) -> []
+      }
+    }
     StridedTensor(storage, shape, strides, offset) -> {
       let total_size = list.fold(shape, 1, fn(acc, dim) { acc * dim })
       list.range(0, total_size - 1)
@@ -149,6 +232,7 @@ pub fn get_data(t: Tensor) -> List(Float) {
 pub fn size(t: Tensor) -> Int {
   case t {
     Tensor(data, _) -> list.length(data)
+    NativeTensor(_, shape) -> list.fold(shape, 1, fn(acc, dim) { acc * dim })
     StridedTensor(_, shape, _, _) ->
       list.fold(shape, 1, fn(acc, dim) { acc * dim })
   }
@@ -194,6 +278,15 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
       |> result.map_error(fn(_) {
         DimensionError("Index " <> int.to_string(index) <> " out of bounds")
       })
+    NativeTensor(ref, _) ->
+    case ffi.nt_to_list(ref) {
+      Ok(data) ->
+      list_at_float(data, index)
+      |> result.map_error(fn(_) {
+        DimensionError("Index " <> int.to_string(index) <> " out of bounds")
+      })
+      Error(reason) -> Error(DimensionError(reason))
+    }
     StridedTensor(storage, shape, strides, offset) -> {
       let indices = flat_to_multi(index, shape)
       let flat_idx =
@@ -274,59 +367,138 @@ pub fn map_indexed(t: Tensor, f: fn(Float, Int) -> Float) -> Tensor {
 /// Element-wise addition
 pub fn add(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
-    True -> {
-      let a_data = get_data(a)
-      let b_data = get_data(b)
-      let data = list.map2(a_data, b_data, fn(x, y) { x +. y })
-      Ok(Tensor(data: data, shape: a.shape))
+    True ->
+    case a, b {
+      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+        case ffi.nt_add(a_ref, b_ref) {
+          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+          Error(_) -> add_dense(a, b)
+        }
+      }
+      _, _ -> add_dense(a, b)
     }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
 }
 
+fn add_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  elementwise_fallback(a, b, fn(x, y) { x +. y })
+}
+
 /// Element-wise subtraction
 pub fn sub(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
-    True -> {
-      let a_data = get_data(a)
-      let b_data = get_data(b)
-      let data = list.map2(a_data, b_data, fn(x, y) { x -. y })
-      Ok(Tensor(data: data, shape: a.shape))
+    True ->
+    case a, b {
+      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+        case ffi.nt_sub(a_ref, b_ref) {
+          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+          Error(_) -> sub_dense(a, b)
+        }
+      }
+      _, _ -> sub_dense(a, b)
     }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
+}
+
+fn sub_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  elementwise_fallback(a, b, fn(x, y) { x -. y })
 }
 
 /// Element-wise multiplication (Hadamard product)
 /// Not to be confused with matmul. Named after Jacques Hadamard (1865-1963).
 pub fn mul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
-    True -> {
-      let a_data = get_data(a)
-      let b_data = get_data(b)
-      let data = list.map2(a_data, b_data, fn(x, y) { x *. y })
-      Ok(Tensor(data: data, shape: a.shape))
+    True ->
+    case a, b {
+      NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+        case ffi.nt_mul(a_ref, b_ref) {
+          Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+          Error(_) -> mul_dense(a, b)
+        }
+      }
+      _, _ -> mul_dense(a, b)
     }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
+}
+
+fn mul_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  elementwise_fallback(a, b, fn(x, y) { x *. y })
 }
 
 /// Element-wise division
 pub fn div(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape == b.shape {
-    True -> {
-      let a_data = get_data(a)
-      let b_data = get_data(b)
-      let data = list.map2(a_data, b_data, fn(x, y) { x /. y })
-      Ok(Tensor(data: data, shape: a.shape))
-    }
+    True -> elementwise_fallback(a, b, fn(x, y) { x /. y })
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
+  }
+}
+
+fn elementwise_fallback(
+a: Tensor,
+b: Tensor,
+f: fn(Float, Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  case is_native(a) || is_native(b) {
+    True -> materialized_elementwise(a, b, f)
+    False -> {
+      case a, b {
+        Tensor(a_data, _), Tensor(b_data, _) -> {
+          let data = list.map2(a_data, b_data, f)
+          Ok(Tensor(data: data, shape: a.shape))
+        }
+        _, _ -> indexed_elementwise(a, b, f)
+      }
+    }
+  }
+}
+
+fn materialized_elementwise(
+a: Tensor,
+b: Tensor,
+f: fn(Float, Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  let a_data = get_data(a)
+  let b_data = get_data(b)
+  let data = list.map2(a_data, b_data, f)
+  Ok(Tensor(data: data, shape: a.shape))
+}
+
+fn indexed_elementwise(
+a: Tensor,
+b: Tensor,
+f: fn(Float, Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  let data =
+  list.range(0, size(a) - 1)
+  |> list.map(fn(i) {
+    let x = get_element_or_zero(a, i)
+    let y = get_element_or_zero(b, i)
+    f(x, y)
+  })
+  Ok(Tensor(data: data, shape: a.shape))
+}
+
+fn get_element_or_zero(t: Tensor, index: Int) -> Float {
+  case get_fast(t, index) {
+    Ok(value) -> value
+    Error(_) -> 0.0
   }
 }
 
 /// Scale by constant
 pub fn scale(t: Tensor, s: Float) -> Tensor {
-  map(t, fn(x) { x *. s })
+  case t {
+    NativeTensor(ref, shape) -> {
+      case ffi.nt_scale(ref, s) {
+        Ok(result_ref) -> NativeTensor(ref: result_ref, shape: shape)
+        Error(_) -> map(t, fn(x) { x *. s })
+      }
+    }
+    _ -> map(t, fn(x) { x *. s })
+  }
 }
 
 /// Add constant
@@ -343,6 +515,18 @@ pub fn negate(t: Tensor) -> Tensor {
 
 /// Sum all elements
 pub fn sum(t: Tensor) -> Float {
+  case t {
+    NativeTensor(ref, _) -> {
+      case ffi.nt_sum(ref) {
+        Ok(value) -> value
+        Error(_) -> sum_dense(t)
+      }
+    }
+    _ -> sum_dense(t)
+  }
+}
+
+fn sum_dense(t: Tensor) -> Float {
   let data = get_data(t)
   list.fold(data, 0.0, fn(acc, x) { acc +. x })
 }
@@ -365,6 +549,18 @@ pub fn mean(t: Tensor) -> Float {
 
 /// Maximum value
 pub fn max(t: Tensor) -> Float {
+  case t {
+    NativeTensor(ref, _) -> {
+      case ffi.nt_max(ref) {
+        Ok(value) -> value
+        Error(_) -> max_dense(t)
+      }
+    }
+    _ -> max_dense(t)
+  }
+}
+
+fn max_dense(t: Tensor) -> Float {
   let data = get_data(t)
   case data {
     [] -> 0.0
@@ -374,6 +570,18 @@ pub fn max(t: Tensor) -> Float {
 
 /// Minimum value
 pub fn min(t: Tensor) -> Float {
+  case t {
+    NativeTensor(ref, _) -> {
+      case ffi.nt_min(ref) {
+        Ok(value) -> value
+        Error(_) -> min_dense(t)
+      }
+    }
+    _ -> min_dense(t)
+  }
+}
+
+fn min_dense(t: Tensor) -> Float {
   let data = get_data(t)
   case data {
     [] -> 0.0
@@ -557,14 +765,25 @@ fn compute_index_with_axis(
 /// Dot product of two vectors: a . b = sum(a_i * b_i)
 pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   case rank(a) == 1 && rank(b) == 1 && size(a) == size(b) {
-    True -> {
-      let a_data = get_data(a)
-      let b_data = get_data(b)
-      let products = list.map2(a_data, b_data, fn(x, y) { x *. y })
-      Ok(list.fold(products, 0.0, fn(acc, x) { acc +. x }))
+    True ->
+    case a, b {
+      NativeTensor(a_ref, _), NativeTensor(b_ref, _) -> {
+        case ffi.nt_dot(a_ref, b_ref) {
+          Ok(value) -> Ok(value)
+          Error(_) -> dot_dense(a, b)
+        }
+      }
+      _, _ -> dot_dense(a, b)
     }
     False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
   }
+}
+
+fn dot_dense(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
+  let a_data = get_data(a)
+  let b_data = get_data(b)
+  let products = list.map2(a_data, b_data, fn(x, y) { x *. y })
+  Ok(list.fold(products, 0.0, fn(acc, x) { acc +. x }))
 }
 
 /// Matrix-vector multiplication: [m, n] @ [n] -> [m]
@@ -599,46 +818,76 @@ pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
 pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case a.shape, b.shape {
     [m, n], [n2, p] if n == n2 -> {
-      let result_data =
-        list.range(0, m - 1)
-        |> list.flat_map(fn(i) {
-          list.range(0, p - 1)
-          |> list.map(fn(j) {
-            list.range(0, n - 1)
-            |> list.fold(0.0, fn(acc, k) {
-              let a_ik = case get2d(a, i, k) {
-                Ok(v) -> v
-                Error(_) -> 0.0
-              }
-              let b_kj = case get2d(b, k, j) {
-                Ok(v) -> v
-                Error(_) -> 0.0
-              }
-              acc +. a_ik *. b_kj
-            })
-          })
-        })
-      Ok(Tensor(data: result_data, shape: [m, p]))
+      case a, b {
+        NativeTensor(a_ref, _), NativeTensor(b_ref, _) -> {
+          case ffi.nt_matmul(a_ref, b_ref, m, p, n) {
+            Ok(ref) -> Ok(NativeTensor(ref: ref, shape: [m, p]))
+            Error(_) -> matmul_dense(a, b, m, n, p)
+          }
+        }
+        _, _ -> matmul_dense(a, b, m, n, p)
+      }
     }
     [_m, n], [n2, _p] -> Error(ShapeMismatch(expected: [n, -1], got: [n2, -1]))
     _, _ -> Error(DimensionError("Expected two matrices"))
   }
 }
 
+fn matmul_dense(
+a: Tensor,
+b: Tensor,
+m: Int,
+n: Int,
+p: Int,
+) -> Result(Tensor, TensorError) {
+  let result_data =
+  list.range(0, m - 1)
+  |> list.flat_map(fn(i) {
+    list.range(0, p - 1)
+    |> list.map(fn(j) {
+      list.range(0, n - 1)
+      |> list.fold(0.0, fn(acc, k) {
+        let a_ik = case get2d(a, i, k) {
+          Ok(v) -> v
+          Error(_) -> 0.0
+        }
+        let b_kj = case get2d(b, k, j) {
+          Ok(v) -> v
+          Error(_) -> 0.0
+        }
+        acc +. a_ik *. b_kj
+      })
+    })
+  })
+  Ok(Tensor(data: result_data, shape: [m, p]))
+}
+
 /// Matrix transpose: A^T where (A^T)_ij = A_ji
 pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
   case t.shape {
     [m, n] -> {
-      let result_data =
-        list.range(0, n - 1)
-        |> list.flat_map(fn(j) {
-          list.range(0, m - 1)
-          |> list.filter_map(fn(i) { get2d(t, i, j) })
-        })
-      Ok(Tensor(data: result_data, shape: [n, m]))
+      case t {
+        NativeTensor(ref, _) -> {
+          case ffi.nt_transpose(ref) {
+            Ok(result_ref) -> Ok(NativeTensor(ref: result_ref, shape: [n, m]))
+            Error(_) -> transpose_dense(t, m, n)
+          }
+        }
+        _ -> transpose_dense(t, m, n)
+      }
     }
     _ -> Error(DimensionError("Transpose requires 2D tensor"))
   }
+}
+
+fn transpose_dense(t: Tensor, m: Int, n: Int) -> Result(Tensor, TensorError) {
+  let result_data =
+  list.range(0, n - 1)
+  |> list.flat_map(fn(j) {
+    list.range(0, m - 1)
+    |> list.filter_map(fn(i) { get2d(t, i, j) })
+  })
+  Ok(Tensor(data: result_data, shape: [n, m]))
 }
 
 /// Outer product: [m] x [n] -> [m, n]
@@ -686,8 +935,23 @@ pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
 
 /// Clone tensor (creates a copy)
 pub fn clone(t: Tensor) -> Tensor {
-  let data = get_data(t)
-  Tensor(data: data, shape: t.shape)
+  case t {
+    NativeTensor(ref, shape) -> {
+      case ffi.nt_to_list(ref) {
+        Ok(data) -> {
+          case ffi.nt_from_list(data, shape) {
+            Ok(cloned_ref) -> NativeTensor(ref: cloned_ref, shape: shape)
+            Error(_) -> Tensor(data: data, shape: shape)
+          }
+        }
+        Error(_) -> Tensor(data: [], shape: shape)
+      }
+    }
+    _ -> {
+      let data = get_data(t)
+      Tensor(data: data, shape: t.shape)
+    }
+  }
 }
 
 /// Reshape tensor - same data, different shape
@@ -697,9 +961,13 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
   let new_size = list.fold(new_shape, 1, fn(acc, dim) { acc * dim })
 
   case old_size == new_size {
-    True -> {
-      let data = get_data(t)
-      Ok(Tensor(data: data, shape: new_shape))
+    True ->
+    case t {
+      NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
+      _ -> {
+        let data = get_data(t)
+        Ok(Tensor(data: data, shape: new_shape))
+      }
     }
     False ->
       Error(InvalidShape(
@@ -714,8 +982,13 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
 
 /// Flatten to 1D
 pub fn flatten(t: Tensor) -> Tensor {
-  let data = get_data(t)
-  Tensor(data: data, shape: [size(t)])
+  case t {
+    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: [size(t)])
+    _ -> {
+      let data = get_data(t)
+      Tensor(data: data, shape: [size(t)])
+    }
+  }
 }
 
 /// Concatenate vectors (1D)
@@ -1122,7 +1395,8 @@ pub fn broadcast_shape(
 }
 
 /// Broadcast tensor to target shape.
-/// Zero-copy when possible, materialized when necessary.
+/// Dense and strided tensors return a zero-stride view; native tensors
+/// materialize until the NIF layer exposes strided/broadcast views.
 pub fn broadcast_to(
   t: Tensor,
   target_shape: List(Int),
@@ -1133,8 +1407,32 @@ pub fn broadcast_to(
       case t.shape == target_shape {
         True -> Ok(t)
         False -> {
-          let data = broadcast_data(t, target_shape)
-          Ok(Tensor(data: data, shape: target_shape))
+          case t {
+            Tensor(data, shape) -> {
+              let storage = ffi.list_to_array(data)
+              let strides =
+              broadcast_strides(shape, compute_strides(shape), target_shape)
+              Ok(StridedTensor(
+              storage: storage,
+              shape: target_shape,
+              strides: strides,
+              offset: 0,
+              ))
+            }
+            StridedTensor(storage, shape, strides, offset) -> {
+              let view_strides = broadcast_strides(shape, strides, target_shape)
+              Ok(StridedTensor(
+              storage: storage,
+              shape: target_shape,
+              strides: view_strides,
+              offset: offset,
+              ))
+            }
+            NativeTensor(_, _) -> {
+              let data = broadcast_data(t, target_shape)
+              Ok(Tensor(data: data, shape: target_shape))
+            }
+          }
         }
       }
     }
@@ -1161,13 +1459,18 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Remove dimensions of size 1 (squeeze operation)
 pub fn squeeze(t: Tensor) -> Tensor {
-  let data = get_data(t)
   let new_shape = list.filter(t.shape, fn(d) { d != 1 })
   let final_shape = case new_shape {
     [] -> [1]
     _ -> new_shape
   }
-  Tensor(data: data, shape: final_shape)
+  case t {
+    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: final_shape)
+    _ -> {
+      let data = get_data(t)
+      Tensor(data: data, shape: final_shape)
+    }
+  }
 }
 
 /// Remove dimension at specific axis if it's 1
@@ -1178,13 +1481,18 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
       case d == 1 {
         False -> Error(InvalidShape("Dimension at axis is not 1"))
         True -> {
-          let data = get_data(t)
           let new_shape =
             t.shape
             |> list.index_map(fn(dim, i) { #(dim, i) })
             |> list.filter(fn(pair) { pair.1 != axis })
             |> list.map(fn(pair) { pair.0 })
-          Ok(Tensor(data: data, shape: new_shape))
+          case t {
+            NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
+            _ -> {
+              let data = get_data(t)
+              Ok(Tensor(data: data, shape: new_shape))
+            }
+          }
         }
       }
     }
@@ -1193,7 +1501,6 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
 
 /// Add dimension of size 1 at specified axis (unsqueeze operation)
 pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
-  let data = get_data(t)
   let rnk = list.length(t.shape)
   let insert_at = case axis < 0 {
     True -> rnk + axis + 1
@@ -1202,7 +1509,13 @@ pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
 
   let #(before, after) = list.split(t.shape, insert_at)
   let new_shape = list.flatten([before, [1], after])
-  Tensor(data: data, shape: new_shape)
+  case t {
+    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: new_shape)
+    _ -> {
+      let data = get_data(t)
+      Tensor(data: data, shape: new_shape)
+    }
+  }
 }
 
 /// Expand tensor to add batch dimension (alias for unsqueeze)
@@ -1221,6 +1534,17 @@ pub fn to_strided(t: Tensor) -> Tensor {
       let strides = compute_strides(shape)
       StridedTensor(storage: storage, shape: shape, strides: strides, offset: 0)
     }
+    NativeTensor(_, _) -> {
+      let data = get_data(t)
+      let storage = ffi.list_to_array(data)
+      let strides = compute_strides(t.shape)
+      StridedTensor(
+      storage: storage,
+      shape: t.shape,
+      strides: strides,
+      offset: 0,
+      )
+    }
   }
 }
 
@@ -1228,6 +1552,7 @@ pub fn to_strided(t: Tensor) -> Tensor {
 pub fn to_contiguous(t: Tensor) -> Tensor {
   case t {
     Tensor(_, _) -> t
+    NativeTensor(_, _) -> t
     StridedTensor(_, _, _, _) -> {
       let data = get_data(t)
       Tensor(data: data, shape: t.shape)
@@ -1248,6 +1573,7 @@ pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
         _ -> Error(DimensionError("Transpose requires 2D tensor"))
       }
     }
+    NativeTensor(_, _) -> transpose(t)
     StridedTensor(storage, shape, strides, offset) -> {
       case shape, strides {
         [m, n], [s0, s1] -> {
@@ -1268,6 +1594,7 @@ pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
 pub fn is_contiguous(t: Tensor) -> Bool {
   case t {
     Tensor(_, _) -> True
+    NativeTensor(_, _) -> True
     StridedTensor(_, shape, strides, _) -> {
       let expected_strides = compute_strides(shape)
       strides == expected_strides
@@ -1283,6 +1610,7 @@ pub fn get_fast(t: Tensor, index: Int) -> Result(Float, TensorError) {
       |> result.map_error(fn(_) {
         DimensionError("Index " <> int.to_string(index) <> " out of bounds")
       })
+    NativeTensor(_, _) -> get(t, index)
     StridedTensor(storage, shape, strides, offset) -> {
       let indices = flat_to_multi(index, shape)
       let flat_idx =
@@ -1300,6 +1628,7 @@ pub fn get_fast(t: Tensor, index: Int) -> Result(Float, TensorError) {
 pub fn get2d_fast(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
   case t {
     Tensor(_, _) -> get2d(t, row, col)
+    NativeTensor(_, _) -> get2d(t, row, col)
     StridedTensor(storage, shape, strides, offset) -> {
       case shape, strides {
         [_rows, _cols], [s0, s1] -> {
@@ -1354,6 +1683,25 @@ fn compute_strides(shape: List(Int)) -> List(Int) {
       #([running, ..s], running * dim)
     })
   strides
+}
+
+fn broadcast_strides(
+src_shape: List(Int),
+src_strides: List(Int),
+target_shape: List(Int),
+) -> List(Int) {
+  let diff = list.length(target_shape) - list.length(src_shape)
+  let padded_shape = list.append(list.repeat(1, diff), src_shape)
+  let padded_strides = list.append(list.repeat(0, diff), src_strides)
+
+  list.zip(list.zip(padded_shape, target_shape), padded_strides)
+  |> list.map(fn(item) {
+    let #(#(src_dim, target_dim), stride) = item
+    case src_dim == target_dim {
+      True -> stride
+      False -> 0
+    }
+  })
 }
 
 fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {

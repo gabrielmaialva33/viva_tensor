@@ -7,7 +7,7 @@
 ////
 //// Benchmarked on RTX 4090 + BEAM VM
 
-import viva_tensor/tensor.{type Tensor, StridedTensor, Tensor}
+import viva_tensor/tensor.{type Tensor, NativeTensor, StridedTensor, Tensor}
 
 // =============================================================================
 // TYPES
@@ -122,6 +122,7 @@ fn get_tensor_shape(t: Tensor) -> List(Int) {
   case t {
     Tensor(_, shape) -> shape
     StridedTensor(_, shape, _, _) -> shape
+    NativeTensor(_, shape) -> shape
   }
 }
 
@@ -134,6 +135,9 @@ pub fn ensure_optimal(
   let use_strided = should_use_strided(t, op, config)
 
   case t, use_strided {
+    // Native tensors are already on the fast path; keep storage in native memory.
+    NativeTensor(..), _ -> t
+
     // Already strided and should be strided - keep it
     StridedTensor(..), True -> t
 

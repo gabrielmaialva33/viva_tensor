@@ -381,6 +381,7 @@ fn get_shape(t: Tensor) -> List(Int) {
   case t {
     Tensor(_, shape) -> shape
     tensor.StridedTensor(_, shape, _, _) -> shape
+    tensor.NativeTensor(_, shape) -> shape
   }
 }
 
