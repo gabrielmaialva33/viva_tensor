@@ -111,6 +111,9 @@ quality-diversity).
   types and resource ownership contracts are stable.
 - Autograd backward functions now propagate `TensorError` instead of using
   `let assert` or `panic` inside library gradient code.
+- Native tensor constructors now return `Error("nif_not_loaded")` instead of
+  raising `NifNotLoaded` when CI or user environments do not have the Zig NIF
+  shared library built.
 - HDC, Horde, LNS, and quantization FFI wrappers return `Result(_, String)`
   instead of panicking through `let assert Ok` so NIF failures propagate
   cleanly.
