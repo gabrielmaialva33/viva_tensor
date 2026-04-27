@@ -21,6 +21,7 @@
 //// ```
 
 import viva_tensor/core/ffi
+import viva_tensor/cuda
 import viva_tensor/tensor
 import viva_tensor/tflops as tflops_mod
 
@@ -33,6 +34,14 @@ pub type Tensor =
 /// Error returned by fallible tensor constructors and operations.
 pub type TensorError =
   tensor.TensorError
+
+/// Result storage selected by the RTX-first planner.
+pub type AcceleratedTensor =
+  cuda.AcceleratedTensor
+
+/// Backend selected by the RTX-first planner.
+pub type AccelerationBackend =
+  cuda.AccelerationBackend
 
 /// Opaque reference to a tensor stored in native NIF memory.
 pub type NativeTensorRef =
@@ -263,6 +272,26 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 /// Matrix-matrix multiplication
 pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul(a, b)
+}
+
+/// Matrix multiplication with priority: RTX 4090 first, then MKL/native CPU.
+pub fn matmul_auto(
+  a: Tensor,
+  b: Tensor,
+) -> Result(AcceleratedTensor, TensorError) {
+  cuda.matmul_auto(a, b)
+}
+
+/// Download an accelerated tensor back to a regular CPU tensor.
+pub fn accelerated_to_tensor(
+  t: AcceleratedTensor,
+) -> Result(Tensor, TensorError) {
+  cuda.to_cpu_tensor(t)
+}
+
+/// Inspect which backend was selected by `matmul_auto`.
+pub fn accelerated_backend(t: AcceleratedTensor) -> AccelerationBackend {
+  cuda.backend(t)
 }
 
 /// Write out = a @ b into a preallocated native tensor.
