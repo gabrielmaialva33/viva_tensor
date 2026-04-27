@@ -1,0 +1,47 @@
+name: Performance report
+description: Report a benchmark regression or propose an optimization target.
+title: "perf: "
+labels: ["performance"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What performance behavior should change?
+    validations:
+      required: true
+  - type: textarea
+    id: benchmark
+    attributes:
+      label: Benchmark command and output
+      description: Include command, matrix/tensor sizes, warmup, iterations, and whether transfer time is included.
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: baseline
+    attributes:
+      label: Baseline comparison
+      description: Compare against previous viva_tensor, NumPy, PyTorch, MKL, CUDA, or another relevant baseline.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Hardware and software
+      placeholder: |
+        OS:
+        CPU:
+        GPU:
+        Driver:
+        CUDA:
+        MKL:
+        Gleam:
+        Erlang/OTP:
+    validations:
+      required: true
+  - type: textarea
+    id: notes
+    attributes:
+      label: Notes
+      description: Add profiler output, Nsight observations, CPU affinity, thermal limits, or memory bandwidth notes.

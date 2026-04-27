@@ -1,0 +1,73 @@
+name: Bug report
+description: Report an incorrect result, crash, or API problem.
+title: "bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. For security issues, do not use this form; use GitHub Security Advisories.
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproducer
+      description: Include the smallest Gleam code, command, or benchmark that reproduces the issue.
+      render: gleam
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: viva_tensor version or commit
+      placeholder: "1.0.100 or commit SHA"
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Gleam, Erlang/OTP, Zig, CUDA, MKL, CPU, GPU.
+      placeholder: |
+        OS:
+        Gleam:
+        Erlang/OTP:
+        Zig:
+        CUDA:
+        MKL:
+        CPU:
+        GPU:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: This is not a security vulnerability.
+          required: true

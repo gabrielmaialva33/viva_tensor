@@ -1,0 +1,44 @@
+name: Feature request
+description: Suggest a tensor operation, backend, API improvement, or documentation addition.
+title: "feat: "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What user workflow or limitation does this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the API shape or implementation approach if you have one.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Public Gleam API
+        - Broadcasting or shape semantics
+        - CPU/MKL backend
+        - CUDA backend
+        - Quantization
+        - Sparse tensors
+        - Autograd or neural network layers
+        - Documentation
+        - Build or CI
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility notes
+      description: Mention NumPy/PyTorch behavior, precision expectations, or breaking changes.
