@@ -1,5 +1,5 @@
 name = "viva_tensor"
-version = "1.0.100"
+version = "2.2.100"
 description = "High-performance tensor library for Gleam/BEAM with Zig NIF, Intel MKL (931 GFLOPS), CUDA Tensor Cores (1854 TOPS), and quantization"
 licences = ["MIT"]
 repository = { type = "github", user = "gabrielmaialva33", repo = "viva_tensor" }
@@ -16,6 +16,7 @@ internal_modules = [
   "viva_tensor/bench",
   "viva_tensor/bench/*",
   "viva_tensor/benchmark",
+  "viva_tensor/blas",
   "viva_tensor/cuda",
   "viva_tensor/core",
   "viva_tensor/core/*",
@@ -25,10 +26,15 @@ internal_modules = [
   "viva_tensor/horde",
   "viva_tensor/lns",
   "viva_tensor/metrics",
+  "viva_tensor/nn/autograd",
+  "viva_tensor/nn/layers",
+  "viva_tensor/nn/flash_attention",
   "viva_tensor/optim",
   "viva_tensor/optim/*",
+  "viva_tensor/quant",
   "viva_tensor/quant/*",
-  "viva_tensor/nn/flash_attention",
+  "viva_tensor/sparse",
+  "viva_tensor/telemetry",
   "viva_tensor/tensor",
   "viva_tensor/tflops",
 ]
