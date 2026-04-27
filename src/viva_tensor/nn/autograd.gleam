@@ -38,13 +38,13 @@
 //// let Traced(x, tape1) = autograd.new_variable(tape, tensor.from_list([2.0]))
 //// let Traced(y, tape2) = autograd.new_variable(tape1, tensor.from_list([3.0]))
 ////
-//// let assert Ok(Traced(z, tape3)) = autograd.mul(tape2, x, y)
-//// let assert Ok(grads) = autograd.backward(tape3, z)
+//// use Traced(z, tape3) <- result.try(autograd.mul(tape2, x, y))
+//// use grads <- result.try(autograd.backward(tape3, z))
 ////
 //// // dz/dx = y = 3.0  (partial derivative w.r.t. first input)
 //// // dz/dy = x = 2.0  (partial derivative w.r.t. second input)
-//// let assert Ok(dx) = dict.get(grads, x.id)
-//// let assert Ok(dy) = dict.get(grads, y.id)
+//// let dx = dict.get(grads, x.id)
+//// let dy = dict.get(grads, y.id)
 //// ```
 
 import gleam/dict.{type Dict}
@@ -52,7 +52,7 @@ import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
-import viva_tensor/core/error.{type TensorError}
+import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/ops
 import viva_tensor/core/tensor.{type Tensor}
@@ -72,7 +72,7 @@ pub type NodeId =
 /// Given dL/dself, returns [(parent_id, dL/dparent), ...].
 /// This is where the chain rule lives.
 pub type BackwardFn =
-  fn(Tensor) -> List(#(NodeId, Tensor))
+  fn(Tensor) -> Result(List(#(NodeId, Tensor)), TensorError)
 
 /// The Tape: our explicit computation graph.
 ///
@@ -176,7 +176,7 @@ pub fn add(
       False -> sum_to_shape(grad, b_shape)
     }
 
-    [#(a.id, grad_a), #(b.id, grad_b)]
+    Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -201,7 +201,7 @@ pub fn sub(
   // Backward: y = a - b => dy/da = 1*grad, dy/db = -1*grad
   let backward = fn(grad: Tensor) {
     let neg_grad = ops.negate(grad)
-    [#(a.id, grad), #(b.id, neg_grad)]
+    Ok([#(a.id, grad), #(b.id, neg_grad)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -226,9 +226,9 @@ pub fn mul(
   // Backward: y = a * b => dy/da = b * grad, dy/db = a * grad
   // Product rule, meet chain rule. They get along well.
   let backward = fn(grad: Tensor) {
-    let assert Ok(grad_a) = ops.mul_auto(grad, b.data)
-    let assert Ok(grad_b) = ops.mul_auto(grad, a.data)
-    [#(a.id, grad_a), #(b.id, grad_b)]
+    use grad_a <- result.try(ops.mul_auto(grad, b.data))
+    use grad_b <- result.try(ops.mul_auto(grad, a.data))
+    Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -257,7 +257,7 @@ pub fn mean(tape: Tape, a: Variable) -> Traced(Variable) {
     let scaled_grad_val = grad_val /. n
 
     let grad_input = tensor.fill(a_shape, scaled_grad_val)
-    [#(a.id, grad_input)]
+    Ok([#(a.id, grad_input)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -287,13 +287,13 @@ pub fn matmul(
   // dy/dA = grad @ B^T  (dims: [m,n] @ [n,k]^T = [m,k] @ [k,n] = [m,n])
   // dy/dB = A^T @ grad  (dims: [m,k]^T @ [m,n] = [k,m] @ [m,n] = [k,n])
   let backward = fn(grad: Tensor) {
-    let assert Ok(bt) = ops.transpose(b.data)
-    let assert Ok(at) = ops.transpose(a.data)
+    use bt <- result.try(ops.transpose(b.data))
+    use at <- result.try(ops.transpose(a.data))
 
-    let assert Ok(grad_a) = ops.matmul_auto(grad, bt)
-    let assert Ok(grad_b) = ops.matmul_auto(at, grad)
+    use grad_a <- result.try(ops.matmul_auto(grad, bt))
+    use grad_b <- result.try(ops.matmul_auto(at, grad))
 
-    [#(a.id, grad_a), #(b.id, grad_b)]
+    Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -317,8 +317,8 @@ pub fn transpose(
   // Backward: y = A^T => dy/dA = grad^T
   // The Jacobian of transpose is... transpose. Beautiful.
   let backward = fn(grad: Tensor) {
-    let assert Ok(grad_t) = ops.transpose(grad)
-    [#(a.id, grad_t)]
+    use grad_t <- result.try(ops.transpose(grad))
+    Ok([#(a.id, grad_t)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -355,8 +355,8 @@ pub fn relu(tape: Tape, a: Variable) -> Traced(Variable) {
           False -> 0.0
         }
       })
-    let assert Ok(grad_a) = ops.mul_auto(grad, mask)
-    [#(a.id, grad_a)]
+    use grad_a <- result.try(ops.mul_auto(grad, mask))
+    Ok([#(a.id, grad_a)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
@@ -385,7 +385,7 @@ pub fn relu(tape: Tape, a: Variable) -> Traced(Variable) {
 pub fn backward(
   tape: Tape,
   loss: Variable,
-) -> Result(Dict(NodeId, Tensor), String) {
+) -> Result(Dict(NodeId, Tensor), TensorError) {
   let t0 = ffi.now_microseconds()
   // Seed gradient: dL/dL = 1.0 (the journey begins)
   let loss_shape = tensor.shape(loss.data)
@@ -397,33 +397,36 @@ pub fn backward(
   // No need for Kahn's algorithm or DFS - the tape gives it to us free.
   let all_ids = list.range(tape.next_id - 1, 0)
 
-  let final_grads =
-    list.fold(all_ids, initial_grads, fn(grads, current_id) {
+  use final_grads <- result.try(
+    list.fold(all_ids, Ok(initial_grads), fn(grads_result, current_id) {
+      use grads <- result.try(grads_result)
       case dict.get(grads, current_id) {
         // Node doesn't contribute to loss (not on any path to loss)
-        Error(_) -> grads
+        Error(_) -> Ok(grads)
         Ok(current_grad) -> {
           case dict.get(tape.operations, current_id) {
             // Leaf node: no parents, gradient just accumulates here
-            Error(_) -> grads
+            Error(_) -> Ok(grads)
             // Interior node: propagate gradient to parents via chain rule
             Ok(back_fn) -> {
-              let parent_grads = back_fn(current_grad)
+              use parent_grads <- result.try(back_fn(current_grad))
 
               // Accumulate gradients (multivariate chain rule: sum contributions)
-              list.fold(parent_grads, grads, fn(acc_grads, pair) {
+              list.fold(parent_grads, Ok(grads), fn(acc_result, pair) {
+                use acc_grads <- result.try(acc_result)
                 let #(pid, pgrad) = pair
                 case dict.get(acc_grads, pid) {
-                  Error(_) -> dict.insert(acc_grads, pid, pgrad)
+                  Error(_) -> Ok(dict.insert(acc_grads, pid, pgrad))
                   Ok(existing) -> {
                     // Shape mismatch here means we have a bug in backward functions
                     let existing_shape = tensor.shape(existing)
                     let pgrad_shape = tensor.shape(pgrad)
                     case existing_shape == pgrad_shape {
-                      True -> {
-                        let assert Ok(sum) = ops.add_auto(existing, pgrad)
-                        dict.insert(acc_grads, pid, sum)
-                      }
+                      True ->
+                        ops.add_auto(existing, pgrad)
+                        |> result.map(fn(sum) {
+                          dict.insert(acc_grads, pid, sum)
+                        })
                       False -> {
                         let msg =
                           "Gradient shape mismatch at node "
@@ -433,7 +436,7 @@ pub fn backward(
                           <> ", incoming="
                           <> string_shape(pgrad_shape)
                           <> ". This is a bug in the backward function."
-                        panic as msg
+                        Error(DimensionError(msg))
                       }
                     }
                   }
@@ -443,7 +446,8 @@ pub fn backward(
           }
         }
       }
-    })
+    }),
+  )
 
   telemetry.record_backward(tape.next_id, ffi.now_microseconds() - t0)
   Ok(final_grads)
