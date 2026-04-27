@@ -268,6 +268,8 @@ static ErlNifFunc nif_funcs[] = {
     {"ct16_matmul_lt_32f_bench", 7, ct16_matmul_lt_32f_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu", 6, ct16_matmul_fused_relu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_gelu", 6, ct16_matmul_fused_gelu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_linear_relu", 7, ct16_linear_relu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_linear_gelu", 7, ct16_linear_gelu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_bench", 7, ct16_matmul_fused_relu_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_gelu_bench", 7, ct16_matmul_fused_gelu_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_batched_bench", 5, ct16_matmul_batched_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},

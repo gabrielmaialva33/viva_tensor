@@ -412,6 +412,64 @@ ERL_NIF_TERM ct16_matmul_fused_gelu_nif(ErlNifEnv *env, int argc,
   return enif_make_atom(env, "ok");
 }
 
+/** ct16_linear_relu(RefA, RefB, RefBias, RefC, M, N, K) -> ok
+ *  FP16 fused linear layer: C = ReLU(A @ B + bias).
+ */
+ERL_NIF_TERM ct16_linear_relu_nif(ErlNifEnv *env, int argc,
+                                           const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  CudaTensor16 *a = get_cuda_tensor16(env, argv[0]);
+  CudaTensor16 *b = get_cuda_tensor16(env, argv[1]);
+  CudaTensor16 *bias = get_cuda_tensor16(env, argv[2]);
+  CudaTensor16 *c = get_cuda_tensor16(env, argv[3]);
+  if (!a || !b || !bias || !c) return make_error(env, "invalid_cuda_tensor16");
+
+  int m, n, k;
+  if (!enif_get_int(env, argv[4], &m) ||
+      !enif_get_int(env, argv[5], &n) ||
+      !enif_get_int(env, argv[6], &k))
+    return make_error(env, "invalid_args");
+
+  if (a->size != m * k || b->size != k * n || bias->size != n || c->size != m * n)
+    return make_error(env, "size_mismatch");
+
+  int result = cuda_hgemm_fused_relu_bias(m, n, k, a->d_data, b->d_data,
+                                          bias->d_data, c->d_data);
+  if (result != 0)
+    return make_error(env, "cuda_linear_relu_failed");
+
+  return enif_make_atom(env, "ok");
+}
+
+/** ct16_linear_gelu(RefA, RefB, RefBias, RefC, M, N, K) -> ok
+ *  FP16 fused linear layer: C = GELU(A @ B + bias).
+ */
+ERL_NIF_TERM ct16_linear_gelu_nif(ErlNifEnv *env, int argc,
+                                           const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  CudaTensor16 *a = get_cuda_tensor16(env, argv[0]);
+  CudaTensor16 *b = get_cuda_tensor16(env, argv[1]);
+  CudaTensor16 *bias = get_cuda_tensor16(env, argv[2]);
+  CudaTensor16 *c = get_cuda_tensor16(env, argv[3]);
+  if (!a || !b || !bias || !c) return make_error(env, "invalid_cuda_tensor16");
+
+  int m, n, k;
+  if (!enif_get_int(env, argv[4], &m) ||
+      !enif_get_int(env, argv[5], &n) ||
+      !enif_get_int(env, argv[6], &k))
+    return make_error(env, "invalid_args");
+
+  if (a->size != m * k || b->size != k * n || bias->size != n || c->size != m * n)
+    return make_error(env, "size_mismatch");
+
+  int result = cuda_hgemm_fused_gelu_bias(m, n, k, a->d_data, b->d_data,
+                                          bias->d_data, c->d_data);
+  if (result != 0)
+    return make_error(env, "cuda_linear_gelu_failed");
+
+  return enif_make_atom(env, "ok");
+}
+
 /** ct16_matmul_fused_relu_bench(RefA, RefB, RefC, M, N, K, Iters) -> ok
  *  FP16 fused GEMM+ReLU bench loop in C. Zero Erlang overhead.
  */

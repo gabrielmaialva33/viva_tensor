@@ -933,6 +933,16 @@ static int g_fp16_gelu_cache_m = 0, g_fp16_gelu_cache_n = 0, g_fp16_gelu_cache_k
 static cublasLtHeuristicResult_t g_fp16_gelu_cached_result;
 static int g_fp16_gelu_cache_valid = 0;
 
+/* FP16 fused GEMM+Bias+ReLU algorithm cache */
+static int g_fp16_relu_bias_cache_m = 0, g_fp16_relu_bias_cache_n = 0, g_fp16_relu_bias_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_relu_bias_cached_result;
+static int g_fp16_relu_bias_cache_valid = 0;
+
+/* FP16 fused GEMM+Bias+GELU algorithm cache */
+static int g_fp16_gelu_bias_cache_m = 0, g_fp16_gelu_bias_cache_n = 0, g_fp16_gelu_bias_cache_k = 0;
+static cublasLtHeuristicResult_t g_fp16_gelu_bias_cached_result;
+static int g_fp16_gelu_bias_cache_valid = 0;
+
 /**
  * Initialize cublasLt for INT8 Tensor Cores (Ada IMMA)
  */
@@ -1587,6 +1597,7 @@ static int cuda_hgemm_fused_internal(int M, int N, int K,
                                       const cuda_half_t *d_A,
                                       const cuda_half_t *d_B,
                                       cuda_half_t *d_C,
+                                      const cuda_half_t *d_bias,
                                       int epilogue_type,
                                       int *cache_m, int *cache_n, int *cache_k,
                                       cublasLtHeuristicResult_t *cached_result,
@@ -1621,6 +1632,10 @@ static int cuda_hgemm_fused_internal(int M, int N, int K,
         int32_t epilogue = epilogue_type;
         g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
                                          &epilogue, sizeof(epilogue));
+        if (d_bias) {
+            g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER,
+                                             &d_bias, sizeof(d_bias));
+        }
 
         /* Layouts: col-major swap trick (swap A<->B, swap M<->N) */
         cublasLtMatrixLayout_t layout_b, layout_a, layout_c;
@@ -1699,6 +1714,10 @@ static int cuda_hgemm_fused_internal(int M, int N, int K,
         int32_t epilogue = epilogue_type;
         g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_EPILOGUE,
                                          &epilogue, sizeof(epilogue));
+        if (d_bias) {
+            g_cublaslt_matmul_desc_set_attr(matmul_desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER,
+                                             &d_bias, sizeof(d_bias));
+        }
 
         cublasLtMatrixLayout_t layout_b, layout_a, layout_c;
         g_cublaslt_matrix_layout_create(&layout_b, CUDA_R_16F, (uint64_t)N, (uint64_t)K, (int64_t)N);
@@ -1742,6 +1761,7 @@ int cuda_hgemm_lt_32f(int M, int N, int K,
                        const cuda_half_t *d_B,
                        cuda_half_t *d_C) {
     return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      NULL,
                                       CUBLASLT_EPILOGUE_DEFAULT,
                                       &g_fp16_32f_cache_m, &g_fp16_32f_cache_n,
                                       &g_fp16_32f_cache_k, &g_fp16_32f_cached_result,
@@ -1935,6 +1955,7 @@ int cuda_hgemm_fused_relu(int M, int N, int K,
                            const cuda_half_t *d_B,
                            cuda_half_t *d_C) {
     return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      NULL,
                                       CUBLASLT_EPILOGUE_RELU,
                                       &g_fp16_relu_cache_m, &g_fp16_relu_cache_n,
                                       &g_fp16_relu_cache_k, &g_fp16_relu_cached_result,
@@ -1950,10 +1971,45 @@ int cuda_hgemm_fused_gelu(int M, int N, int K,
                            const cuda_half_t *d_B,
                            cuda_half_t *d_C) {
     return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      NULL,
                                       CUBLASLT_EPILOGUE_GELU,
                                       &g_fp16_gelu_cache_m, &g_fp16_gelu_cache_n,
                                       &g_fp16_gelu_cache_k, &g_fp16_gelu_cached_result,
                                       &g_fp16_gelu_cache_valid);
+}
+
+/**
+ * FP16 fused GEMM+Bias+ReLU: C = ReLU(A @ B + bias)
+ * Bias is length N and is applied per output column.
+ */
+int cuda_hgemm_fused_relu_bias(int M, int N, int K,
+                               const cuda_half_t *d_A,
+                               const cuda_half_t *d_B,
+                               const cuda_half_t *d_bias,
+                               cuda_half_t *d_C) {
+    return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      d_bias,
+                                      CUBLASLT_EPILOGUE_RELU_BIAS,
+                                      &g_fp16_relu_bias_cache_m, &g_fp16_relu_bias_cache_n,
+                                      &g_fp16_relu_bias_cache_k, &g_fp16_relu_bias_cached_result,
+                                      &g_fp16_relu_bias_cache_valid);
+}
+
+/**
+ * FP16 fused GEMM+Bias+GELU: C = GELU(A @ B + bias)
+ * Bias is length N and is applied per output column.
+ */
+int cuda_hgemm_fused_gelu_bias(int M, int N, int K,
+                               const cuda_half_t *d_A,
+                               const cuda_half_t *d_B,
+                               const cuda_half_t *d_bias,
+                               cuda_half_t *d_C) {
+    return cuda_hgemm_fused_internal(M, N, K, d_A, d_B, d_C,
+                                      d_bias,
+                                      CUBLASLT_EPILOGUE_GELU_BIAS,
+                                      &g_fp16_gelu_bias_cache_m, &g_fp16_gelu_bias_cache_n,
+                                      &g_fp16_gelu_bias_cache_k, &g_fp16_gelu_bias_cached_result,
+                                      &g_fp16_gelu_bias_cache_valid);
 }
 
 /* =========================================================================

@@ -506,6 +506,12 @@ extern int cuda_hgemm_fused_relu(int M, int N, int K,
                                   const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
 extern int cuda_hgemm_fused_gelu(int M, int N, int K,
                                   const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
+extern int cuda_hgemm_fused_relu_bias(int M, int N, int K,
+                                      const uint16_t *d_A, const uint16_t *d_B,
+                                      const uint16_t *d_bias, uint16_t *d_C);
+extern int cuda_hgemm_fused_gelu_bias(int M, int N, int K,
+                                      const uint16_t *d_A, const uint16_t *d_B,
+                                      const uint16_t *d_bias, uint16_t *d_C);
 extern int cuda_hgemm_fused_relu_tn(int M, int N, int K,
                                      const uint16_t *d_A, const uint16_t *d_B_T, uint16_t *d_C);
 extern int cuda_hgemm_fused_gelu_tn(int M, int N, int K,
@@ -687,6 +693,8 @@ NIF_FUNC_DECL(ct_int8_matmul_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_lt_32f_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_relu_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_gelu_nif);
+NIF_FUNC_DECL(ct16_linear_relu_nif);
+NIF_FUNC_DECL(ct16_linear_gelu_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_relu_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_gelu_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_batched_bench_nif);
