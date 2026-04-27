@@ -133,6 +133,21 @@ pub fn native_from_list(
   tensor.native_from_list(data, shape)
 }
 
+/// Move a tensor to the best persistent backend: RTX 4090 first, then MKL/CPU.
+pub fn to_accelerated(t: Tensor) -> Result(AcceleratedTensor, TensorError) {
+  cuda.to_accelerated(t)
+}
+
+/// Upload a tensor to persistent RTX 4090 FP16 memory.
+pub fn to_rtx4090_fp16(t: Tensor) -> Result(AcceleratedTensor, TensorError) {
+  cuda.to_rtx4090_fp16(t)
+}
+
+/// Upload a tensor to persistent RTX 4090 FP32 memory.
+pub fn to_rtx4090_fp32(t: Tensor) -> Result(AcceleratedTensor, TensorError) {
+  cuda.to_rtx4090_fp32(t)
+}
+
 // --- Random -----------------------------------------------------------------
 
 /// Random uniform [0, 1)
@@ -282,6 +297,14 @@ pub fn matmul_auto(
   cuda.matmul_auto(a, b)
 }
 
+/// Matrix multiplication between persistent accelerated tensors.
+pub fn matmul_accelerated(
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(AcceleratedTensor, TensorError) {
+  cuda.matmul_accelerated(a, b)
+}
+
 /// Download an accelerated tensor back to a regular CPU tensor.
 pub fn accelerated_to_tensor(
   t: AcceleratedTensor,
@@ -292,6 +315,11 @@ pub fn accelerated_to_tensor(
 /// Inspect which backend was selected by `matmul_auto`.
 pub fn accelerated_backend(t: AcceleratedTensor) -> AccelerationBackend {
   cuda.backend(t)
+}
+
+/// Shape of an accelerated tensor without forcing a download.
+pub fn accelerated_shape(t: AcceleratedTensor) -> List(Int) {
+  cuda.accelerated_shape(t)
 }
 
 /// Write out = a @ b into a preallocated native tensor.
