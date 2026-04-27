@@ -323,6 +323,17 @@ pub fn can_broadcast_test() {
   t.can_broadcast([2, 3], [4]) |> should.be_false()
 }
 
+pub fn broadcast_to_test() {
+  let a = t.from_list([1.0, 2.0, 3.0])
+  case t.broadcast_to(a, [2, 3]) {
+    Ok(b) -> {
+      t.shape(b) |> should.equal([2, 3])
+      t.to_list(b) |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn add_broadcast_test() {
   let a = t.zeros([2, 3])
   let b = t.from_list([1.0, 2.0, 3.0])
