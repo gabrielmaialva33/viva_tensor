@@ -187,6 +187,31 @@ pub fn matmul_test() {
   }
 }
 
+pub fn matmul_auto_rtx_first_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case t.matmul_auto(a, b) {
+            Ok(accelerated) -> {
+              case t.accelerated_to_tensor(accelerated) {
+                Ok(result) -> {
+                  t.shape(result) |> should.equal([2, 2])
+                  t.to_list(result) |> should.equal([19.0, 22.0, 43.0, 50.0])
+                }
+                Error(_) -> should.fail()
+              }
+            }
+            Error(_) -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 // =============================================================================
 // OPTIMIZED OPERATIONS (Erlang Array Backend)
 // =============================================================================
