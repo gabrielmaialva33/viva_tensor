@@ -343,6 +343,51 @@ pub fn persistent_fp16_linear_relu_into_test() {
   }
 }
 
+pub fn gpu_workspace_linear_layer_test() {
+  case t.gpu_workspace() {
+    Ok(workspace) -> {
+      case
+        t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]),
+        t.matrix(2, 2, [5.0, -6.0, -7.0, 8.0])
+      {
+        Ok(input_cpu), Ok(weight_cpu) -> {
+          let bias_cpu = t.vector([10.0, -20.0])
+          case
+            t.workspace_from_tensor(workspace, input_cpu),
+            t.linear_layer(workspace, weight_cpu, bias_cpu)
+          {
+            Ok(input), Ok(layer) -> {
+              t.linear_layer_input_features(layer) |> should.equal(2)
+              t.linear_layer_output_features(layer) |> should.equal(2)
+
+              case t.linear_output(workspace, layer, 2) {
+                Ok(out) -> {
+                  case t.linear_relu_forward_into(out, input, layer) {
+                    Ok(Nil) -> {
+                      case t.accelerated_to_tensor(out) {
+                        Ok(result) ->
+                          t.to_list(result)
+                          |> should.equal([1.0, 0.0, 0.0, 0.0])
+                        Error(_) -> should.fail()
+                      }
+                    }
+                    Error(_) -> should.fail()
+                  }
+                }
+                Error(_) -> should.fail()
+              }
+            }
+            _, _ -> should.fail()
+          }
+        }
+        _, _ -> should.fail()
+      }
+    }
+
+    Error(_) -> Nil
+  }
+}
+
 // =============================================================================
 // OPTIMIZED OPERATIONS (Erlang Array Backend)
 // =============================================================================
