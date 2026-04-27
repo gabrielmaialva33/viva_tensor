@@ -309,6 +309,40 @@ pub fn persistent_fp16_matmul_relu_into_test() {
   }
 }
 
+pub fn persistent_fp16_linear_relu_into_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, -6.0, -7.0, 8.0]) {
+        Ok(b) -> {
+          let bias = t.vector([10.0, -20.0])
+          case
+            t.to_rtx4090_fp16(t.zeros([2, 2])),
+            t.to_rtx4090_fp16(a),
+            t.to_rtx4090_fp16(b),
+            t.to_rtx4090_fp16(bias)
+          {
+            Ok(out), Ok(a_acc), Ok(b_acc), Ok(bias_acc) -> {
+              case t.linear_relu_accelerated_into(out, a_acc, b_acc, bias_acc) {
+                Ok(Nil) -> {
+                  case t.accelerated_to_tensor(out) {
+                    Ok(result) ->
+                      t.to_list(result) |> should.equal([1.0, 0.0, 0.0, 0.0])
+                    Error(_) -> should.fail()
+                  }
+                }
+                Error(_) -> Nil
+              }
+            }
+            _, _, _, _ -> Nil
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 // =============================================================================
 // OPTIMIZED OPERATIONS (Erlang Array Backend)
 // =============================================================================
