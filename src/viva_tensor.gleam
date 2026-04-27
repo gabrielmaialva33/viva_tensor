@@ -305,6 +305,33 @@ pub fn matmul_accelerated(
   cuda.matmul_accelerated(a, b)
 }
 
+/// Write `out = a @ b` into a persistent accelerated output buffer.
+pub fn matmul_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, TensorError) {
+  cuda.matmul_accelerated_into(out, a, b)
+}
+
+/// Write `out = relu(a @ b)` using the FP16 Tensor Core fused epilogue.
+pub fn matmul_relu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, TensorError) {
+  cuda.matmul_relu_accelerated_into(out, a, b)
+}
+
+/// Write `out = gelu(a @ b)` using the FP16 Tensor Core fused epilogue.
+pub fn matmul_gelu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, TensorError) {
+  cuda.matmul_gelu_accelerated_into(out, a, b)
+}
+
 /// Download an accelerated tensor back to a regular CPU tensor.
 pub fn accelerated_to_tensor(
   t: AcceleratedTensor,
@@ -320,6 +347,11 @@ pub fn accelerated_backend(t: AcceleratedTensor) -> AccelerationBackend {
 /// Shape of an accelerated tensor without forcing a download.
 pub fn accelerated_shape(t: AcceleratedTensor) -> List(Int) {
   cuda.accelerated_shape(t)
+}
+
+/// Wait for queued CUDA work to complete.
+pub fn accelerated_sync() -> Result(Nil, TensorError) {
+  cuda.sync()
 }
 
 /// Write out = a @ b into a preallocated native tensor.
