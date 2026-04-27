@@ -2,6 +2,26 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.100] - 2026-04-27
+
+### Changed
+
+- Corrected package versioning from the premature `2.1.0` line back to the
+  `1.0.x` series while the public API is still being stabilized.
+- Tightened generated package documentation by marking low-level CUDA, tensor
+  implementation, benchmark, experimental, and helper modules as internal.
+
+### Added
+
+- Added open-source project governance files:
+  - `CODE_OF_CONDUCT.md`
+  - `CONTRIBUTING.md`
+  - `SECURITY.md`
+  - GitHub issue forms
+  - GitHub pull request template
+
+---
+
 ## [2.1.0] - 2026-02-13
 
 ### Highlights
@@ -26,21 +46,21 @@ Confirmed compatibility with [VIVA](https://github.com/gabrielmaialva33/viva) ho
 
 ### Performance Scorecard
 
-| Backend | Throughput | % of Peak | vs PyTorch |
-|:--------|----------:|----------:|-----------:|
-| CPU FP64 (MKL dgemm) | **931 GFLOPS** | - | **+50%** |
-| GPU FP32 (TF32 Tensor Cores) | **84.5 TFLOPS** | 102% | **+57%** |
-| GPU FP16 Dense (cublasGemmEx) | **284 TFLOPS** | 86% | - |
-| GPU INT8 Dense (cublasLt IMMA) | **604 TOPS** | 92% | - |
-| GPU FP8 E4M3 (cuBLASLt) | **344 TOPS** | 104%* | - |
-| GPU FP8 E4M3 (CUTLASS half_t) | **660 TOPS** | 100% | - |
-| GPU INT8 2:4 Sparse (cuSPARSELt) | **1094 TOPS** | 83% | - |
-| GPU INT4 2:4 Sparse (CUTLASS) | **1854 TOPS** | 70% | - |
-| GPU FP8 2:4 Sparse (cuSPARSELt) | **702 TOPS** | 53% | - |
-| GPU FP16 2:4 Sparse (cuSPARSELt) | **355 TFLOPS** | 53% | - |
-| GPU INT8 Sparse (CUTLASS) | **841 TOPS** | 64% | - |
-| GPU Fused GEMM+ReLU/GELU | **162 TFLOPS** | - | activation free |
-| GPU FP16 Batched GEMM | **153 TFLOPS** | - | - |
+| Backend                          |      Throughput | % of Peak |      vs PyTorch |
+|:---------------------------------|----------------:|----------:|----------------:|
+| CPU FP64 (MKL dgemm)             |  **931 GFLOPS** |         - |        **+50%** |
+| GPU FP32 (TF32 Tensor Cores)     | **84.5 TFLOPS** |      102% |        **+57%** |
+| GPU FP16 Dense (cublasGemmEx)    |  **284 TFLOPS** |       86% |               - |
+| GPU INT8 Dense (cublasLt IMMA)   |    **604 TOPS** |       92% |               - |
+| GPU FP8 E4M3 (cuBLASLt)          |    **344 TOPS** |     104%* |               - |
+| GPU FP8 E4M3 (CUTLASS half_t)    |    **660 TOPS** |      100% |               - |
+| GPU INT8 2:4 Sparse (cuSPARSELt) |   **1094 TOPS** |       83% |               - |
+| GPU INT4 2:4 Sparse (CUTLASS)    |   **1854 TOPS** |       70% |               - |
+| GPU FP8 2:4 Sparse (cuSPARSELt)  |    **702 TOPS** |       53% |               - |
+| GPU FP16 2:4 Sparse (cuSPARSELt) |  **355 TFLOPS** |       53% |               - |
+| GPU INT8 Sparse (CUTLASS)        |    **841 TOPS** |       64% |               - |
+| GPU Fused GEMM+ReLU/GELU         |  **162 TFLOPS** |         - | activation free |
+| GPU FP16 Batched GEMM            |  **153 TFLOPS** |         - |               - |
 
 > *FP8 cuBLASLt exceeds 330T GeForce FP8+FP32 spec due to internal TF32 promotion.
 > Hardware: Xeon 24-core (AVX2) + RTX 4090. Verified with CUDA events, IQR outlier removal.
