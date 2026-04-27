@@ -92,6 +92,11 @@ quality-diversity).
 - **Open-source governance**:
   - `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`
   - GitHub issue forms (bug, feature, performance) and pull request template
+- **TurboQuant-inspired vector compression**:
+  - Data-oblivious randomized Hadamard rotation for online quantization
+  - Low-bit scalar quantization in the rotated basis
+  - Optional 1-bit residual correction for inner-product workloads
+  - Pure Gleam reference path with tests before moving hot loops to NIF/CUDA
 - **Benchmarks**: RTX 4090 vs MKL benchmark module
   (`viva_tensor/bench/rtx`), zero-allocation `_into` benchmark suite
 - **SageAttention**: CUDA-accelerated attention mechanism
