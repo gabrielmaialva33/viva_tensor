@@ -43,6 +43,14 @@ pub type AcceleratedTensor =
 pub type AccelerationBackend =
   cuda.AccelerationBackend
 
+/// Workspace for persistent GPU buffers.
+pub type GpuWorkspace =
+  cuda.GpuWorkspace
+
+/// Persisted linear layer parameters.
+pub type LinearLayer =
+  cuda.LinearLayer
+
 /// Opaque reference to a tensor stored in native NIF memory.
 pub type NativeTensorRef =
   ffi.NativeTensorRef
@@ -146,6 +154,44 @@ pub fn to_rtx4090_fp16(t: Tensor) -> Result(AcceleratedTensor, TensorError) {
 /// Upload a tensor to persistent RTX 4090 FP32 memory.
 pub fn to_rtx4090_fp32(t: Tensor) -> Result(AcceleratedTensor, TensorError) {
   cuda.to_rtx4090_fp32(t)
+}
+
+/// Create an RTX 4090 FP16 workspace.
+pub fn gpu_workspace() -> Result(GpuWorkspace, TensorError) {
+  cuda.gpu_workspace()
+}
+
+/// Allocate a reusable zero-filled output buffer in workspace memory.
+pub fn workspace_zeros(
+  workspace: GpuWorkspace,
+  shape: List(Int),
+) -> Result(AcceleratedTensor, TensorError) {
+  cuda.workspace_zeros(workspace, shape)
+}
+
+/// Move a tensor into workspace memory.
+pub fn workspace_from_tensor(
+  workspace: GpuWorkspace,
+  tensor: Tensor,
+) -> Result(AcceleratedTensor, TensorError) {
+  cuda.workspace_from_tensor(workspace, tensor)
+}
+
+/// Create a persisted FP16 linear layer on the RTX.
+pub fn linear_layer_fp16(
+  weight: Tensor,
+  bias: Tensor,
+) -> Result(LinearLayer, TensorError) {
+  cuda.linear_layer_fp16(weight, bias)
+}
+
+/// Create a persisted linear layer in workspace memory.
+pub fn linear_layer(
+  workspace: GpuWorkspace,
+  weight: Tensor,
+  bias: Tensor,
+) -> Result(LinearLayer, TensorError) {
+  cuda.linear_layer(workspace, weight, bias)
 }
 
 // --- Random -----------------------------------------------------------------
@@ -352,6 +398,33 @@ pub fn linear_gelu_accelerated_into(
   cuda.linear_gelu_accelerated_into(out, a, b, bias)
 }
 
+/// Allocate a reusable output buffer for a persisted linear layer.
+pub fn linear_output(
+  workspace: GpuWorkspace,
+  layer: LinearLayer,
+  batch_size: Int,
+) -> Result(AcceleratedTensor, TensorError) {
+  cuda.linear_output(workspace, layer, batch_size)
+}
+
+/// Run `out = relu(input @ layer.weight + layer.bias)`.
+pub fn linear_relu_forward_into(
+  out: AcceleratedTensor,
+  input: AcceleratedTensor,
+  layer: LinearLayer,
+) -> Result(Nil, TensorError) {
+  cuda.linear_relu_forward_into(out, input, layer)
+}
+
+/// Run `out = gelu(input @ layer.weight + layer.bias)`.
+pub fn linear_gelu_forward_into(
+  out: AcceleratedTensor,
+  input: AcceleratedTensor,
+  layer: LinearLayer,
+) -> Result(Nil, TensorError) {
+  cuda.linear_gelu_forward_into(out, input, layer)
+}
+
 /// Download an accelerated tensor back to a regular CPU tensor.
 pub fn accelerated_to_tensor(
   t: AcceleratedTensor,
@@ -372,6 +445,26 @@ pub fn accelerated_shape(t: AcceleratedTensor) -> List(Int) {
 /// Wait for queued CUDA work to complete.
 pub fn accelerated_sync() -> Result(Nil, TensorError) {
   cuda.sync()
+}
+
+/// Workspace backend.
+pub fn workspace_backend(workspace: GpuWorkspace) -> AccelerationBackend {
+  cuda.workspace_backend(workspace)
+}
+
+/// Linear layer backend.
+pub fn linear_layer_backend(layer: LinearLayer) -> AccelerationBackend {
+  cuda.linear_layer_backend(layer)
+}
+
+/// Linear layer input feature count.
+pub fn linear_layer_input_features(layer: LinearLayer) -> Int {
+  cuda.linear_layer_input_features(layer)
+}
+
+/// Linear layer output feature count.
+pub fn linear_layer_output_features(layer: LinearLayer) -> Int {
+  cuda.linear_layer_output_features(layer)
 }
 
 /// Write out = a @ b into a preallocated native tensor.
