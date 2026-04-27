@@ -346,6 +346,15 @@ pub fn add_broadcast_test() {
   }
 }
 
+pub fn map2_test() {
+  let a = t.from_list([1.0, 2.0])
+  let b = t.from_list([3.0, 4.0])
+  case t.map2(a, b, fn(x, y) { x +. y *. 2.0 }) {
+    Ok(c) -> t.to_list(c) |> should.equal([7.0, 10.0])
+    Error(_) -> should.fail()
+  }
+}
+
 // =============================================================================
 // STRIDED TENSORS
 // =============================================================================
