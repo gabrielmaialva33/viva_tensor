@@ -24,6 +24,8 @@ void tensor_destructor(ErlNifEnv *env, void *obj) {
   NativeTensor *t = (NativeTensor *)obj;
   if (t->owns_data && t->data)
     aligned_tensor_free(t->data);
+  if (t->owner)
+    enif_release_resource(t->owner);
   if (t->shape)
     free(t->shape);
   if (t->strides)
@@ -39,6 +41,8 @@ NativeTensor *alloc_tensor(int ndim, const int *shape) {
 
   t->ndim = ndim;
   t->owns_data = 1;
+  t->owner = NULL;
+  t->offset = 0;
 
   /* Compute size and strides (row-major) */
   t->size = 1;
@@ -91,6 +95,8 @@ NativeTensor *alloc_tensor_uninit(int ndim, const int *shape) {
 
   t->ndim = ndim;
   t->owns_data = 1;
+  t->owner = NULL;
+  t->offset = 0;
 
   t->size = 1;
   for (int i = 0; i < ndim; i++)
@@ -130,12 +136,81 @@ NativeTensor *alloc_tensor_uninit(int ndim, const int *shape) {
   return t;
 }
 
+/** Allocate a zero-copy view over an existing NativeTensor resource. */
+NativeTensor *alloc_tensor_view(NativeTensor *base, int ndim, const int *shape,
+                                const int *strides) {
+  NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE,
+                                                        sizeof(NativeTensor));
+  if (!t)
+    return NULL;
+
+  t->ndim = ndim;
+  t->owns_data = 0;
+  t->owner = base;
+  t->data = base->data;
+  t->offset = base->offset;
+
+  t->size = 1;
+  for (int i = 0; i < ndim; i++)
+    t->size *= shape[i];
+
+  t->shape = (int *)malloc(ndim * sizeof(int));
+  t->strides = (int *)malloc(ndim * sizeof(int));
+  if (!t->shape || !t->strides) {
+    if (t->shape)
+      free(t->shape);
+    if (t->strides)
+      free(t->strides);
+    t->shape = NULL;
+    t->strides = NULL;
+    t->data = NULL;
+    t->owner = NULL;
+    enif_release_resource(t);
+    return NULL;
+  }
+
+  memcpy(t->shape, shape, ndim * sizeof(int));
+  memcpy(t->strides, strides, ndim * sizeof(int));
+  enif_keep_resource(base);
+  return t;
+}
+
 /** Get NativeTensor from an Erlang resource term */
 NativeTensor *get_tensor(ErlNifEnv *env, ERL_NIF_TERM term) {
   NativeTensor *t;
   if (!enif_get_resource(env, term, TENSOR_RESOURCE, (void **)&t))
     return NULL;
   return t;
+}
+
+int tensor_is_contiguous(const NativeTensor *t) {
+  if (!t || t->offset != 0)
+    return 0;
+
+  int expected = 1;
+  for (int i = t->ndim - 1; i >= 0; i--) {
+    if (t->strides[i] != expected)
+      return 0;
+    expected *= t->shape[i];
+  }
+  return 1;
+}
+
+int tensor_storage_index(const NativeTensor *t, int logical_index) {
+  int storage_index = t->offset;
+  int remaining = logical_index;
+
+  for (int i = t->ndim - 1; i >= 0; i--) {
+    int coord = remaining % t->shape[i];
+    remaining /= t->shape[i];
+    storage_index += coord * t->strides[i];
+  }
+
+  return storage_index;
+}
+
+double tensor_get_flat(const NativeTensor *t, int logical_index) {
+  return t->data[tensor_storage_index(t, logical_index)];
 }
 
 /** Wrap a NativeTensor as an Erlang term (transfers ownership to GC) */
@@ -404,7 +479,16 @@ ERL_NIF_TERM nt_to_list(ErlNifEnv *env, int argc,
   NativeTensor *t = get_tensor(env, argv[0]);
   if (!t)
     return make_error(env, "invalid_tensor");
-  return make_ok(env, doubles_to_list(env, t->data, t->size));
+  if (tensor_is_contiguous(t))
+    return make_ok(env, doubles_to_list(env, t->data + t->offset, t->size));
+
+  ERL_NIF_TERM result = enif_make_list(env, 0);
+  for (int i = t->size; i > 0;) {
+    i--;
+    result = enif_make_list_cell(
+        env, enif_make_double(env, tensor_get_flat(t, i)), result);
+  }
+  return make_ok(env, result);
 }
 
 /** nt_shape(Ref) -> {ok, ShapeList} */
@@ -430,4 +514,41 @@ ERL_NIF_TERM nt_size(ErlNifEnv *env, int argc,
   if (!t)
     return make_error(env, "invalid_tensor");
   return make_ok(env, enif_make_int(env, t->size));
+}
+
+/** nt_broadcast_to(Ref, TargetShape) -> {ok, RefView} */
+ERL_NIF_TERM nt_broadcast_to(ErlNifEnv *env, int argc,
+                                    const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  NativeTensor *t = get_tensor(env, argv[0]);
+  if (!t)
+    return make_error(env, "invalid_tensor");
+
+  int target_shape[8], target_ndim;
+  if (!parse_shape(env, argv[1], target_shape, &target_ndim))
+    return make_error(env, "invalid_shape");
+  if (t->ndim > target_ndim)
+    return make_error(env, "broadcast_error");
+
+  int diff = target_ndim - t->ndim;
+  int view_strides[8];
+  for (int i = 0; i < target_ndim; i++) {
+    int src_dim = i < diff ? 1 : t->shape[i - diff];
+    int src_stride = i < diff ? 0 : t->strides[i - diff];
+    int target_dim = target_shape[i];
+
+    if (src_dim == target_dim) {
+      view_strides[i] = src_stride;
+    } else if (src_dim == 1) {
+      view_strides[i] = 0;
+    } else {
+      return make_error(env, "broadcast_error");
+    }
+  }
+
+  NativeTensor *view = alloc_tensor_view(t, target_ndim, target_shape, view_strides);
+  if (!view)
+    return make_error(env, "out_of_memory");
+
+  return make_ok(env, make_tensor_term(env, view));
 }

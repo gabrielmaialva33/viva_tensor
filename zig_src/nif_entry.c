@@ -162,6 +162,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_to_list", 1, nt_to_list, 0},
     {"nt_shape", 1, nt_shape, 0},
     {"nt_size", 1, nt_size, 0},
+    {"nt_broadcast_to", 2, nt_broadcast_to, 0},
 
     /* NIF Resource API — element-wise ops */
     {"nt_add", 2, nt_add, 0},
@@ -203,10 +204,16 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_scale_mut", 2, nt_scale_mut, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_negate_mut", 1, nt_negate_mut, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_relu_mut", 1, nt_relu_mut, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_add_into", 3, nt_add_into, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_sub_into", 3, nt_sub_into, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_mul_into", 3, nt_mul_into, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_scale_into", 3, nt_scale_into, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
     /* Retro / fused kernels */
     {"nt_saturn_blend", 3, nt_saturn_blend, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_fused_linear_relu", 6, nt_fused_linear_relu_nif,
+     ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_fused_linear_relu_into", 7, nt_fused_linear_relu_into,
      ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
     /* Resonance kernels — LNS f64 */

@@ -157,13 +157,15 @@ int vt_set_thread_affinity_self(int core_id);
  * NativeTensor - Core data structure
  * ========================================================================= */
 
-typedef struct {
+typedef struct NativeTensor {
   double *data;
   int *shape;
   int *strides;
   int ndim;
   int size;
+  int offset;
   int owns_data;
+  struct NativeTensor *owner;
 } NativeTensor;
 
 extern ErlNifResourceType *TENSOR_RESOURCE;
@@ -172,8 +174,13 @@ extern ErlNifResourceType *TENSOR_RESOURCE;
 void tensor_destructor(ErlNifEnv *env, void *obj);
 NativeTensor *alloc_tensor(int ndim, const int *shape);
 NativeTensor *alloc_tensor_uninit(int ndim, const int *shape);
+NativeTensor *alloc_tensor_view(NativeTensor *base, int ndim, const int *shape,
+                                const int *strides);
 NativeTensor *get_tensor(ErlNifEnv *env, ERL_NIF_TERM term);
 ERL_NIF_TERM make_tensor_term(ErlNifEnv *env, NativeTensor *t);
+int tensor_is_contiguous(const NativeTensor *t);
+int tensor_storage_index(const NativeTensor *t, int logical_index);
+double tensor_get_flat(const NativeTensor *t, int logical_index);
 
 /* =========================================================================
  * QuantInt8Tensor - INT8 quantized (4x compression)
@@ -595,6 +602,7 @@ NIF_FUNC_DECL(nt_from_list);
 NIF_FUNC_DECL(nt_to_list);
 NIF_FUNC_DECL(nt_shape);
 NIF_FUNC_DECL(nt_size);
+NIF_FUNC_DECL(nt_broadcast_to);
 
 /* nif_cpu_ops.c — element-wise, reductions, matmul, activations, in-place, fused */
 NIF_FUNC_DECL(nt_add);
@@ -618,6 +626,11 @@ NIF_FUNC_DECL(nt_add_mut);
 NIF_FUNC_DECL(nt_scale_mut);
 NIF_FUNC_DECL(nt_negate_mut);
 NIF_FUNC_DECL(nt_relu_mut);
+NIF_FUNC_DECL(nt_add_into);
+NIF_FUNC_DECL(nt_sub_into);
+NIF_FUNC_DECL(nt_mul_into);
+NIF_FUNC_DECL(nt_scale_into);
+NIF_FUNC_DECL(nt_fused_linear_relu_into);
 NIF_FUNC_DECL(nt_saturn_blend);
 NIF_FUNC_DECL(nt_fused_linear_relu_nif);
 #ifndef _WIN32

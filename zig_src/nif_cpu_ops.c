@@ -17,6 +17,52 @@
 
 #include "viva_nif.h"
 
+static void nt_binary_elementwise(const NativeTensor *a, const NativeTensor *b,
+                                  NativeTensor *c,
+                                  double (*op)(double, double)) {
+  if (tensor_is_contiguous(a) && tensor_is_contiguous(b)) {
+    for (int i = 0; i < a->size; i++)
+      c->data[i] = op(a->data[a->offset + i], b->data[b->offset + i]);
+    return;
+  }
+
+  for (int i = 0; i < a->size; i++)
+    c->data[i] = op(tensor_get_flat(a, i), tensor_get_flat(b, i));
+}
+
+static double op_add(double a, double b) { return a + b; }
+static double op_sub(double a, double b) { return a - b; }
+static double op_mul(double a, double b) { return a * b; }
+
+static int nt_can_write_into(const NativeTensor *out) {
+  return out && out->owns_data && tensor_is_contiguous(out);
+}
+
+static void nt_unary_elementwise(const NativeTensor *a, NativeTensor *c,
+                                 double (*op)(double)) {
+  if (tensor_is_contiguous(a)) {
+    for (int i = 0; i < a->size; i++)
+      c->data[i] = op(a->data[a->offset + i]);
+    return;
+  }
+
+  for (int i = 0; i < a->size; i++)
+    c->data[i] = op(tensor_get_flat(a, i));
+}
+
+static double op_negate(double x) { return -x; }
+static double op_relu(double x) { return x > 0.0 ? x : 0.0; }
+static double op_sigmoid(double x) { return 1.0 / (1.0 + exp(-x)); }
+static double op_exp(double x) { return exp(x); }
+static double op_log(double x) { return log(x); }
+
+static ERL_NIF_TERM fused_linear_relu_into_checked(ErlNifEnv *env,
+                                                  NativeTensor *out,
+                                                  NativeTensor *a,
+                                                  NativeTensor *b,
+                                                  NativeTensor *bias,
+                                                  int m, int n, int k);
+
 /* =========================================================================
  * NIF Resource API — Element-wise Operations (resource → resource)
  * ========================================================================= */
@@ -29,6 +75,10 @@ ERL_NIF_TERM nt_add(ErlNifEnv *env, int argc,
   NativeTensor *b = get_tensor(env, argv[1]);
   if (!a || !b)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
   if (a->size != b->size)
     return make_error(env, "size_mismatch");
 
@@ -36,7 +86,10 @@ ERL_NIF_TERM nt_add(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_add(a->data, b->data, c->data, a->size);
+  if (tensor_is_contiguous(a) && tensor_is_contiguous(b))
+    vt_simd_add(a->data + a->offset, b->data + b->offset, c->data, a->size);
+  else
+    nt_binary_elementwise(a, b, c, op_add);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -55,7 +108,10 @@ ERL_NIF_TERM nt_sub(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_sub(a->data, b->data, c->data, a->size);
+  if (tensor_is_contiguous(a) && tensor_is_contiguous(b))
+    vt_simd_sub(a->data + a->offset, b->data + b->offset, c->data, a->size);
+  else
+    nt_binary_elementwise(a, b, c, op_sub);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -74,7 +130,10 @@ ERL_NIF_TERM nt_mul(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_mul(a->data, b->data, c->data, a->size);
+  if (tensor_is_contiguous(a) && tensor_is_contiguous(b))
+    vt_simd_mul(a->data + a->offset, b->data + b->offset, c->data, a->size);
+  else
+    nt_binary_elementwise(a, b, c, op_mul);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -94,7 +153,12 @@ ERL_NIF_TERM nt_scale(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_scale(a->data, scalar, c->data, a->size);
+  if (tensor_is_contiguous(a)) {
+    vt_simd_scale(a->data + a->offset, scalar, c->data, a->size);
+  } else {
+    for (int i = 0; i < a->size; i++)
+      c->data[i] = tensor_get_flat(a, i) * scalar;
+  }
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -110,7 +174,10 @@ ERL_NIF_TERM nt_negate(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_negate(a->data, c->data, a->size);
+  if (tensor_is_contiguous(a))
+    vt_simd_negate(a->data + a->offset, c->data, a->size);
+  else
+    nt_unary_elementwise(a, c, op_negate);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -129,7 +196,14 @@ ERL_NIF_TERM nt_dot(ErlNifEnv *env, int argc,
   if (a->size != b->size)
     return make_error(env, "size_mismatch");
 
-  double result = vt_simd_dot(a->data, b->data, a->size);
+  double result;
+  if (tensor_is_contiguous(a) && tensor_is_contiguous(b)) {
+    result = vt_simd_dot(a->data + a->offset, b->data + b->offset, a->size);
+  } else {
+    result = 0.0;
+    for (int i = 0; i < a->size; i++)
+      result += tensor_get_flat(a, i) * tensor_get_flat(b, i);
+  }
   return make_ok(env, enif_make_double(env, result));
 }
 
@@ -141,7 +215,14 @@ ERL_NIF_TERM nt_sum(ErlNifEnv *env, int argc,
   if (!a)
     return make_error(env, "invalid_tensor");
 
-  double result = vt_simd_sum(a->data, a->size);
+  double result;
+  if (tensor_is_contiguous(a)) {
+    result = vt_simd_sum(a->data + a->offset, a->size);
+  } else {
+    result = 0.0;
+    for (int i = 0; i < a->size; i++)
+      result += tensor_get_flat(a, i);
+  }
   return make_ok(env, enif_make_double(env, result));
 }
 
@@ -153,7 +234,17 @@ ERL_NIF_TERM nt_max(ErlNifEnv *env, int argc,
   if (!a)
     return make_error(env, "invalid_tensor");
 
-  double mx = vt_simd_max(a->data, a->size);
+  double mx;
+  if (tensor_is_contiguous(a)) {
+    mx = vt_simd_max(a->data + a->offset, a->size);
+  } else {
+    mx = tensor_get_flat(a, 0);
+    for (int i = 1; i < a->size; i++) {
+      double v = tensor_get_flat(a, i);
+      if (v > mx)
+        mx = v;
+    }
+  }
   return make_ok(env, enif_make_double(env, mx));
 }
 
@@ -165,7 +256,17 @@ ERL_NIF_TERM nt_min(ErlNifEnv *env, int argc,
   if (!a)
     return make_error(env, "invalid_tensor");
 
-  double mn = vt_simd_min(a->data, a->size);
+  double mn;
+  if (tensor_is_contiguous(a)) {
+    mn = vt_simd_min(a->data + a->offset, a->size);
+  } else {
+    mn = tensor_get_flat(a, 0);
+    for (int i = 1; i < a->size; i++) {
+      double v = tensor_get_flat(a, i);
+      if (v < mn)
+        mn = v;
+    }
+  }
   return make_ok(env, enif_make_double(env, mn));
 }
 
@@ -215,15 +316,15 @@ ERL_NIF_TERM nt_matmul_blas(ErlNifEnv *env, int argc,
   /* MKL direct-linked DGEMM */
   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
               (int)m, (int)n, (int)k,
-              1.0, a->data, (int)k,
-              b->data, (int)n,
+              1.0, a->data + a->offset, (int)k,
+              b->data + b->offset, (int)n,
               0.0, c->data, (int)n);
 #else
   /* Fallback: use dynamically loaded backend */
   if (g_dgemm) {
     blas_dgemm((int)m, (int)n, (int)k,
-               1.0, a->data, (int)k,
-               b->data, (int)n,
+               1.0, a->data + a->offset, (int)k,
+               b->data + b->offset, (int)n,
                0.0, c->data, (int)n);
   } else {
     /* No BLAS available - return error */
@@ -248,6 +349,9 @@ ERL_NIF_TERM nt_matmul_inplace(ErlNifEnv *env, int argc,
   NativeTensor *c = get_tensor(env, argv[2]);
   if (!a || !b || !c)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b) ||
+      !tensor_is_contiguous(c))
+    return make_error(env, "non_contiguous");
 
   int m_int, n_int, k_int;
   if (!enif_get_int(env, argv[3], &m_int) ||
@@ -262,21 +366,21 @@ ERL_NIF_TERM nt_matmul_inplace(ErlNifEnv *env, int argc,
 #if defined(_WIN32) || defined(USE_MKL_DIRECT)
   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
               (int)m, (int)n, (int)k,
-              1.0, a->data, (int)k,
-              b->data, (int)n,
+              1.0, a->data + a->offset, (int)k,
+              b->data + b->offset, (int)n,
               0.0, c->data, (int)n);
 #else
   if (g_dgemm) {
     blas_dgemm((int)m, (int)n, (int)k,
-               1.0, a->data, (int)k,
-               b->data, (int)n,
+               1.0, a->data + a->offset, (int)k,
+               b->data + b->offset, (int)n,
                0.0, c->data, (int)n);
   } else {
     return make_error(env, "no_blas_backend");
   }
 #endif
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /* All CUDA externs are in viva_nif.h (included above) */
@@ -291,6 +395,8 @@ ERL_NIF_TERM nt_matmul_cuda(ErlNifEnv *env, int argc,
   NativeTensor *b = get_tensor(env, argv[1]);
   if (!a || !b)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
 
   int m_int, n_int, k_int;
   if (!enif_get_int(env, argv[2], &m_int) ||
@@ -311,8 +417,8 @@ ERL_NIF_TERM nt_matmul_cuda(ErlNifEnv *env, int argc,
   /* Try CUDA/cuBLAS first */
   if (cuda_available()) {
     int result = cuda_dgemm(m_int, n_int, k_int,
-                            1.0, a->data, k_int,
-                            b->data, n_int,
+                            1.0, a->data + a->offset, k_int,
+                            b->data + b->offset, n_int,
                             0.0, c->data, n_int);
     if (result == 0) {
       return make_ok(env, make_tensor_term(env, c));
@@ -326,14 +432,14 @@ ERL_NIF_TERM nt_matmul_cuda(ErlNifEnv *env, int argc,
 #if defined(_WIN32) || defined(USE_MKL_DIRECT)
   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
               (int)m, (int)n, (int)k,
-              1.0, a->data, (int)k,
-              b->data, (int)n,
+              1.0, a->data + a->offset, (int)k,
+              b->data + b->offset, (int)n,
               0.0, c->data, (int)n);
 #else
   if (g_dgemm) {
     blas_dgemm((int)m, (int)n, (int)k,
-               1.0, a->data, (int)k,
-               b->data, (int)n,
+               1.0, a->data + a->offset, (int)k,
+               b->data + b->offset, (int)n,
                0.0, c->data, (int)n);
   } else {
     free(c->data);
@@ -385,8 +491,8 @@ ERL_NIF_TERM nt_matmul_cuda_fp32(ErlNifEnv *env, int argc,
   }
 
   /* Convert double -> float (vectorizable, fast) */
-  for (size_t i = 0; i < size_a; i++) a_f32[i] = (float)a->data[i];
-  for (size_t i = 0; i < size_b; i++) b_f32[i] = (float)b->data[i];
+  for (size_t i = 0; i < size_a; i++) a_f32[i] = (float)a->data[a->offset + i];
+  for (size_t i = 0; i < size_b; i++) b_f32[i] = (float)b->data[b->offset + i];
 
   /* cuBLAS SGEMM (TF32 Tensor Cores) */
   int result = cuda_sgemm(m_int, n_int, k_int,
@@ -424,6 +530,8 @@ ERL_NIF_TERM nt_matmul_int8_tc(ErlNifEnv *env, int argc,
   NativeTensor *b = get_tensor(env, argv[1]);
   if (!a || !b)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
 
   int m_int, n_int, k_int;
   if (!enif_get_int(env, argv[2], &m_int) ||
@@ -455,11 +563,11 @@ ERL_NIF_TERM nt_matmul_int8_tc(ErlNifEnv *env, int argc,
   /* Find absmax for quantization */
   double a_max = 0.0, b_max = 0.0;
   for (size_t i = 0; i < size_a; i++) {
-    double v = fabs(a->data[i]);
+    double v = fabs(a->data[a->offset + i]);
     if (v > a_max) a_max = v;
   }
   for (size_t i = 0; i < size_b; i++) {
-    double v = fabs(b->data[i]);
+    double v = fabs(b->data[b->offset + i]);
     if (v > b_max) b_max = v;
   }
 
@@ -468,11 +576,11 @@ ERL_NIF_TERM nt_matmul_int8_tc(ErlNifEnv *env, int argc,
   double b_scale = (b_max > 0) ? 127.0 / b_max : 1.0;
 
   for (size_t i = 0; i < size_a; i++) {
-    double scaled = a->data[i] * a_scale;
+    double scaled = a->data[a->offset + i] * a_scale;
     a_i8[i] = (int8_t)(scaled > 127.0 ? 127 : (scaled < -127.0 ? -127 : scaled));
   }
   for (size_t i = 0; i < size_b; i++) {
-    double scaled = b->data[i] * b_scale;
+    double scaled = b->data[b->offset + i] * b_scale;
     b_i8[i] = (int8_t)(scaled > 127.0 ? 127 : (scaled < -127.0 ? -127 : scaled));
   }
 
@@ -554,6 +662,8 @@ ERL_NIF_TERM nt_matmul_fp16_tc(ErlNifEnv *env, int argc,
   NativeTensor *b = get_tensor(env, argv[1]);
   if (!a || !b)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
 
   int m_int, n_int, k_int;
   if (!enif_get_int(env, argv[2], &m_int) ||
@@ -584,10 +694,10 @@ ERL_NIF_TERM nt_matmul_fp16_tc(ErlNifEnv *env, int argc,
 
   /* Convert f64 -> FP16 */
   for (size_t i = 0; i < size_a; i++) {
-    a_fp16[i] = float_to_half((float)a->data[i]);
+    a_fp16[i] = float_to_half((float)a->data[a->offset + i]);
   }
   for (size_t i = 0; i < size_b; i++) {
-    b_fp16[i] = float_to_half((float)b->data[i]);
+    b_fp16[i] = float_to_half((float)b->data[b->offset + i]);
   }
 
   /* cuBLAS FP16 GEMM (Tensor Cores) */
@@ -638,6 +748,8 @@ ERL_NIF_TERM nt_matmul_int8_lt(ErlNifEnv *env, int argc,
   NativeTensor *b = get_tensor(env, argv[1]);
   if (!a || !b)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b))
+    return make_error(env, "non_contiguous");
 
   int m_int, n_int, k_int;
   if (!enif_get_int(env, argv[2], &m_int) ||
@@ -669,11 +781,11 @@ ERL_NIF_TERM nt_matmul_int8_lt(ErlNifEnv *env, int argc,
   /* Find absmax for quantization */
   double a_max = 0.0, b_max = 0.0;
   for (size_t i = 0; i < size_a; i++) {
-    double v = fabs(a->data[i]);
+    double v = fabs(a->data[a->offset + i]);
     if (v > a_max) a_max = v;
   }
   for (size_t i = 0; i < size_b; i++) {
-    double v = fabs(b->data[i]);
+    double v = fabs(b->data[b->offset + i]);
     if (v > b_max) b_max = v;
   }
 
@@ -682,11 +794,11 @@ ERL_NIF_TERM nt_matmul_int8_lt(ErlNifEnv *env, int argc,
   double b_scale = (b_max > 0) ? 127.0 / b_max : 1.0;
 
   for (size_t i = 0; i < size_a; i++) {
-    double scaled = a->data[i] * a_scale;
+    double scaled = a->data[a->offset + i] * a_scale;
     a_i8[i] = (int8_t)(scaled > 127.0 ? 127 : (scaled < -127.0 ? -127 : scaled));
   }
   for (size_t i = 0; i < size_b; i++) {
-    double scaled = b->data[i] * b_scale;
+    double scaled = b->data[b->offset + i] * b_scale;
     b_i8[i] = (int8_t)(scaled > 127.0 ? 127 : (scaled < -127.0 ? -127 : scaled));
   }
 
@@ -749,7 +861,7 @@ ERL_NIF_TERM nt_transpose(ErlNifEnv *env, int argc,
 
   for (int i = 0; i < rows; i++)
     for (int j = 0; j < cols; j++)
-      c->data[j * rows + i] = a->data[i * cols + j];
+      c->data[j * rows + i] = tensor_get_flat(a, i * cols + j);
 
   return make_ok(env, make_tensor_term(env, c));
 }
@@ -770,7 +882,10 @@ ERL_NIF_TERM nt_relu(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_relu(a->data, c->data, a->size);
+  if (tensor_is_contiguous(a))
+    vt_simd_relu(a->data + a->offset, c->data, a->size);
+  else
+    nt_unary_elementwise(a, c, op_relu);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -786,7 +901,10 @@ ERL_NIF_TERM nt_sigmoid(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_sigmoid(a->data, c->data, (size_t)a->size);
+  if (tensor_is_contiguous(a))
+    vt_simd_sigmoid(a->data + a->offset, c->data, (size_t)a->size);
+  else
+    nt_unary_elementwise(a, c, op_sigmoid);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -802,7 +920,10 @@ ERL_NIF_TERM nt_exp_nif(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_exp(a->data, c->data, (size_t)a->size);
+  if (tensor_is_contiguous(a))
+    vt_simd_exp(a->data + a->offset, c->data, (size_t)a->size);
+  else
+    nt_unary_elementwise(a, c, op_exp);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -818,7 +939,10 @@ ERL_NIF_TERM nt_log_nif(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_simd_log(a->data, c->data, (size_t)a->size);
+  if (tensor_is_contiguous(a))
+    vt_simd_log(a->data + a->offset, c->data, (size_t)a->size);
+  else
+    nt_unary_elementwise(a, c, op_log);
   return make_ok(env, make_tensor_term(env, c));
 }
 
@@ -837,9 +961,11 @@ ERL_NIF_TERM nt_add_mut(ErlNifEnv *env, int argc,
     return make_error(env, "invalid_tensor");
   if (a->size != b->size)
     return make_error(env, "size_mismatch");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b) || !a->owns_data)
+    return make_error(env, "non_contiguous");
 
-  vt_simd_add_mut(a->data, b->data, (size_t)a->size);
-  return enif_make_atom(env, "ok");
+  vt_simd_add_mut(a->data + a->offset, b->data + b->offset, (size_t)a->size);
+  return make_ok_nil(env);
 }
 
 /** nt_scale_mut(RefA, Scalar) -> ok. Modifies A in-place: A *= scalar */
@@ -849,13 +975,15 @@ ERL_NIF_TERM nt_scale_mut(ErlNifEnv *env, int argc,
   NativeTensor *a = get_tensor(env, argv[0]);
   if (!a)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !a->owns_data)
+    return make_error(env, "non_contiguous");
 
   double scalar;
   if (!enif_get_double(env, argv[1], &scalar))
     return make_error(env, "invalid_scalar");
 
-  vt_simd_scale_mut(a->data, scalar, (size_t)a->size);
-  return enif_make_atom(env, "ok");
+  vt_simd_scale_mut(a->data + a->offset, scalar, (size_t)a->size);
+  return make_ok_nil(env);
 }
 
 /** nt_negate_mut(RefA) -> ok. Modifies A in-place: A = -A */
@@ -865,9 +993,11 @@ ERL_NIF_TERM nt_negate_mut(ErlNifEnv *env, int argc,
   NativeTensor *a = get_tensor(env, argv[0]);
   if (!a)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !a->owns_data)
+    return make_error(env, "non_contiguous");
 
-  vt_simd_negate_mut(a->data, (size_t)a->size);
-  return enif_make_atom(env, "ok");
+  vt_simd_negate_mut(a->data + a->offset, (size_t)a->size);
+  return make_ok_nil(env);
 }
 
 /** nt_relu_mut(RefA) -> ok. Modifies A in-place: A = max(0, A) */
@@ -877,9 +1007,77 @@ ERL_NIF_TERM nt_relu_mut(ErlNifEnv *env, int argc,
   NativeTensor *a = get_tensor(env, argv[0]);
   if (!a)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !a->owns_data)
+    return make_error(env, "non_contiguous");
 
-  vt_simd_relu_mut(a->data, (size_t)a->size);
-  return enif_make_atom(env, "ok");
+  vt_simd_relu_mut(a->data + a->offset, (size_t)a->size);
+  return make_ok_nil(env);
+}
+
+static ERL_NIF_TERM nt_binary_into(ErlNifEnv *env,
+                                   const ERL_NIF_TERM argv[],
+                                   double (*op)(double, double)) {
+  NativeTensor *out = get_tensor(env, argv[0]);
+  NativeTensor *a = get_tensor(env, argv[1]);
+  NativeTensor *b = get_tensor(env, argv[2]);
+  if (!out || !a || !b)
+    return make_error(env, "invalid_tensor");
+  if (!nt_can_write_into(out))
+    return make_error(env, "invalid_output");
+  if (out->size != a->size || a->size != b->size)
+    return make_error(env, "size_mismatch");
+
+  nt_binary_elementwise(a, b, out, op);
+  return make_ok_nil(env);
+}
+
+/** nt_add_into(Out, A, B) -> {ok, nil}. Writes Out = A + B. */
+ERL_NIF_TERM nt_add_into(ErlNifEnv *env, int argc,
+                                const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_into(env, argv, op_add);
+}
+
+/** nt_sub_into(Out, A, B) -> {ok, nil}. Writes Out = A - B. */
+ERL_NIF_TERM nt_sub_into(ErlNifEnv *env, int argc,
+                                const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_into(env, argv, op_sub);
+}
+
+/** nt_mul_into(Out, A, B) -> {ok, nil}. Writes Out = A * B. */
+ERL_NIF_TERM nt_mul_into(ErlNifEnv *env, int argc,
+                                const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_into(env, argv, op_mul);
+}
+
+/** nt_scale_into(Out, A, Scalar) -> {ok, nil}. Writes Out = A * Scalar. */
+ERL_NIF_TERM nt_scale_into(ErlNifEnv *env, int argc,
+                                  const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  NativeTensor *out = get_tensor(env, argv[0]);
+  NativeTensor *a = get_tensor(env, argv[1]);
+  if (!out || !a)
+    return make_error(env, "invalid_tensor");
+  if (!nt_can_write_into(out))
+    return make_error(env, "invalid_output");
+  if (out->size != a->size)
+    return make_error(env, "size_mismatch");
+
+  int ok;
+  double scalar = get_number(env, argv[2], &ok);
+  if (!ok)
+    return make_error(env, "invalid_scalar");
+
+  if (tensor_is_contiguous(a)) {
+    vt_simd_scale(a->data + a->offset, scalar, out->data + out->offset,
+                  (size_t)a->size);
+  } else {
+    for (int i = 0; i < a->size; i++)
+      out->data[out->offset + i] = tensor_get_flat(a, i) * scalar;
+  }
+  return make_ok_nil(env);
 }
 
 /* =========================================================================
@@ -897,6 +1095,8 @@ ERL_NIF_TERM nt_saturn_blend(ErlNifEnv *env, int argc,
     return make_error(env, "invalid_tensor");
   if (texture->size != shade->size)
     return make_error(env, "size_mismatch");
+  if (!tensor_is_contiguous(texture) || !tensor_is_contiguous(shade))
+    return make_error(env, "non_contiguous");
 
   double bias;
   if (!enif_get_double(env, argv[2], &bias))
@@ -906,7 +1106,7 @@ ERL_NIF_TERM nt_saturn_blend(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  vt_saturn_blend(texture->data, shade->data, bias, c->data,
+  vt_saturn_blend(texture->data + texture->offset, shade->data + shade->offset, bias, c->data,
                   (size_t)texture->size);
   return make_ok(env, make_tensor_term(env, c));
 }
@@ -922,6 +1122,9 @@ ERL_NIF_TERM nt_fused_linear_relu_nif(ErlNifEnv *env, int argc,
   NativeTensor *bias = get_tensor(env, argv[2]);
   if (!a || !b || !bias)
     return make_error(env, "invalid_tensor");
+  if (!tensor_is_contiguous(a) || !tensor_is_contiguous(b) ||
+      !tensor_is_contiguous(bias))
+    return make_error(env, "non_contiguous");
 
   int m, n, k;
   if (!enif_get_int(env, argv[3], &m) || !enif_get_int(env, argv[4], &n) ||
@@ -936,25 +1139,66 @@ ERL_NIF_TERM nt_fused_linear_relu_nif(ErlNifEnv *env, int argc,
   if (!c)
     return make_error(env, "out_of_memory");
 
-  /* Step 1: C = A @ B via BLAS */
+  ERL_NIF_TERM result =
+      fused_linear_relu_into_checked(env, c, a, b, bias, m, n, k);
+  if (!enif_is_identical(result, make_ok_nil(env)))
+    return result;
+
+  return make_ok(env, make_tensor_term(env, c));
+}
+
+static ERL_NIF_TERM fused_linear_relu_into_checked(ErlNifEnv *env,
+                                                  NativeTensor *out,
+                                                  NativeTensor *a,
+                                                  NativeTensor *b,
+                                                  NativeTensor *bias,
+                                                  int m, int n, int k) {
+  if (!out || !a || !b || !bias)
+    return make_error(env, "invalid_tensor");
+  if (!nt_can_write_into(out) || !tensor_is_contiguous(a) ||
+      !tensor_is_contiguous(b) || !tensor_is_contiguous(bias))
+    return make_error(env, "non_contiguous");
+  if (a->size != m * k || b->size != k * n || bias->size != n ||
+      out->size != m * n)
+    return make_error(env, "shape_mismatch");
+
+  /* Step 1: out = A @ B via BLAS */
 #if defined(_WIN32) || defined(USE_MKL_DIRECT)
   cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-              m, n, k, 1.0, a->data, k, b->data, n, 0.0, c->data, n);
+              m, n, k, 1.0, a->data + a->offset, k,
+              b->data + b->offset, n, 0.0, out->data + out->offset, n);
 #else
   if (g_dgemm) {
-    blas_dgemm(m, n, k, 1.0, a->data, k, b->data, n, 0.0, c->data, n);
+    blas_dgemm(m, n, k, 1.0, a->data + a->offset, k,
+               b->data + b->offset, n, 0.0, out->data + out->offset, n);
   } else {
-    free(c->data);
-    free(c);
     return make_error(env, "no_blas_backend");
   }
 #endif
 
-  /* Step 2: C[i,j] += bias[j] for each row, then ReLU in-place */
+  /* Step 2: out[i,j] += bias[j] for each row, then ReLU in-place */
   for (int i = 0; i < m; i++) {
-    vt_simd_add(c->data + i * n, bias->data, c->data + i * n, (size_t)n);
+    double *row = out->data + out->offset + i * n;
+    vt_simd_add(row, bias->data + bias->offset, row, (size_t)n);
   }
-  vt_simd_relu_mut(c->data, (size_t)(m * n));
+  vt_simd_relu_mut(out->data + out->offset, (size_t)(m * n));
 
-  return make_ok(env, make_tensor_term(env, c));
+  return make_ok_nil(env);
+}
+
+/** nt_fused_linear_relu_into(Out, A, B, Bias, M, N, K) -> {ok, nil} */
+ERL_NIF_TERM nt_fused_linear_relu_into(ErlNifEnv *env, int argc,
+                                              const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  NativeTensor *out = get_tensor(env, argv[0]);
+  NativeTensor *a = get_tensor(env, argv[1]);
+  NativeTensor *b = get_tensor(env, argv[2]);
+  NativeTensor *bias = get_tensor(env, argv[3]);
+
+  int m, n, k;
+  if (!enif_get_int(env, argv[4], &m) || !enif_get_int(env, argv[5], &n) ||
+      !enif_get_int(env, argv[6], &k))
+    return make_error(env, "invalid_dims");
+
+  return fused_linear_relu_into_checked(env, out, a, b, bias, m, n, k);
 }
