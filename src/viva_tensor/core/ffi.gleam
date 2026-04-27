@@ -1307,7 +1307,7 @@ pub fn ct16_matmul(
   m: Int,
   n: Int,
   k: Int,
-) -> Result(CudaTensor16Ref, String)
+) -> Result(CudaTensorRef, String)
 
 // =============================================================================
 // CudaInt8Tensor - INT8 IMMA Tensor Cores (660 TOPS)
