@@ -1352,6 +1352,28 @@ pub fn ct16_matmul_fused_gelu(
   k: Int,
 ) -> Result(Nil, String)
 
+@external(erlang, "viva_tensor_zig", "ct16_linear_relu")
+pub fn ct16_linear_relu(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  bias: CudaTensor16Ref,
+  out: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "ct16_linear_gelu")
+pub fn ct16_linear_gelu(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  bias: CudaTensor16Ref,
+  out: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
+
 // =============================================================================
 // CudaInt8Tensor - INT8 IMMA Tensor Cores (660 TOPS)
 // =============================================================================
