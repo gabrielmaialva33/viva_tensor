@@ -1279,6 +1279,19 @@ pub fn ct_matmul(
   k: Int,
 ) -> Result(CudaTensorRef, String)
 
+@external(erlang, "viva_tensor_zig", "ct_matmul_inplace")
+pub fn ct_matmul_inplace(
+  a: CudaTensorRef,
+  b: CudaTensorRef,
+  out: CudaTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "cuda_sync")
+pub fn cuda_sync() -> Result(Nil, String)
+
 // =============================================================================
 // CudaTensor16 - FP16 Tensor Cores (330 TFLOPS)
 // =============================================================================
@@ -1308,6 +1321,36 @@ pub fn ct16_matmul(
   n: Int,
   k: Int,
 ) -> Result(CudaTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "ct16_matmul_inplace")
+pub fn ct16_matmul_inplace(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  out: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "ct16_matmul_fused_relu")
+pub fn ct16_matmul_fused_relu(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  out: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
+
+@external(erlang, "viva_tensor_zig", "ct16_matmul_fused_gelu")
+pub fn ct16_matmul_fused_gelu(
+  a: CudaTensor16Ref,
+  b: CudaTensor16Ref,
+  out: CudaTensor16Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, String)
 
 // =============================================================================
 // CudaInt8Tensor - INT8 IMMA Tensor Cores (660 TOPS)
