@@ -115,6 +115,159 @@ pub type AcceleratedTensor {
   Cpu(tensor: tensor.Tensor, backend: AccelerationBackend)
 }
 
+/// Workspace for persistent GPU buffers.
+///
+/// It centralizes the chosen GPU precision so callers can allocate reusable
+/// output buffers without manually uploading zeros every time.
+pub type GpuWorkspace {
+  GpuWorkspace(backend: AccelerationBackend)
+}
+
+/// Persisted linear layer parameters.
+///
+/// `weight` has shape `[input_features, output_features]` and `bias` has shape
+/// `[output_features]`.
+pub type LinearLayer {
+  LinearLayer(
+    weight: AcceleratedTensor,
+    bias: AcceleratedTensor,
+    input_features: Int,
+    output_features: Int,
+    backend: AccelerationBackend,
+  )
+}
+
+/// Create an RTX 4090 FP16 workspace.
+pub fn gpu_workspace() -> Result(GpuWorkspace, tensor.TensorError) {
+  case ffi.zig_is_loaded() && ffi.ct16_available() {
+    True -> Ok(GpuWorkspace(backend: Rtx4090Fp16))
+    False -> Error(DimensionError("CUDA FP16 backend is not available"))
+  }
+}
+
+/// Allocate a reusable zero-filled output buffer in workspace memory.
+pub fn workspace_zeros(
+  workspace: GpuWorkspace,
+  shape: List(Int),
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case workspace {
+    GpuWorkspace(Rtx4090Fp16) -> to_rtx4090_fp16(tensor.zeros(shape))
+    GpuWorkspace(Rtx4090Fp32) -> to_rtx4090_fp32(tensor.zeros(shape))
+    GpuWorkspace(MklNative) -> tensor.native_zeros(shape) |> result.map(to_mkl)
+    GpuWorkspace(CpuFallback) ->
+      Ok(Cpu(tensor: tensor.zeros(shape), backend: CpuFallback))
+  }
+}
+
+/// Move a tensor into workspace memory.
+pub fn workspace_from_tensor(
+  workspace: GpuWorkspace,
+  t: tensor.Tensor,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case workspace {
+    GpuWorkspace(Rtx4090Fp16) -> to_rtx4090_fp16(t)
+    GpuWorkspace(Rtx4090Fp32) -> to_rtx4090_fp32(t)
+    GpuWorkspace(MklNative) -> {
+      let shape = tensor.shape(t)
+      tensor.native_from_list(tensor.to_list(t), shape)
+      |> result.map(to_mkl)
+    }
+    GpuWorkspace(CpuFallback) -> Ok(Cpu(tensor: t, backend: CpuFallback))
+  }
+}
+
+/// Create a persisted FP16 linear layer on the RTX.
+pub fn linear_layer_fp16(
+  weight: tensor.Tensor,
+  bias: tensor.Tensor,
+) -> Result(LinearLayer, tensor.TensorError) {
+  use workspace <- result.try(gpu_workspace())
+  linear_layer(workspace, weight, bias)
+}
+
+/// Create a persisted linear layer in workspace memory.
+pub fn linear_layer(
+  workspace: GpuWorkspace,
+  weight: tensor.Tensor,
+  bias: tensor.Tensor,
+) -> Result(LinearLayer, tensor.TensorError) {
+  case tensor.shape(weight), tensor.shape(bias) {
+    [input_features, output_features], [bias_features]
+      if output_features == bias_features
+    -> {
+      use weight_acc <- result.try(workspace_from_tensor(workspace, weight))
+      use bias_acc <- result.try(workspace_from_tensor(workspace, bias))
+      Ok(LinearLayer(
+        weight: weight_acc,
+        bias: bias_acc,
+        input_features: input_features,
+        output_features: output_features,
+        backend: workspace_backend(workspace),
+      ))
+    }
+
+    [_input_features, output_features], [bias_features] ->
+      Error(ShapeMismatch(expected: [output_features], got: [bias_features]))
+
+    _, _ -> Error(DimensionError("Expected weight matrix and bias vector"))
+  }
+}
+
+/// Allocate a reusable output buffer for a persisted linear layer.
+pub fn linear_output(
+  workspace: GpuWorkspace,
+  layer: LinearLayer,
+  batch_size: Int,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  workspace_zeros(workspace, [batch_size, linear_layer_output_features(layer)])
+}
+
+/// Run `out = relu(input @ layer.weight + layer.bias)`.
+pub fn linear_relu_forward_into(
+  out: AcceleratedTensor,
+  input: AcceleratedTensor,
+  layer: LinearLayer,
+) -> Result(Nil, tensor.TensorError) {
+  linear_forward_into(out, input, layer, "relu")
+}
+
+/// Run `out = gelu(input @ layer.weight + layer.bias)`.
+pub fn linear_gelu_forward_into(
+  out: AcceleratedTensor,
+  input: AcceleratedTensor,
+  layer: LinearLayer,
+) -> Result(Nil, tensor.TensorError) {
+  linear_forward_into(out, input, layer, "gelu")
+}
+
+/// Workspace backend.
+pub fn workspace_backend(workspace: GpuWorkspace) -> AccelerationBackend {
+  case workspace {
+    GpuWorkspace(backend) -> backend
+  }
+}
+
+/// Linear layer backend.
+pub fn linear_layer_backend(layer: LinearLayer) -> AccelerationBackend {
+  case layer {
+    LinearLayer(_, _, _, _, backend) -> backend
+  }
+}
+
+/// Linear layer input feature count.
+pub fn linear_layer_input_features(layer: LinearLayer) -> Int {
+  case layer {
+    LinearLayer(_, _, input_features, _, _) -> input_features
+  }
+}
+
+/// Linear layer output feature count.
+pub fn linear_layer_output_features(layer: LinearLayer) -> Int {
+  case layer {
+    LinearLayer(_, _, _, output_features, _) -> output_features
+  }
+}
+
 /// Move a CPU tensor to the best persistent backend: RTX 4090 FP16, RTX 4090
 /// FP32, MKL/native CPU, then plain CPU.
 pub fn to_accelerated(
@@ -463,6 +616,40 @@ fn fused_linear_accelerated_into_checked(
     _, _, _, _ ->
       Error(DimensionError("Fused linear activation requires matching backends"))
   }
+}
+
+fn linear_forward_into(
+  out: AcceleratedTensor,
+  input: AcceleratedTensor,
+  layer: LinearLayer,
+  activation: String,
+) -> Result(Nil, tensor.TensorError) {
+  case layer {
+    LinearLayer(weight, bias, input_features, output_features, _backend) -> {
+      case accelerated_shape(input), accelerated_shape(out) {
+        [batch_size, got_input], [out_batch, got_output]
+          if got_input == input_features
+          && out_batch == batch_size
+          && got_output == output_features
+        -> {
+          case activation {
+            "relu" -> linear_relu_accelerated_into(out, input, weight, bias)
+            "gelu" -> linear_gelu_accelerated_into(out, input, weight, bias)
+            _ -> Error(DimensionError("Unsupported activation"))
+          }
+        }
+
+        [_batch_size, got_input], [_out_batch, _got_output] ->
+          Error(ShapeMismatch(expected: [input_features], got: [got_input]))
+
+        _, _ -> Error(DimensionError("Expected input and output matrices"))
+      }
+    }
+  }
+}
+
+fn to_mkl(t: tensor.Tensor) -> AcceleratedTensor {
+  Cpu(tensor: t, backend: MklNative)
 }
 
 fn try_rtx4090_fp16(
