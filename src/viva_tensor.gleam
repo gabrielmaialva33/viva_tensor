@@ -5,10 +5,10 @@
 //// element-wise math, reductions, neural-network helpers, and TFLOPS
 //// measurement utilities.
 ////
-//// Lower-level implementation modules live under internal package namespaces
-//// and are intentionally excluded from the public documentation. Prefer this
-//// module unless you need a specialised submodule such as `viva_tensor/quant`
-//// or `viva_tensor/nn/autograd`.
+//// Lower-level implementation, backend, neural-network, quantization, sparse,
+//// telemetry, and benchmark modules are intentionally excluded from the public
+//// documentation until their contracts are stable. Prefer this module as the
+//// public API surface.
 ////
 //// ```gleam
 //// import gleam/result
