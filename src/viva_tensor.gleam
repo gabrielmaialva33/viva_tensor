@@ -1,42 +1,44 @@
-//// viva_tensor - NumPy for the BEAM.
+//// High-performance tensor operations for Gleam on the BEAM.
 ////
-//// Born from the frustration of "why can't I do tensor math in Erlang/Elixir
-//// without calling Python?" Now you can.
+//// This module is the stable entry point for the package. It re-exports the
+//// tensor type, common constructors, shape operations, linear algebra,
+//// element-wise math, reductions, neural-network helpers, and TFLOPS
+//// measurement utilities.
 ////
-//// The name: "viva" = alive in Portuguese/Spanish. Tensors that live on the BEAM.
-//// Also, "viva" sounds better than "gleam_tensor" (sorry, marketing decision).
-////
-//// Architecture:
-//// - core/ = the fundamentals (tensor, ops, shape, error)
-//// - nn/ = neural network building blocks (layers, autograd, attention)
-//// - quant/ = quantization for memory efficiency (INT8, NF4, AWQ)
-//// - optim/ = hardware-specific optimizations
-////
-//// Performance tip: for matrices > 100x100, make sure the NIF is compiled.
-//// The difference is ~100-1000x. No, that's not a typo.
+//// Lower-level implementation modules live under internal package namespaces
+//// and are intentionally excluded from the public documentation. Prefer this
+//// module unless you need a specialised submodule such as `viva_tensor/quant`
+//// or `viva_tensor/nn/autograd`.
 ////
 //// ```gleam
+//// import gleam/result
 //// import viva_tensor as t
 ////
 //// let a = t.zeros([2, 3])
 //// let b = t.ones([2, 3])
-//// let assert Ok(c) = t.add(a, b)  // [2.0, 2.0, 2.0, 2.0, 2.0, 2.0]
+//// use c <- result.try(t.add(a, b))
+//// c
 //// ```
 
-// Public API - re-exports from internal modules for convenience.
-// Users can import viva_tensor and get everything they need.
-
+import viva_tensor/core/ffi
 import viva_tensor/tensor
 import viva_tensor/tflops as tflops_mod
 
 // --- Types ------------------------------------------------------------------
 
+/// A tensor value backed by dense, strided, or native storage.
 pub type Tensor =
   tensor.Tensor
 
+/// Error returned by fallible tensor constructors and operations.
 pub type TensorError =
   tensor.TensorError
 
+/// Opaque reference to a tensor stored in native NIF memory.
+pub type NativeTensorRef =
+ffi.NativeTensorRef
+
+/// Configuration for two-dimensional convolution operations.
 pub type Conv2dConfig =
   tensor.Conv2dConfig
 
@@ -79,6 +81,47 @@ pub fn matrix(
   data: List(Float),
 ) -> Result(Tensor, TensorError) {
   tensor.matrix(rows, cols, data)
+}
+
+/// Wrap an existing native NIF tensor resource.
+pub fn from_native_ref(ref: NativeTensorRef, shape: List(Int)) -> Tensor {
+  tensor.from_native_ref(ref, shape)
+}
+
+/// Extract the native NIF tensor resource when present.
+pub fn native_ref(t: Tensor) -> Result(NativeTensorRef, Nil) {
+  tensor.native_ref(t)
+}
+
+/// Check whether a tensor is backed by native NIF memory.
+pub fn is_native(t: Tensor) -> Bool {
+  tensor.is_native(t)
+}
+
+/// Create a native-backed tensor of zeros.
+pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
+  tensor.native_zeros(shape)
+}
+
+/// Create a native-backed tensor of ones.
+pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
+  tensor.native_ones(shape)
+}
+
+/// Create a native-backed tensor filled with a value.
+pub fn native_fill(
+shape: List(Int),
+value: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.native_fill(shape, value)
+}
+
+/// Create a native-backed tensor from row-major list data.
+pub fn native_from_list(
+data: List(Float),
+shape: List(Int),
+) -> Result(Tensor, TensorError) {
+  tensor.native_from_list(data, shape)
 }
 
 // --- Random -----------------------------------------------------------------
@@ -272,6 +315,14 @@ pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
   tensor.can_broadcast(a, b)
 }
 
+/// Broadcast tensor to a target shape.
+pub fn broadcast_to(
+t: Tensor,
+target_shape: List(Int),
+) -> Result(Tensor, TensorError) {
+  tensor.broadcast_to(t, target_shape)
+}
+
 /// Add with broadcasting
 pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.add_broadcast(a, b)
@@ -367,9 +418,11 @@ pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
 
 // --- TFLOPS Benchmarking ----------------------------------------------------
 
+/// Backend used when measuring matrix-multiplication throughput.
 pub type TflopsBackend =
   tflops_mod.Backend
 
+/// Result returned by TFLOPS measurement helpers.
 pub type TflopsResult =
   tflops_mod.TflopsResult
 
