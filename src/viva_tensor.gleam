@@ -36,7 +36,7 @@ pub type TensorError =
 
 /// Opaque reference to a tensor stored in native NIF memory.
 pub type NativeTensorRef =
-ffi.NativeTensorRef
+  ffi.NativeTensorRef
 
 /// Configuration for two-dimensional convolution operations.
 pub type Conv2dConfig =
@@ -110,16 +110,16 @@ pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
 
 /// Create a native-backed tensor filled with a value.
 pub fn native_fill(
-shape: List(Int),
-value: Float,
+  shape: List(Int),
+  value: Float,
 ) -> Result(Tensor, TensorError) {
   tensor.native_fill(shape, value)
 }
 
 /// Create a native-backed tensor from row-major list data.
 pub fn native_from_list(
-data: List(Float),
-shape: List(Int),
+  data: List(Float),
+  shape: List(Int),
 ) -> Result(Tensor, TensorError) {
   tensor.native_from_list(data, shape)
 }
@@ -190,9 +190,9 @@ pub fn scale(t: Tensor, s: Float) -> Tensor {
 
 /// Write out = a * scalar into a preallocated native tensor.
 pub fn scale_into(
-out: Tensor,
-a: Tensor,
-scalar: Float,
+  out: Tensor,
+  a: Tensor,
+  scalar: Float,
 ) -> Result(Nil, TensorError) {
   tensor.scale_into(out, a, scalar)
 }
@@ -204,9 +204,9 @@ pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
 
 /// Apply a binary function element-wise over tensors with the same shape.
 pub fn map2(
-a: Tensor,
-b: Tensor,
-f: fn(Float, Float) -> Float,
+  a: Tensor,
+  b: Tensor,
+  f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   tensor.map2(a, b, f)
 }
@@ -267,11 +267,30 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Write out = a @ b into a preallocated native tensor.
 pub fn matmul_into(
-out: Tensor,
-a: Tensor,
-b: Tensor,
+  out: Tensor,
+  a: Tensor,
+  b: Tensor,
 ) -> Result(Nil, TensorError) {
   tensor.matmul_into(out, a, b)
+}
+
+/// Fused linear layer with ReLU: max(0, a @ b + bias).
+pub fn linear_relu(
+  a: Tensor,
+  b: Tensor,
+  bias: Tensor,
+) -> Result(Tensor, TensorError) {
+  tensor.linear_relu(a, b, bias)
+}
+
+/// Write out = max(0, a @ b + bias) into a preallocated native tensor.
+pub fn linear_relu_into(
+  out: Tensor,
+  a: Tensor,
+  b: Tensor,
+  bias: Tensor,
+) -> Result(Nil, TensorError) {
+  tensor.linear_relu_into(out, a, b, bias)
 }
 
 /// Matrix-vector multiplication
@@ -359,8 +378,8 @@ pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
 
 /// Broadcast tensor to a target shape.
 pub fn broadcast_to(
-t: Tensor,
-target_shape: List(Int),
+  t: Tensor,
+  target_shape: List(Int),
 ) -> Result(Tensor, TensorError) {
   tensor.broadcast_to(t, target_shape)
 }
