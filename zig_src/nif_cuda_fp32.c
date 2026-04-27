@@ -253,7 +253,7 @@ ERL_NIF_TERM ct_matmul_inplace_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_sgemm_inplace_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct_matmul_async(RefA, RefB, M, N, K) -> {ok, RefC}

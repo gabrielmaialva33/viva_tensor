@@ -307,7 +307,7 @@ ERL_NIF_TERM ct16_matmul_inplace_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_hgemm_pure16_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_bench(RefA, RefB, RefC, M, N, K, Iters) -> ok
@@ -335,7 +335,7 @@ ERL_NIF_TERM ct16_matmul_bench_nif(ErlNifEnv *env, int argc,
     if (result != 0)
       return make_error(env, "cuda_hgemm_bench_failed");
   }
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_lt_32f_bench(RefA, RefB, RefC, M, N, K, Iters) -> ok
@@ -361,7 +361,7 @@ ERL_NIF_TERM ct16_matmul_lt_32f_bench_nif(ErlNifEnv *env, int argc,
     if (result != 0)
       return make_error(env, "cuda_lt_32f_bench_failed");
   }
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_fused_relu(RefA, RefB, RefC, M, N, K) -> ok
@@ -385,7 +385,7 @@ ERL_NIF_TERM ct16_matmul_fused_relu_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_fused_relu_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_fused_gelu(RefA, RefB, RefC, M, N, K) -> ok
@@ -409,7 +409,7 @@ ERL_NIF_TERM ct16_matmul_fused_gelu_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_fused_gelu_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_linear_relu(RefA, RefB, RefBias, RefC, M, N, K) -> ok
@@ -438,7 +438,7 @@ ERL_NIF_TERM ct16_linear_relu_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_linear_relu_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_linear_gelu(RefA, RefB, RefBias, RefC, M, N, K) -> ok
@@ -467,7 +467,7 @@ ERL_NIF_TERM ct16_linear_gelu_nif(ErlNifEnv *env, int argc,
   if (result != 0)
     return make_error(env, "cuda_linear_gelu_failed");
 
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_fused_relu_bench(RefA, RefB, RefC, M, N, K, Iters) -> ok
@@ -993,7 +993,7 @@ ERL_NIF_TERM nif_cuda_sync(ErlNifEnv *env, int argc,
   (void)argc;
   (void)argv;
   cuda_explicit_sync();
-  return enif_make_atom(env, "ok");
+  return make_ok_nil(env);
 }
 
 /** ct16_matmul_async(RefA, RefB, M, N, K) -> {ok, RefC}
