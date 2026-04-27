@@ -8,7 +8,7 @@ on:
 
 env:
   GLEAM_VERSION: "1.14.0"
-  OTP_VERSION: "27"
+  OTP_VERSION: "28"
 
 jobs:
   test:
@@ -68,7 +68,7 @@ jobs:
       - name: Run benchmarks
         run: |
           mkdir -p benchmarks
-          gleam run -m viva_tensor/benchmark_full > benchmarks/latest.txt 2>&1 || true
+          gleam run -m viva_tensor/bench/full > benchmarks/latest.txt 2>&1 || true
 
       - name: Generate metrics JSON
         run: |
