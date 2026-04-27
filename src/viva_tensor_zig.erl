@@ -403,7 +403,7 @@ nt_scale_into(_Out, _A, _Scalar) -> erlang:nif_error(nif_not_loaded).
 %% Retro / fused kernels
 nt_saturn_blend(_Texture, _Shade, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_fused_linear_relu(_A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
-nt_fused_linear_relu_into(_Out, _A, _B, _Bias, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_fused_linear_relu_into(_Out, _A, _B, _Bias, _M, _N, _K) -> {error, <<"nif_not_loaded">>}.
 
 %% Resonance kernels (Log-Number System) - f64
 nt_resonance_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
