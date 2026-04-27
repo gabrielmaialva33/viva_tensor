@@ -12,11 +12,11 @@ pub fn build(b: *std.Build) void {
     ) orelse "/usr/local/lib/erlang/usr/include";
 
     // Get MKL path for Windows (via winget install Intel.oneMKL)
-    const mkl_root = b.option(
+    const mkl_root_opt = b.option(
         []const u8,
         "mkl_root",
         "Path to Intel MKL installation",
-    ) orelse "C:/PROGRA~2/Intel/oneAPI/mkl/latest";
+    );
 
     // Zig 0.15+ API: addLibrary with explicit linkage
     const lib = b.addLibrary(.{
@@ -118,6 +118,7 @@ pub fn build(b: *std.Build) void {
         // Windows: Intel MKL via winget install Intel.oneMKL
         // nif_entry.c uses cblas_dgemm directly when _WIN32 is defined
         // (no cuda_gemm.c needed - MKL is called directly from nif_entry.c)
+        const mkl_root = mkl_root_opt orelse "C:/PROGRA~2/Intel/oneAPI/mkl/latest";
         const mkl_inc = b.fmt("{s}/include", .{mkl_root});
         const mkl_lib = b.fmt("{s}/lib", .{mkl_root});
         lib.addIncludePath(.{ .cwd_relative = mkl_inc });
@@ -152,14 +153,13 @@ pub fn build(b: *std.Build) void {
         lib.root_module.addCMacro("USE_MKL_DIRECT", "1");
 
         // MKL headers and libs (Intel oneAPI MKL)
-        lib.addIncludePath(.{ .cwd_relative = "/opt/intel/oneapi/mkl/2025.3/include" });
-        lib.addLibraryPath(.{ .cwd_relative = "/opt/intel/oneapi/mkl/2025.3/lib/intel64" });
-        lib.addLibraryPath(.{ .cwd_relative = "/usr/lib/x86_64-linux-gnu" });
+        const mkl_root = mkl_root_opt orelse "/opt/intel/oneapi/mkl/latest";
+        const mkl_inc = b.fmt("{s}/include", .{mkl_root});
+        const mkl_lib = b.fmt("{s}/lib", .{mkl_root});
+        lib.addIncludePath(.{ .cwd_relative = mkl_inc });
+        lib.addLibraryPath(.{ .cwd_relative = mkl_lib });
+        lib.addRPath(.{ .cwd_relative = mkl_lib });
         lib.linkSystemLibrary("mkl_rt");
-
-        // OpenBLAS as fallback (kept for systems without MKL)
-        lib.addLibraryPath(.{ .cwd_relative = "../deps/openblas-tuned/lib" });
-        lib.addIncludePath(.{ .cwd_relative = "../deps/openblas-tuned/include" });
 
         // CUTLASS FP8 sparse GEMM (pre-compiled with nvcc)
         lib.addObjectFile(.{ .cwd_relative = "libcutlass_fp8.a" });
@@ -178,8 +178,15 @@ pub fn build(b: *std.Build) void {
             "cuda_path",
             "Path to CUDA lib64 directory",
         ) orelse "/usr/local/cuda/lib64";
+        const cusparselt_path = b.option(
+            []const u8,
+            "cusparselt_path",
+            "Path to cuSPARSELt library directory",
+        ) orelse "/opt/cusparselt/lib";
         lib.addLibraryPath(.{ .cwd_relative = cuda_path });
         lib.addRPath(.{ .cwd_relative = cuda_path });
+        lib.addLibraryPath(.{ .cwd_relative = cusparselt_path });
+        lib.addRPath(.{ .cwd_relative = cusparselt_path });
         lib.linkSystemLibrary("cusparseLt");
         lib.linkSystemLibrary("cudart");
         lib.linkSystemLibrary("stdc++");
