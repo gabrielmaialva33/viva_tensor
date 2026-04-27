@@ -212,6 +212,36 @@ pub fn matmul_auto_rtx_first_test() {
   }
 }
 
+pub fn persistent_accelerated_matmul_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case t.to_accelerated(a), t.to_accelerated(b) {
+            Ok(a_acc), Ok(b_acc) -> {
+              case t.matmul_accelerated(a_acc, b_acc) {
+                Ok(accelerated) -> {
+                  t.accelerated_shape(accelerated) |> should.equal([2, 2])
+                  case t.accelerated_to_tensor(accelerated) {
+                    Ok(result) ->
+                      t.to_list(result)
+                      |> should.equal([19.0, 22.0, 43.0, 50.0])
+                    Error(_) -> should.fail()
+                  }
+                }
+                Error(_) -> should.fail()
+              }
+            }
+            _, _ -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 // =============================================================================
 // OPTIMIZED OPERATIONS (Erlang Array Backend)
 // =============================================================================
