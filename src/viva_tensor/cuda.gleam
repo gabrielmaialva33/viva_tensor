@@ -234,6 +234,26 @@ pub fn matmul_gelu_accelerated_into(
   fused_activation_accelerated_into(out, a, b, "gelu")
 }
 
+/// Write `out = relu(a @ b + bias)` using the FP16 Tensor Core fused epilogue.
+pub fn linear_relu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+) -> Result(Nil, tensor.TensorError) {
+  fused_linear_accelerated_into(out, a, b, bias, "relu")
+}
+
+/// Write `out = gelu(a @ b + bias)` using the FP16 Tensor Core fused epilogue.
+pub fn linear_gelu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+) -> Result(Nil, tensor.TensorError) {
+  fused_linear_accelerated_into(out, a, b, bias, "gelu")
+}
+
 /// Download an accelerated tensor to a regular CPU tensor.
 pub fn to_cpu_tensor(
   t: AcceleratedTensor,
@@ -371,6 +391,77 @@ fn fused_activation_accelerated_into_checked(
       Error(DimensionError(
         "Fused CUDA activation requires FP16 accelerated tensors",
       ))
+  }
+}
+
+fn fused_linear_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+  activation: String,
+) -> Result(Nil, tensor.TensorError) {
+  case
+    accelerated_shape(out),
+    accelerated_shape(a),
+    accelerated_shape(b),
+    accelerated_shape(bias)
+  {
+    [m_out, n_out], [m, k], [k2, n], [n_bias]
+      if k == k2 && m_out == m && n_out == n && n_bias == n
+    ->
+      fused_linear_accelerated_into_checked(
+        out,
+        a,
+        b,
+        bias,
+        m,
+        n,
+        k,
+        activation,
+      )
+
+    [m_out, n_out], [m, _k], [_k2, n], [_n_bias] ->
+      Error(ShapeMismatch(expected: [m, n], got: [m_out, n_out]))
+
+    _, _, _, _ -> Error(DimensionError("Expected matrices and a bias vector"))
+  }
+}
+
+fn fused_linear_accelerated_into_checked(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  bias: AcceleratedTensor,
+  m: Int,
+  n: Int,
+  k: Int,
+  activation: String,
+) -> Result(Nil, tensor.TensorError) {
+  case out, a, b, bias {
+    CudaFp16(out_ref, _, _),
+      CudaFp16(a_ref, _, _),
+      CudaFp16(b_ref, _, _),
+      CudaFp16(bias_ref, _, _)
+    -> {
+      case activation {
+        "relu" -> ffi.ct16_linear_relu(a_ref, b_ref, bias_ref, out_ref, m, n, k)
+        "gelu" -> ffi.ct16_linear_gelu(a_ref, b_ref, bias_ref, out_ref, m, n, k)
+        _ -> Error("unsupported_activation")
+      }
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+    }
+
+    Cpu(out_tensor, _), Cpu(a_tensor, _), Cpu(b_tensor, _), Cpu(bias_tensor, _) -> {
+      case activation {
+        "relu" ->
+          tensor.linear_relu_into(out_tensor, a_tensor, b_tensor, bias_tensor)
+        _ -> Error(DimensionError("CPU fused GELU is not implemented"))
+      }
+    }
+
+    _, _, _, _ ->
+      Error(DimensionError("Fused linear activation requires matching backends"))
   }
 }
 
