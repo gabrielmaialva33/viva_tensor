@@ -110,8 +110,56 @@ pub type AccelerationBackend {
 ///
 /// CUDA variants stay on the GPU. Use `to_cpu_tensor` at API boundaries.
 pub type AcceleratedTensor {
+  CudaFp16(ref: CudaTensor16, shape: List(Int), backend: AccelerationBackend)
   CudaFp32(ref: CudaTensor, shape: List(Int), backend: AccelerationBackend)
   Cpu(tensor: tensor.Tensor, backend: AccelerationBackend)
+}
+
+/// Move a CPU tensor to the best persistent backend: RTX 4090 FP16, RTX 4090
+/// FP32, MKL/native CPU, then plain CPU.
+pub fn to_accelerated(
+  t: tensor.Tensor,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  let shape = tensor.shape(t)
+  case to_rtx4090_fp16(t) {
+    Ok(gpu) -> Ok(gpu)
+    Error(_) -> {
+      case to_rtx4090_fp32(t) {
+        Ok(gpu) -> Ok(gpu)
+        Error(_) -> Ok(to_mkl_or_cpu(t, shape))
+      }
+    }
+  }
+}
+
+/// Upload a tensor to RTX 4090 FP16 memory and keep it there.
+pub fn to_rtx4090_fp16(
+  t: tensor.Tensor,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case ffi.zig_is_loaded() && ffi.ct16_available() {
+    False -> Error(DimensionError("CUDA FP16 backend is not available"))
+    True ->
+      ffi.ct16_from_list(tensor.to_list(t), tensor.shape(t))
+      |> result.map(fn(ref) {
+        CudaFp16(ref: ref, shape: tensor.shape(t), backend: Rtx4090Fp16)
+      })
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+  }
+}
+
+/// Upload a tensor to RTX 4090 FP32 memory and keep it there.
+pub fn to_rtx4090_fp32(
+  t: tensor.Tensor,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case ffi.zig_is_loaded() {
+    False -> Error(DimensionError("CUDA FP32 backend is not available"))
+    True ->
+      ffi.ct_from_list(tensor.to_list(t), tensor.shape(t))
+      |> result.map(fn(ref) {
+        CudaFp32(ref: ref, shape: tensor.shape(t), backend: Rtx4090Fp32)
+      })
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+  }
 }
 
 /// Matrix multiplication with priority: RTX 4090 FP16, RTX 4090 FP32, MKL, CPU.
@@ -136,12 +184,31 @@ pub fn matmul_auto(
   }
 }
 
+/// Matrix multiplication between persistent accelerated tensors.
+///
+/// Matching CUDA inputs stay on device. CPU/native inputs use the existing CPU
+/// matmul path without forcing GPU uploads.
+pub fn matmul_accelerated(
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case accelerated_shape(a), accelerated_shape(b) {
+    [m, k], [k2, n] if k == k2 -> matmul_accelerated_checked(a, b, m, n, k)
+    [_m, k], [k2, _n] -> Error(ShapeMismatch(expected: [k, -1], got: [k2, -1]))
+    _, _ -> Error(DimensionError("Expected two matrices"))
+  }
+}
+
 /// Download an accelerated tensor to a regular CPU tensor.
 pub fn to_cpu_tensor(
   t: AcceleratedTensor,
 ) -> Result(tensor.Tensor, tensor.TensorError) {
   case t {
     Cpu(tensor, _) -> Ok(tensor)
+    CudaFp16(ref, shape, _) ->
+      ffi.ct16_to_list(ref)
+      |> result.map(fn(data) { tensor.Tensor(data: data, shape: shape) })
+      |> result.map_error(fn(reason) { DimensionError(reason) })
     CudaFp32(ref, shape, _) ->
       ffi.ct_to_list(ref)
       |> result.map(fn(data) { tensor.Tensor(data: data, shape: shape) })
@@ -152,6 +219,7 @@ pub fn to_cpu_tensor(
 /// Inspect which backend was selected.
 pub fn backend(t: AcceleratedTensor) -> AccelerationBackend {
   case t {
+    CudaFp16(_, _, backend) -> backend
     CudaFp32(_, _, backend) -> backend
     Cpu(_, backend) -> backend
   }
@@ -160,8 +228,43 @@ pub fn backend(t: AcceleratedTensor) -> AccelerationBackend {
 /// Shape of an accelerated tensor without forcing a download.
 pub fn accelerated_shape(t: AcceleratedTensor) -> List(Int) {
   case t {
+    CudaFp16(_, shape, _) -> shape
     CudaFp32(_, shape, _) -> shape
     Cpu(tensor, _) -> tensor.shape
+  }
+}
+
+fn matmul_accelerated_checked(
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(AcceleratedTensor, tensor.TensorError) {
+  case a, b {
+    CudaFp16(a_ref, _, _), CudaFp16(b_ref, _, _) ->
+      ffi.ct16_matmul(a_ref, b_ref, m, n, k)
+      |> result.map(fn(out) {
+        CudaFp32(ref: out, shape: [m, n], backend: Rtx4090Fp16)
+      })
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+
+    CudaFp32(a_ref, _, _), CudaFp32(b_ref, _, _) ->
+      ffi.ct_matmul(a_ref, b_ref, m, n, k)
+      |> result.map(fn(out) {
+        CudaFp32(ref: out, shape: [m, n], backend: Rtx4090Fp32)
+      })
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+
+    Cpu(a_tensor, _), Cpu(b_tensor, _) ->
+      tensor.matmul(a_tensor, b_tensor)
+      |> result.map(fn(out) { Cpu(tensor: out, backend: backend(a)) })
+
+    _, _ -> {
+      use a_cpu <- result.try(to_cpu_tensor(a))
+      use b_cpu <- result.try(to_cpu_tensor(b))
+      matmul_auto(a_cpu, b_cpu)
+    }
   }
 }
 
@@ -242,5 +345,12 @@ fn to_native(t: tensor.Tensor, shape: List(Int)) -> Result(tensor.Tensor, Nil) {
     Error(_) ->
       tensor.native_from_list(tensor.to_list(t), shape)
       |> result.map_error(fn(_) { Nil })
+  }
+}
+
+fn to_mkl_or_cpu(t: tensor.Tensor, shape: List(Int)) -> AcceleratedTensor {
+  case to_native(t, shape) {
+    Ok(native) -> Cpu(tensor: native, backend: MklNative)
+    Error(_) -> Cpu(tensor: t, backend: CpuFallback)
   }
 }
