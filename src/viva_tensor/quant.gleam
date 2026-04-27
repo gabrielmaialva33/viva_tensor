@@ -26,8 +26,6 @@ pub fn matmul_nf4(
   n: Int,
   k: Int,
   block_size: Int,
-) -> ffi.NativeTensorRef {
-  let assert Ok(res) =
-    ffi.nt_matmul_nf4(a, b_indices, b_scales, m, n, k, block_size)
-  res
+) -> Result(ffi.NativeTensorRef, String) {
+  ffi.nt_matmul_nf4(a, b_indices, b_scales, m, n, k, block_size)
 }
