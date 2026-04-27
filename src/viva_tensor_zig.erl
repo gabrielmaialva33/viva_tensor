@@ -94,6 +94,8 @@
     ct16_matmul_lt_32f_bench/7,     %% cublasLt FP16 COMPUTE_32F_FAST_16F baseline bench
     ct16_matmul_fused_relu/6,       %% FP16 GEMM+ReLU fused (activation FREE!)
     ct16_matmul_fused_gelu/6,       %% FP16 GEMM+GELU fused (activation FREE!)
+    ct16_linear_relu/7,             %% FP16 GEMM+Bias+ReLU fused
+    ct16_linear_gelu/7,             %% FP16 GEMM+Bias+GELU fused
     ct16_matmul_fused_relu_bench/7, %% FP16 GEMM+ReLU bench loop in C
     ct16_matmul_fused_gelu_bench/7, %% FP16 GEMM+GELU bench loop in C
     ct16_matmul_fused_relu_tn_bench/7, %% FP16 GEMM+ReLU TN layout bench
@@ -498,6 +500,8 @@ ct_int8_matmul_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not
 ct16_matmul_lt_32f_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul_fused_relu(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul_fused_gelu(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_linear_relu(_A, _B, _Bias, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ct16_linear_gelu(_A, _B, _Bias, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul_fused_relu_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul_fused_gelu_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 ct16_matmul_fused_relu_tn_bench(_A, _B, _C, _M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
