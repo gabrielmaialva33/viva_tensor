@@ -457,12 +457,18 @@ pub fn zig_matmul(
 
 /// Create native tensor of zeros
 pub fn nt_zeros(shape: List(Int)) -> Result(NativeTensorRef, String) {
-  nt_zeros_ffi(shape)
+  case zig_is_loaded() {
+    True -> nt_zeros_ffi(shape)
+    False -> Error("nif_not_loaded")
+  }
 }
 
 /// Create native tensor of ones
 pub fn nt_ones(shape: List(Int)) -> Result(NativeTensorRef, String) {
-  nt_ones_ffi(shape)
+  case zig_is_loaded() {
+    True -> nt_ones_ffi(shape)
+    False -> Error("nif_not_loaded")
+  }
 }
 
 /// Create native tensor filled with value
@@ -470,7 +476,10 @@ pub fn nt_fill(
   shape: List(Int),
   value: Float,
 ) -> Result(NativeTensorRef, String) {
-  nt_fill_ffi(shape, value)
+  case zig_is_loaded() {
+    True -> nt_fill_ffi(shape, value)
+    False -> Error("nif_not_loaded")
+  }
 }
 
 /// Create native tensor from list data + shape
@@ -478,7 +487,10 @@ pub fn nt_from_list(
   data: List(Float),
   shape: List(Int),
 ) -> Result(NativeTensorRef, String) {
-  nt_from_list_ffi(data, shape)
+  case zig_is_loaded() {
+    True -> nt_from_list_ffi(data, shape)
+    False -> Error("nif_not_loaded")
+  }
 }
 
 /// Extract data as list (one-time conversion at boundaries)
