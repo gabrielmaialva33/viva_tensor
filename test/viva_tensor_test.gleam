@@ -242,6 +242,73 @@ pub fn persistent_accelerated_matmul_test() {
   }
 }
 
+pub fn persistent_accelerated_matmul_into_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case
+            t.to_accelerated(t.zeros([2, 2])),
+            t.to_accelerated(a),
+            t.to_accelerated(b)
+          {
+            Ok(out), Ok(a_acc), Ok(b_acc) -> {
+              case t.matmul_accelerated_into(out, a_acc, b_acc) {
+                Ok(Nil) -> {
+                  case t.accelerated_to_tensor(out) {
+                    Ok(result) -> {
+                      t.shape(result) |> should.equal([2, 2])
+                      t.to_list(result)
+                      |> should.equal([19.0, 22.0, 43.0, 50.0])
+                    }
+                    Error(_) -> should.fail()
+                  }
+                }
+                Error(_) -> should.fail()
+              }
+            }
+            _, _, _ -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn persistent_fp16_matmul_relu_into_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, -6.0, -7.0, 8.0]) {
+        Ok(b) -> {
+          case
+            t.to_rtx4090_fp16(t.zeros([2, 2])),
+            t.to_rtx4090_fp16(a),
+            t.to_rtx4090_fp16(b)
+          {
+            Ok(out), Ok(a_acc), Ok(b_acc) -> {
+              case t.matmul_relu_accelerated_into(out, a_acc, b_acc) {
+                Ok(Nil) -> {
+                  case t.accelerated_to_tensor(out) {
+                    Ok(result) ->
+                      t.to_list(result) |> should.equal([0.0, 10.0, 0.0, 14.0])
+                    Error(_) -> should.fail()
+                  }
+                }
+                Error(_) -> should.fail()
+              }
+            }
+            _, _, _ -> Nil
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 // =============================================================================
 // OPTIMIZED OPERATIONS (Erlang Array Backend)
 // =============================================================================
