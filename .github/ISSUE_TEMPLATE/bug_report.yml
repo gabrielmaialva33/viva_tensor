@@ -1,7 +1,7 @@
 name: Bug report
 description: Report an incorrect result, crash, or API problem.
 title: "bug: "
-labels: ["bug"]
+labels: [ "bug" ]
 body:
   - type: markdown
     attributes:

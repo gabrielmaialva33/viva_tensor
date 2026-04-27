@@ -1,7 +1,7 @@
 name: Performance report
 description: Report a benchmark regression or propose an optimization target.
 title: "perf: "
-labels: ["performance"]
+labels: [ "performance" ]
 body:
   - type: textarea
     id: summary
