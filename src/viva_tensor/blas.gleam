@@ -1,11 +1,11 @@
-// viva_tensor/blas.gleam - Intelligent BLAS Backend Selection
-//
-// Auto-detects and uses the BEST available BLAS implementation:
-// 1. Intel MKL (817+ GFLOPS) - Best for Intel CPUs
-// 2. OpenBLAS DYNAMIC_ARCH (500+ GFLOPS) - Best FOSS option
-// 3. Zig SIMD GEMM (420 GFLOPS) - Fallback, always available
-//
-// Tuning is applied automatically based on CPU topology.
+//// BLAS backend detection and CPU tuning helpers.
+////
+//// This module wraps native backend probes exposed by the Erlang layer. Use it
+//// to detect the installed BLAS implementation, inspect CPU topology, and tune
+//// thread or affinity settings before running large CPU matrix workloads.
+////
+//// The runtime chooses between Intel MKL, OpenBLAS, Zig SIMD, and an unknown
+//// fallback when no accelerated backend can be identified.
 
 // No imports needed - uses FFI
 
