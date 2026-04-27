@@ -199,6 +199,41 @@ pub fn matmul_accelerated(
   }
 }
 
+/// Write `out = a @ b` into a persistent accelerated output buffer.
+///
+/// CUDA inputs stay on the GPU and reuse `out` with no output allocation.
+pub fn matmul_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, tensor.TensorError) {
+  case accelerated_shape(out), accelerated_shape(a), accelerated_shape(b) {
+    [m_out, n_out], [m, k], [k2, n] if k == k2 && m_out == m && n_out == n ->
+      matmul_accelerated_into_checked(out, a, b, m, n, k)
+    [m_out, n_out], [m, _k], [_k2, n] ->
+      Error(ShapeMismatch(expected: [m, n], got: [m_out, n_out]))
+    _, _, _ -> Error(DimensionError("Expected matrices"))
+  }
+}
+
+/// Write `out = relu(a @ b)` using the FP16 Tensor Core fused epilogue.
+pub fn matmul_relu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, tensor.TensorError) {
+  fused_activation_accelerated_into(out, a, b, "relu")
+}
+
+/// Write `out = gelu(a @ b)` using the FP16 Tensor Core fused epilogue.
+pub fn matmul_gelu_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+) -> Result(Nil, tensor.TensorError) {
+  fused_activation_accelerated_into(out, a, b, "gelu")
+}
+
 /// Download an accelerated tensor to a regular CPU tensor.
 pub fn to_cpu_tensor(
   t: AcceleratedTensor,
@@ -234,6 +269,12 @@ pub fn accelerated_shape(t: AcceleratedTensor) -> List(Int) {
   }
 }
 
+/// Wait for queued CUDA work to complete.
+pub fn sync() -> Result(Nil, tensor.TensorError) {
+  ffi.cuda_sync()
+  |> result.map_error(fn(reason) { DimensionError(reason) })
+}
+
 fn matmul_accelerated_checked(
   a: AcceleratedTensor,
   b: AcceleratedTensor,
@@ -265,6 +306,71 @@ fn matmul_accelerated_checked(
       use b_cpu <- result.try(to_cpu_tensor(b))
       matmul_auto(a_cpu, b_cpu)
     }
+  }
+}
+
+fn matmul_accelerated_into_checked(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Nil, tensor.TensorError) {
+  case out, a, b {
+    CudaFp16(out_ref, _, _), CudaFp16(a_ref, _, _), CudaFp16(b_ref, _, _) ->
+      ffi.ct16_matmul_inplace(a_ref, b_ref, out_ref, m, n, k)
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+
+    CudaFp32(out_ref, _, _), CudaFp32(a_ref, _, _), CudaFp32(b_ref, _, _) ->
+      ffi.ct_matmul_inplace(a_ref, b_ref, out_ref, m, n, k)
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+
+    Cpu(out_tensor, _), Cpu(a_tensor, _), Cpu(b_tensor, _) ->
+      tensor.matmul_into(out_tensor, a_tensor, b_tensor)
+
+    _, _, _ ->
+      Error(DimensionError("Output, lhs, and rhs must use the same backend"))
+  }
+}
+
+fn fused_activation_accelerated_into(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  activation: String,
+) -> Result(Nil, tensor.TensorError) {
+  case accelerated_shape(out), accelerated_shape(a), accelerated_shape(b) {
+    [m_out, n_out], [m, k], [k2, n] if k == k2 && m_out == m && n_out == n ->
+      fused_activation_accelerated_into_checked(out, a, b, m, n, k, activation)
+    [m_out, n_out], [m, _k], [_k2, n] ->
+      Error(ShapeMismatch(expected: [m, n], got: [m_out, n_out]))
+    _, _, _ -> Error(DimensionError("Expected matrices"))
+  }
+}
+
+fn fused_activation_accelerated_into_checked(
+  out: AcceleratedTensor,
+  a: AcceleratedTensor,
+  b: AcceleratedTensor,
+  m: Int,
+  n: Int,
+  k: Int,
+  activation: String,
+) -> Result(Nil, tensor.TensorError) {
+  case out, a, b {
+    CudaFp16(out_ref, _, _), CudaFp16(a_ref, _, _), CudaFp16(b_ref, _, _) -> {
+      case activation {
+        "relu" -> ffi.ct16_matmul_fused_relu(a_ref, b_ref, out_ref, m, n, k)
+        "gelu" -> ffi.ct16_matmul_fused_gelu(a_ref, b_ref, out_ref, m, n, k)
+        _ -> Error("unsupported_activation")
+      }
+      |> result.map_error(fn(reason) { DimensionError(reason) })
+    }
+    _, _, _ ->
+      Error(DimensionError(
+        "Fused CUDA activation requires FP16 accelerated tensors",
+      ))
   }
 }
 
