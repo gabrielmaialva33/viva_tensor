@@ -1,14 +1,13 @@
-//// Tensor - N-dimensional arrays for numerical computing
+//// Tensor - N-dimensional arrays for numerical computing.
 ////
-//// "All you need is shapes" - a tensor library author, probably
-////
-//// This is the PUBLIC FACADE over core/tensor.gleam. Why two modules?
-//// Because opaque types are great until you need pattern matching in tests.
-//// This module gives you the nice API; core/ gives you the guarantees.
+//// This module is the implementation-facing tensor API used by the stable
+//// package facade in `viva_tensor`. It keeps storage variants explicit while
+//// the top-level module provides the preferred import surface for users.
 ////
 //// Design: NumPy-inspired with strides for zero-copy views.
 //// Uses Erlang :array for O(1) access + strides for efficient transpose/reshape.
-//// For matrices > 100x100, enable the NIF. The difference is 100-1000x.
+//// Optional native acceleration is used for large hot paths when the NIF is
+//// available.
 
 import gleam/float
 import gleam/int
@@ -22,7 +21,7 @@ import viva_tensor/layout
 
 // --- Types ---
 
-/// Re-export TensorError so other modules can reference tensor.TensorError
+/// Re-export TensorError so other modules can reference tensor.TensorError.
 pub type TensorError =
   error.TensorError
 
@@ -32,8 +31,7 @@ pub type TensorError =
 /// - strides: bytes to skip for each dimension [s0, s1, ..., sn]
 /// - offset: starting position in storage (for views/slices)
 ///
-/// NCHW vs NHWC: we use NCHW because that's what the cool kids (PyTorch) do.
-/// TensorFlow uses NHWC by default, but they also use Python so...
+/// Convolution helpers use NCHW layout by convention.
 pub type Tensor {
   Tensor(data: List(Float), shape: List(Int))
   StridedTensor(

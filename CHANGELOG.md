@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [2.2.100] - 2026-04-27
 
+### Changed
+
+- Kept the package on the `2.2.100` release line while the public API continues
+  to mature toward a stable tensor-library contract.
+- Clarified `gleam.toml` package metadata with a less over-specific
+  description and an explicit changelog documentation link.
+- Rewrote the English API guide around the stable public modules exposed in the
+  generated documentation.
+- Cleaned public module documentation comments to keep the library surface
+  professional and focused.
+
 ### Highlights
 
 Major release covering modular NIF architecture, CUDA Tensor Core backends,

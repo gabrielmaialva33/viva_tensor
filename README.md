@@ -3,7 +3,7 @@
 <img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B0000,100:006400&height=180&section=header&text=viva_tensor&fontSize=60&fontColor=fff&animation=twinkling&fontAlignY=35&desc=High-Performance%20Tensors%20for%20Gleam&descSize=20&descAlignY=55" width="100%"/>
 
 [![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?style=for-the-badge&logo=gleam&logoColor=000)](https://gleam.run/)
-[![Tests](https://img.shields.io/badge/Tests-187%20passed-2E8B57?style=for-the-badge)](./test)
+[![Tests](https://img.shields.io/badge/Tests-222%20passed-2E8B57?style=for-the-badge)](./test)
 [![License](https://img.shields.io/badge/MIT-2E8B57?style=for-the-badge)](./LICENSE)
 
 **The fastest tensor library on the BEAM**
@@ -100,17 +100,16 @@ graph TB
 ## Quick Start
 
 ```gleam
+import gleam/result
 import viva_tensor as t
 
-// Create tensors
 let a = t.zeros([1000, 1000])
 let b = t.random_uniform([1000, 1000])
 
-// Matrix multiplication (auto-selects best backend)
-let c = t.matmul(a, b)
+use c <- result.try(t.matmul(a, b))
+let average = t.mean(c)
 
-// Activations
-let activated = t.relu(c) |> t.sigmoid()
+Ok(average)
 ```
 
 ## Features

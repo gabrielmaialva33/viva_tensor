@@ -1,130 +1,129 @@
-# API Reference
+# API Guide
 
-## tensor
+`viva_tensor` exposes a small stable surface from the root `viva_tensor` module.
+Implementation modules for native backends, quantization, sparse kernels,
+telemetry, benchmarking, and experimental neural-network helpers are kept
+internal until their contracts are stable.
 
-### Types
+## Stable Imports
 
 ```gleam
-pub type Tensor {
-  Tensor(data: List(Float), shape: List(Int))
+import gleam/result
+import viva_tensor as t
+```
+
+Use the root module for normal tensor work. Import `viva_tensor/layout` when
+you need to inspect storage metadata, and `viva_tensor/axis` or
+`viva_tensor/named` when working with semantic dimensions.
+
+## Tensor Creation
+
+| Function | Description |
+|:--|:--|
+| `zeros(shape)` | Create a tensor filled with zeros. |
+| `ones(shape)` | Create a tensor filled with ones. |
+| `fill(shape, value)` | Create a tensor filled with one scalar value. |
+| `from_list(data)` | Create a one-dimensional tensor. |
+| `from_list2d(rows)` | Create a matrix from rows, validating row sizes. |
+| `matrix(rows, cols, data)` | Create a matrix with explicit dimensions. |
+
+```gleam
+let a = t.zeros([2, 3])
+let b = t.fill([2, 3], 1.5)
+```
+
+## Fallible Operations
+
+Shape-changing and binary tensor operations return `Result` rather than
+panicking. Chain them with `gleam/result.try`.
+
+```gleam
+pub fn example() {
+  let a = t.ones([2, 3])
+  let b = t.fill([2, 3], 2.0)
+
+  use c <- result.try(t.add(a, b))
+  use flat <- result.try(t.reshape(c, [6]))
+
+  Ok(t.mean(flat))
 }
 ```
 
-### Creation
+## Element-wise Math
 
-| Function                 | Description      |
-|:-------------------------|:-----------------|
-| `from_list(data, shape)` | Create from list |
-| `zeros(shape)`           | Zero tensor      |
-| `ones(shape)`            | Ones tensor      |
-| `random_uniform(shape)`  | Values [0,1]     |
+| Function | Description |
+|:--|:--|
+| `add(a, b)` | Element-wise addition for equal shapes. |
+| `sub(a, b)` | Element-wise subtraction for equal shapes. |
+| `mul(a, b)` | Element-wise multiplication for equal shapes. |
+| `div(a, b)` | Element-wise division for equal shapes. |
+| `scale(tensor, scalar)` | Multiply every element by a scalar. |
+| `map(tensor, fun)` | Apply a scalar function to every element. |
 
-### Operations
+Use broadcasting-specific functions when shapes differ.
 
-| Function      | Description           |
-|:--------------|:----------------------|
-| `add(a, b)`   | Element-wise sum      |
-| `mul(a, b)`   | Element-wise multiply |
-| `scale(t, s)` | Scale by constant     |
-| `sum(t)`      | Total sum             |
-| `mean(t)`     | Mean                  |
+| Function | Description |
+|:--|:--|
+| `can_broadcast(a, b)` | Check whether two shapes are compatible. |
+| `broadcast_to(tensor, shape)` | Create a broadcast view when possible. |
+| `add_broadcast(a, b)` | Add with NumPy-style broadcasting. |
+| `mul_broadcast(a, b)` | Multiply with NumPy-style broadcasting. |
 
----
+## Reductions
 
-## nf4
+| Function | Description |
+|:--|:--|
+| `sum(tensor)` | Sum all elements. |
+| `mean(tensor)` | Mean over all elements. |
+| `max(tensor)` | Maximum value. |
+| `min(tensor)` | Minimum value. |
+| `argmax(tensor)` | Flat index of the maximum value. |
+| `argmin(tensor)` | Flat index of the minimum value. |
+| `variance(tensor)` | Variance over all elements. |
+| `std(tensor)` | Standard deviation over all elements. |
 
-### Types
+## Linear Algebra
 
-```gleam
-pub type NF4Config {
-  NF4Config(block_size: Int, double_quant: Bool)
-}
+| Function | Description |
+|:--|:--|
+| `dot(a, b)` | Dot product for vectors. |
+| `matmul(a, b)` | Matrix multiplication. |
+| `matmul_vec(matrix, vector)` | Matrix-vector multiplication. |
+| `transpose(tensor)` | Matrix transpose. |
+| `outer(a, b)` | Outer product. |
 
-pub type NF4Tensor {
-  NF4Tensor(
-    blocks: List(NF4Block),
-    shape: List(Int),
-    num_elements: Int,
-    memory_bytes: Int,
-    compression_ratio: Float,
-  )
-}
-```
+Native-backed variants such as `matmul_into`, `to_accelerated`, and
+`matmul_accelerated_into` are available from the root module for hot paths that
+can reuse buffers or persistent GPU memory.
 
-### Functions
+## Shape And Layout
 
-| Function              | Description               |
-|:----------------------|:--------------------------|
-| `default_config()`    | Default config (block=64) |
-| `quantize(t, config)` | Quantize tensor           |
-| `dequantize(nf4)`     | Restore FP32              |
-| `nf4_levels()`        | List 16 levels            |
-
----
-
-## awq
-
-### Types
-
-```gleam
-pub type AWQConfig {
-  AWQConfig(
-    bits: Int,
-    group_size: Int,
-    alpha: Float,
-    zero_point: Bool,
-  )
-}
-```
-
-### Functions
-
-| Function                         | Description               |
-|:---------------------------------|:--------------------------|
-| `default_config()`               | Default config            |
-| `quantize_awq(w, cal, cfg)`      | Quantize with calibration |
-| `dequantize_awq(awq)`            | Restore FP32              |
-| `collect_activation_stats(data)` | Collect stats             |
-
----
-
-## flash_attention
-
-### Types
+| Function | Description |
+|:--|:--|
+| `shape(tensor)` | Tensor dimensions. |
+| `size(tensor)` | Total element count. |
+| `rank(tensor)` | Number of dimensions. |
+| `reshape(tensor, shape)` | Change shape while preserving element count. |
+| `flatten(tensor)` | Convert to one dimension. |
+| `squeeze(tensor)` | Remove size-one dimensions. |
+| `unsqueeze(tensor, axis)` | Insert a size-one dimension. |
+| `layout(tensor)` | Inspect storage, device, dtype, strides, offset, and contiguity. |
 
 ```gleam
-pub type FlashConfig {
-  FlashConfig(block_size: Int, use_causal_mask: Bool)
-}
+let info = t.layout(t.zeros([2, 3]))
 ```
 
-### Functions
+## Public Companion Modules
 
-| Function                                | Description    |
-|:----------------------------------------|:---------------|
-| `default_config()`                      | Default config |
-| `flash_attention_forward(q, k, v, cfg)` | Forward pass   |
+| Module | Purpose |
+|:--|:--|
+| `viva_tensor/layout` | Canonical tensor layout metadata. |
+| `viva_tensor/axis` | Semantic axis names and axis specifications. |
+| `viva_tensor/named` | Tensor wrapper with named axes. |
 
----
+## Stability Policy
 
-## sparsity
-
-### Functions
-
-| Function                | Description       |
-|:------------------------|:------------------|
-| `apply_2_4_sparsity(t)` | Apply 2:4 pattern |
-| `compress_sparse(s)`    | Remove zeros      |
-| `decompress_sparse(c)`  | Restore           |
-
----
-
-## metrics
-
-### Functions
-
-| Function                    | Description          |
-|:----------------------------|:---------------------|
-| `compute_sqnr(orig, quant)` | SQNR in dB           |
-| `compute_mse(orig, quant)`  | Mean squared error   |
-| `theoretical_sqnr(bits)`    | Theoretical max SQNR |
+Public modules are documented by `gleam docs build` and should avoid panics,
+prefer `Result` for recoverable errors, and preserve semantic-versioning
+compatibility. Internal modules may change while the native acceleration,
+quantization, sparse, and neural-network APIs continue to mature.

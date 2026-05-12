@@ -1,10 +1,11 @@
 name = "viva_tensor"
 version = "2.2.100"
-description = "High-performance tensor library for Gleam/BEAM with Zig NIF, Intel MKL (931 GFLOPS), CUDA Tensor Cores (1854 TOPS), and quantization"
+description = "Tensor library for Gleam/BEAM with a pure Gleam API, zero-copy views, and optional native acceleration"
 licences = ["MIT"]
 repository = { type = "github", user = "gabrielmaialva33", repo = "viva_tensor" }
 links = [
   { title = "Documentation", href = "https://hexdocs.pm/viva_tensor" },
+  { title = "Changelog", href = "https://github.com/gabrielmaialva33/viva_tensor/blob/main/CHANGELOG.md" },
   { title = "Paper", href = "https://github.com/gabrielmaialva33/viva_tensor/blob/main/docs/en/paper.md" },
 ]
 

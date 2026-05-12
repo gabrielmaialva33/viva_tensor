@@ -1,14 +1,15 @@
 //// High-performance tensor operations for Gleam on the BEAM.
 ////
-//// This module is the stable entry point for the package. It re-exports the
+//// This module is the stable entry point for the package. It exposes the
 //// tensor type, common constructors, shape operations, linear algebra,
-//// element-wise math, reductions, neural-network helpers, and TFLOPS
-//// measurement utilities.
+//// element-wise math, reductions, native acceleration helpers, and layout
+//// inspection.
 ////
 //// Lower-level implementation, backend, neural-network, quantization, sparse,
 //// telemetry, and benchmark modules are intentionally excluded from the public
-//// documentation until their contracts are stable. Prefer this module as the
-//// public API surface.
+//// documentation until their contracts are stable. The related
+//// `viva_tensor/layout`, `viva_tensor/axis`, and `viva_tensor/named` modules
+//// are public when callers need explicit layout metadata or named dimensions.
 ////
 //// ```gleam
 //// import gleam/result
@@ -78,7 +79,7 @@ pub type Conv2dConfig =
 
 // --- Constructors -----------------------------------------------------------
 
-/// All zeros. The tensor equivalent of a blank canvas.
+/// Create a tensor filled with zeros.
 pub fn zeros(shape: List(Int)) -> Tensor {
   tensor.zeros(shape)
 }
@@ -641,10 +642,6 @@ pub fn is_contiguous(t: Tensor) -> Bool {
 }
 
 // --- CNN Ops ----------------------------------------------------------------
-// Convolution: the operation that made deep learning work for images.
-// Yann LeCun et al. (1989) showed CNNs could recognize handwritten digits.
-// 35 years later, we're using the same basic operation to generate cat pics.
-
 /// Default conv2d config (3x3 kernel, stride 1, no padding)
 pub fn conv2d_config() -> Conv2dConfig {
   tensor.conv2d_config()
