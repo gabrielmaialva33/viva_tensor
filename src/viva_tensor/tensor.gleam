@@ -18,6 +18,7 @@ import viva_tensor/core/error.{
   BroadcastError, DimensionError, InvalidShape, ShapeMismatch,
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
+import viva_tensor/layout
 
 // --- Types ---
 
@@ -241,6 +242,50 @@ pub fn size(t: Tensor) -> Int {
 /// Number of dimensions (rank)
 pub fn rank(t: Tensor) -> Int {
   list.length(t.shape)
+}
+
+/// Inspect the canonical tensor layout metadata.
+pub fn layout(t: Tensor) -> layout.TensorLayout {
+  case t {
+    Tensor(_, shape) ->
+      layout.TensorLayout(
+        storage: layout.DenseStorage,
+        device: layout.BeamCpu,
+        dtype: layout.Float64,
+        shape: shape,
+        strides: compute_strides(shape),
+        offset: 0,
+        size: size(t),
+        rank: list.length(shape),
+        contiguous: True,
+      )
+
+    StridedTensor(_, shape, strides, offset) ->
+      layout.TensorLayout(
+        storage: layout.StridedStorage,
+        device: layout.BeamCpu,
+        dtype: layout.Float64,
+        shape: shape,
+        strides: strides,
+        offset: offset,
+        size: size(t),
+        rank: list.length(shape),
+        contiguous: strides == compute_strides(shape),
+      )
+
+    NativeTensor(_, shape) ->
+      layout.TensorLayout(
+        storage: layout.NativeStorage,
+        device: layout.NativeCpu,
+        dtype: layout.Float64,
+        shape: shape,
+        strides: compute_strides(shape),
+        offset: 0,
+        size: size(t),
+        rank: list.length(shape),
+        contiguous: True,
+      )
+  }
 }
 
 /// Specific dimension

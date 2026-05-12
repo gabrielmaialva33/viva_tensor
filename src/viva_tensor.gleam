@@ -22,6 +22,7 @@
 
 import viva_tensor/core/ffi
 import viva_tensor/cuda
+import viva_tensor/layout as tensor_layout
 import viva_tensor/tensor
 import viva_tensor/tflops as tflops_mod
 
@@ -30,6 +31,22 @@ import viva_tensor/tflops as tflops_mod
 /// A tensor value backed by dense, strided, or native storage.
 pub type Tensor =
   tensor.Tensor
+
+/// Tensor payload representation.
+pub type TensorStorage =
+  tensor_layout.TensorStorage
+
+/// Tensor payload location.
+pub type TensorDevice =
+  tensor_layout.TensorDevice
+
+/// Tensor element type.
+pub type TensorDtype =
+  tensor_layout.TensorDtype
+
+/// Canonical tensor layout metadata.
+pub type TensorLayout =
+  tensor_layout.TensorLayout
 
 /// Error returned by fallible tensor constructors and operations.
 pub type TensorError =
@@ -547,6 +564,11 @@ pub fn size(t: Tensor) -> Int {
 /// Get rank (number of dimensions)
 pub fn rank(t: Tensor) -> Int {
   tensor.rank(t)
+}
+
+/// Inspect storage, device, dtype, shape, strides, offset, size, and rank.
+pub fn layout(t: Tensor) -> TensorLayout {
+  tensor.layout(t)
 }
 
 /// Convert to list
