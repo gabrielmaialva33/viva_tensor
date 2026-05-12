@@ -48,7 +48,11 @@ pub type Linear {
 ///
 /// The bias starts at zero. Some argue for small positive values
 /// to ensure ReLU neurons fire initially, but zero works fine.
-pub fn linear(tape: Tape, in_features: Int, out_features: Int) -> Traced(Linear) {
+pub fn linear(
+  tape: Tape,
+  in_features: Int,
+  out_features: Int,
+) -> Traced(Linear) {
   // Xavier initialization: the sweet spot for gradient flow
   let w_data = tensor.xavier_init(in_features, out_features)
   let b_data = tensor.zeros([out_features])

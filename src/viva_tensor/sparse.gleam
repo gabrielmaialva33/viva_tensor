@@ -23,7 +23,9 @@ pub fn available() -> Bool {
 ///
 /// This operation is destructive: it prunes the smallest 2 values in every 4-element block.
 /// The resulting sparse tensor is stored in a compressed format on the GPU.
-pub fn from_cuda16(tensor: ffi.CudaTensor16Ref) -> Result(SparseTensor, String) {
+pub fn from_cuda16(
+  tensor: ffi.CudaTensor16Ref,
+) -> Result(SparseTensor, String) {
   ffi.sparse_from_ct16(tensor)
 }
 

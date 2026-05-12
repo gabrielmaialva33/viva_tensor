@@ -361,7 +361,9 @@ fn validate_sizes(
   }
 }
 
-fn validate_unique_names(axes: List(AxisSpec)) -> Result(Nil, NamedTensorError) {
+fn validate_unique_names(
+  axes: List(AxisSpec),
+) -> Result(Nil, NamedTensorError) {
   let named_axes =
     list.filter(axes, fn(a) {
       case a.name {

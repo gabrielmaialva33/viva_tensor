@@ -628,7 +628,10 @@ pub fn nt_log(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
 // Use with care - this breaks functional purity for performance.
 
 /// In-place add: a += b. Returns ok. MUTATES a.
-pub fn nt_add_mut(a: NativeTensorRef, b: NativeTensorRef) -> Result(Nil, String) {
+pub fn nt_add_mut(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(Nil, String) {
   nt_add_mut_ffi(a, b)
 }
 
@@ -994,7 +997,10 @@ pub fn lns_to_f64(ref: LnsTensorRef) -> Result(NativeTensorRef, String) {
 }
 
 /// Fast LNS multiply via IADD (~11% max error, 8x throughput)
-pub fn lns_mul(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String) {
+pub fn lns_mul(
+  a: LnsTensorRef,
+  b: LnsTensorRef,
+) -> Result(LnsTensorRef, String) {
   lns_mul_ffi(a, b)
 }
 
@@ -1007,7 +1013,10 @@ pub fn lns_mul_corrected(
 }
 
 /// LNS division via ISUB
-pub fn lns_div(a: LnsTensorRef, b: LnsTensorRef) -> Result(LnsTensorRef, String) {
+pub fn lns_div(
+  a: LnsTensorRef,
+  b: LnsTensorRef,
+) -> Result(LnsTensorRef, String) {
   lns_div_ffi(a, b)
 }
 
@@ -1192,7 +1201,10 @@ pub fn hdc_bind(
 
 /// Cosine-like similarity via Hamming distance [0, 1]
 /// 1 = identical, 0.5 = orthogonal (random), 0 = opposite
-pub fn hdc_similarity(a: HdcVectorRef, b: HdcVectorRef) -> Result(Float, String) {
+pub fn hdc_similarity(
+  a: HdcVectorRef,
+  b: HdcVectorRef,
+) -> Result(Float, String) {
   hdc_similarity_ffi(a, b)
 }
 

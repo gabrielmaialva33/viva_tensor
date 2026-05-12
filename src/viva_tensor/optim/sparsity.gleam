@@ -355,7 +355,10 @@ fn transpose_matrix(m: List(List(Float))) -> List(List(Float)) {
 /// Key insight: if pruned_magnitude_mean << kept_magnitude_mean,
 /// we're making good pruning decisions. The approximation_error
 /// tells us how much information we lost.
-pub fn compute_metrics(original: Tensor, sparse: Sparse24Tensor) -> PruneMetrics {
+pub fn compute_metrics(
+  original: Tensor,
+  sparse: Sparse24Tensor,
+) -> PruneMetrics {
   let orig_data = tensor.to_list(original)
   let decomp_data = tensor.to_list(decompress(sparse))
 

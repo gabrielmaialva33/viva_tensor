@@ -605,7 +605,8 @@ fn fused_linear_accelerated_into_checked(
       |> result.map_error(fn(reason) { DimensionError(reason) })
     }
 
-    Cpu(out_tensor, _), Cpu(a_tensor, _), Cpu(b_tensor, _), Cpu(bias_tensor, _) -> {
+    Cpu(out_tensor, _), Cpu(a_tensor, _), Cpu(b_tensor, _), Cpu(bias_tensor, _)
+    -> {
       case activation {
         "relu" ->
           tensor.linear_relu_into(out_tensor, a_tensor, b_tensor, bias_tensor)

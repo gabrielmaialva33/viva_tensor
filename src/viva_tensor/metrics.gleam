@@ -307,7 +307,10 @@ pub fn compute_saliency(
 }
 
 /// Identifies top K% of salient weights
-pub fn find_salient_weights(saliency: List(Float), top_pct: Float) -> List(Int) {
+pub fn find_salient_weights(
+  saliency: List(Float),
+  top_pct: Float,
+) -> List(Int) {
   // Index + saliency pairs
   let indexed = list.index_map(saliency, fn(s, i) { #(i, s) })
 

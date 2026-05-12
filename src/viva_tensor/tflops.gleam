@@ -91,7 +91,12 @@ pub fn best_backend() -> Backend {
 }
 
 /// Measure single matmul TFLOPS for a backend
-pub fn measure_matmul(backend: Backend, m: Int, n: Int, k: Int) -> TflopsResult {
+pub fn measure_matmul(
+  backend: Backend,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> TflopsResult {
   let actual = resolve_backend(backend)
   let flops = 2 * m * n * k
   let data_a = random_floats(m * k)

@@ -40,7 +40,13 @@ fn bench_square_size(n: Int) {
   io.println("")
 }
 
-fn bench_mkl(n: Int, iterations: Int, a: t.Tensor, b: t.Tensor, bias: t.Tensor) {
+fn bench_mkl(
+  n: Int,
+  iterations: Int,
+  a: t.Tensor,
+  b: t.Tensor,
+  bias: t.Tensor,
+) {
   case
     t.native_from_list(t.to_list(a), [n, n]),
     t.native_from_list(t.to_list(b), [n, n]),
@@ -69,7 +75,13 @@ fn bench_mkl(n: Int, iterations: Int, a: t.Tensor, b: t.Tensor, bias: t.Tensor) 
   }
 }
 
-fn bench_rtx(n: Int, iterations: Int, a: t.Tensor, b: t.Tensor, bias: t.Tensor) {
+fn bench_rtx(
+  n: Int,
+  iterations: Int,
+  a: t.Tensor,
+  b: t.Tensor,
+  bias: t.Tensor,
+) {
   case
     t.to_rtx4090_fp16(a),
     t.to_rtx4090_fp16(b),

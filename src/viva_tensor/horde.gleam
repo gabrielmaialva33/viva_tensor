@@ -30,7 +30,10 @@ pub fn set_positions(horde: Horde, data: List(Float)) -> Result(Horde, String) {
 }
 
 /// Set velocities for all entities
-pub fn set_velocities(horde: Horde, data: List(Float)) -> Result(Horde, String) {
+pub fn set_velocities(
+  horde: Horde,
+  data: List(Float),
+) -> Result(Horde, String) {
   case ffi.horde_set_velocities(horde, data) {
     Ok(Nil) -> Ok(horde)
     Error(error) -> Error(error)

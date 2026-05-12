@@ -110,7 +110,10 @@ fn benchmark_size(size: Int, backends: List(Backend), iterations: Int) {
   io.println("")
 }
 
-fn filter_backends_for_size(backends: List(Backend), size: Int) -> List(Backend) {
+fn filter_backends_for_size(
+  backends: List(Backend),
+  size: Int,
+) -> List(Backend) {
   list.filter(backends, fn(b) {
     case b {
       // Pure Erlang is too slow for large matrices
