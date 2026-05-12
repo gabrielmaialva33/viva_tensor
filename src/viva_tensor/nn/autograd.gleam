@@ -165,16 +165,8 @@ pub fn add(
   // But if we broadcast, grad_a might be larger than a.
   // We need to sum over the broadcast dimensions to match shapes.
   let backward = fn(grad: Tensor) {
-    let grad_shape = tensor.shape(grad)
-    let grad_a = case grad_shape == a_shape {
-      True -> grad
-      False -> sum_to_shape(grad, a_shape)
-    }
-
-    let grad_b = case grad_shape == b_shape {
-      True -> grad
-      False -> sum_to_shape(grad, b_shape)
-    }
+    use grad_a <- result.try(sum_to_shape(grad, a_shape))
+    use grad_b <- result.try(sum_to_shape(grad, b_shape))
 
     Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
@@ -219,15 +211,19 @@ pub fn mul(
   a: Variable,
   b: Variable,
 ) -> Result(Traced(Variable), TensorError) {
-  use res_data <- result.try(ops.mul(a.data, b.data))
+  use res_data <- result.try(ops.mul_broadcast(a.data, b.data))
 
   let res_id = tape.next_id
+  let a_shape = tensor.shape(a.data)
+  let b_shape = tensor.shape(b.data)
 
   // Backward: y = a * b => dy/da = b * grad, dy/db = a * grad
   // Product rule, meet chain rule. They get along well.
   let backward = fn(grad: Tensor) {
-    use grad_a <- result.try(ops.mul_auto(grad, b.data))
-    use grad_b <- result.try(ops.mul_auto(grad, a.data))
+    use grad_a_full <- result.try(ops.mul_broadcast(grad, b.data))
+    use grad_b_full <- result.try(ops.mul_broadcast(grad, a.data))
+    use grad_a <- result.try(sum_to_shape(grad_a_full, a_shape))
+    use grad_b <- result.try(sum_to_shape(grad_b_full, b_shape))
     Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
 
@@ -466,19 +462,117 @@ fn string_shape(shape: List(Int)) -> String {
 /// When we broadcast [3] to [2,3] in the forward pass,
 /// we must sum [2,3] gradients back to [3] in backward.
 /// This is the "reverse of broadcasting."
-fn sum_to_shape(t: Tensor, target_shape: List(Int)) -> Tensor {
-  let _data = tensor.to_list(t)
+fn sum_to_shape(
+  t: Tensor,
+  target_shape: List(Int),
+) -> Result(Tensor, TensorError) {
   let t_shape = tensor.shape(t)
 
   case t_shape == target_shape {
-    True -> t
+    True -> Ok(t)
     False -> {
-      // Simplified reduction: sum all and distribute evenly.
-      // TODO: Proper axis-aware reduction for non-trivial broadcasts.
-      let total = ops.sum(t)
-      let target_size = list.fold(target_shape, 1, fn(acc, d) { acc * d })
-      let avg = total /. int.to_float(target_size)
-      tensor.fill(target_shape, avg)
+      let rank_diff = list.length(t_shape) - list.length(target_shape)
+      case rank_diff < 0 || !ops.can_broadcast(target_shape, t_shape) {
+        True ->
+          Error(DimensionError(
+            "Cannot reduce gradient shape "
+            <> string_shape(t_shape)
+            <> " to broadcast source shape "
+            <> string_shape(target_shape),
+          ))
+        False -> {
+          let t_data = tensor.to_list(t)
+          let t_size = tensor.size(t)
+          let target_size = list.fold(target_shape, 1, fn(acc, d) { acc * d })
+          let padded_target_shape =
+            list.append(list.repeat(1, rank_diff), target_shape)
+
+          let accum =
+            indices(t_size)
+            |> list.fold(dict.new(), fn(acc, source_flat) {
+              let source_indices = flat_to_multi(source_flat, t_shape)
+              let target_indices =
+                source_to_target_indices(source_indices, padded_target_shape)
+                |> list.drop(rank_diff)
+              let target_flat = multi_to_flat(target_indices, target_shape)
+              let source_value = value_at(t_data, source_flat)
+
+              case dict.get(acc, target_flat) {
+                Ok(current) ->
+                  dict.insert(acc, target_flat, current +. source_value)
+                Error(_) -> dict.insert(acc, target_flat, source_value)
+              }
+            })
+
+          let reduced =
+            indices(target_size)
+            |> list.map(fn(target_flat) {
+              dict.get(accum, target_flat)
+              |> result.unwrap(0.0)
+            })
+
+          tensor.new(reduced, target_shape)
+        }
+      }
     }
   }
+}
+
+fn source_to_target_indices(
+  source_indices: List(Int),
+  target_shape: List(Int),
+) -> List(Int) {
+  list.zip(source_indices, target_shape)
+  |> list.map(fn(pair) {
+    let #(source_index, target_dim) = pair
+    case target_dim == 1 {
+      True -> 0
+      False -> source_index
+    }
+  })
+}
+
+fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {
+  let reversed = list.reverse(shape)
+  let #(indices, _) =
+    list.fold(reversed, #([], flat), fn(acc, dim) {
+      let #(idxs, remaining) = acc
+      let idx = remaining % dim
+      let next = remaining / dim
+      #([idx, ..idxs], next)
+    })
+  indices
+}
+
+fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
+  let strides = compute_strides(shape)
+  list.zip(indices, strides)
+  |> list.fold(0, fn(acc, pair) {
+    let #(idx, stride) = pair
+    acc + idx * stride
+  })
+}
+
+fn compute_strides(shape: List(Int)) -> List(Int) {
+  let reversed = list.reverse(shape)
+  let #(strides, _) =
+    list.fold(reversed, #([], 1), fn(acc, dim) {
+      let #(s, running) = acc
+      #([running, ..s], running * dim)
+    })
+  strides
+}
+
+fn indices(size: Int) -> List(Int) {
+  case size <= 0 {
+    True -> []
+    False -> list.range(0, size - 1)
+  }
+}
+
+fn value_at(values: List(Float), index: Int) -> Float {
+  values
+  |> list.drop(index)
+  |> list.first
+  |> result.unwrap(0.0)
 }

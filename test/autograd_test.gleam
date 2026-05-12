@@ -1,4 +1,6 @@
 import gleam/dict
+import gleam/float
+import gleam/list
 import gleeunit
 import gleeunit/should
 import viva_tensor/core/tensor
@@ -6,6 +8,23 @@ import viva_tensor/nn/autograd.{Traced}
 
 pub fn main() {
   gleeunit.main()
+}
+
+fn assert_close(actual: Float, expected: Float, tolerance: Float) -> Bool {
+  float.absolute_value(actual -. expected) <. tolerance
+}
+
+fn assert_list_close(
+  actual: List(Float),
+  expected: List(Float),
+  tolerance: Float,
+) -> Bool {
+  list.length(actual) == list.length(expected)
+  && list.zip(actual, expected)
+  |> list.all(fn(pair) {
+    let #(actual, expected) = pair
+    assert_close(actual, expected, tolerance)
+  })
 }
 
 // -----------------------------------------------------------------------------
@@ -116,4 +135,65 @@ pub fn composite_test() {
 
   // dz/dx = 2x + y = 2(2) + 3 = 7
   tensor.to_list(dx) |> should.equal([7.0])
+}
+
+pub fn broadcast_add_gradient_sums_over_expanded_axes_test() {
+  let tape = autograd.new_tape()
+  let assert Ok(x_data) =
+    tensor.new([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], [2, 3])
+  let bias_data = tensor.from_list([1.0, 2.0, 3.0])
+  let assert Ok(weight_data) =
+    tensor.new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3])
+
+  let Traced(x, tape1) = autograd.new_variable(tape, x_data)
+  let Traced(bias, tape2) = autograd.new_variable(tape1, bias_data)
+  let Traced(weight, tape3) = autograd.new_variable(tape2, weight_data)
+
+  let assert Ok(Traced(shifted, tape4)) = autograd.add(tape3, x, bias)
+  let assert Ok(Traced(weighted, tape5)) = autograd.mul(tape4, shifted, weight)
+  let Traced(loss, tape6) = autograd.mean(tape5, weighted)
+
+  let assert Ok(grads) = autograd.backward(tape6, loss)
+  let assert Ok(dbias) = dict.get(grads, bias.id)
+
+  tensor.shape(dbias) |> should.equal([3])
+  assert_list_close(
+    tensor.to_list(dbias),
+    [5.0 /. 6.0, 7.0 /. 6.0, 9.0 /. 6.0],
+    0.000001,
+  )
+  |> should.be_true()
+}
+
+pub fn broadcast_mul_gradient_sums_over_expanded_axes_test() {
+  let tape = autograd.new_tape()
+  let assert Ok(x_data) =
+    tensor.new([10.0, 20.0, 30.0, 40.0, 50.0, 60.0], [2, 3])
+  let scale_data = tensor.from_list([2.0, 3.0, 4.0])
+
+  let Traced(x, tape1) = autograd.new_variable(tape, x_data)
+  let Traced(scale, tape2) = autograd.new_variable(tape1, scale_data)
+
+  let assert Ok(Traced(scaled, tape3)) = autograd.mul(tape2, x, scale)
+  let Traced(loss, tape4) = autograd.mean(tape3, scaled)
+
+  let assert Ok(grads) = autograd.backward(tape4, loss)
+  let assert Ok(dx) = dict.get(grads, x.id)
+  let assert Ok(dscale) = dict.get(grads, scale.id)
+
+  tensor.shape(dx) |> should.equal([2, 3])
+  assert_list_close(
+    tensor.to_list(dx),
+    [2.0 /. 6.0, 3.0 /. 6.0, 4.0 /. 6.0, 2.0 /. 6.0, 3.0 /. 6.0, 4.0 /. 6.0],
+    0.000001,
+  )
+  |> should.be_true()
+
+  tensor.shape(dscale) |> should.equal([3])
+  assert_list_close(
+    tensor.to_list(dscale),
+    [50.0 /. 6.0, 70.0 /. 6.0, 90.0 /. 6.0],
+    0.000001,
+  )
+  |> should.be_true()
 }
