@@ -5,6 +5,7 @@ import gleeunit
 import gleeunit/should
 import viva_tensor/core/error
 import viva_tensor/core/tensor as core_tensor
+import viva_tensor/layout
 import viva_tensor/tensor
 
 @external(erlang, "math", "sqrt")
@@ -77,6 +78,112 @@ pub fn linspace_test() {
 pub fn linspace_two_test() {
   let t = core_tensor.linspace(0.0, 10.0, 2)
   core_tensor.to_list(t) |> should.equal([0.0, 10.0])
+}
+
+pub fn dense_layout_metadata_test() {
+  let assert Ok(t) = tensor.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+  let layout.TensorLayout(
+    storage,
+    device,
+    dtype,
+    shape,
+    strides,
+    offset,
+    size,
+    rank,
+    contiguous,
+  ) = tensor.layout(t)
+
+  storage |> should.equal(layout.DenseStorage)
+  device |> should.equal(layout.BeamCpu)
+  dtype |> should.equal(layout.Float64)
+  shape |> should.equal([2, 3])
+  strides |> should.equal([3, 1])
+  offset |> should.equal(0)
+  size |> should.equal(6)
+  rank |> should.equal(2)
+  contiguous |> should.be_true()
+}
+
+pub fn strided_transpose_layout_metadata_test() {
+  let assert Ok(t) = tensor.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0])
+  let assert Ok(transposed) = tensor.transpose_strided(t)
+  let layout.TensorLayout(
+    storage,
+    device,
+    dtype,
+    shape,
+    strides,
+    offset,
+    size,
+    rank,
+    contiguous,
+  ) = tensor.layout(transposed)
+
+  storage |> should.equal(layout.StridedStorage)
+  device |> should.equal(layout.BeamCpu)
+  dtype |> should.equal(layout.Float64)
+  shape |> should.equal([3, 2])
+  strides |> should.equal([1, 3])
+  offset |> should.equal(0)
+  size |> should.equal(6)
+  rank |> should.equal(2)
+  contiguous |> should.be_false()
+}
+
+pub fn broadcast_layout_metadata_uses_zero_stride_test() {
+  let row = tensor.from_list([1.0, 2.0, 3.0])
+  let assert Ok(view) = tensor.broadcast_to(row, [2, 3])
+  let layout.TensorLayout(
+    storage,
+    device,
+    dtype,
+    shape,
+    strides,
+    offset,
+    size,
+    rank,
+    contiguous,
+  ) = tensor.layout(view)
+
+  storage |> should.equal(layout.StridedStorage)
+  device |> should.equal(layout.BeamCpu)
+  dtype |> should.equal(layout.Float64)
+  shape |> should.equal([2, 3])
+  strides |> should.equal([0, 1])
+  offset |> should.equal(0)
+  size |> should.equal(6)
+  rank |> should.equal(2)
+  contiguous |> should.be_false()
+}
+
+pub fn native_layout_metadata_test() {
+  case tensor.native_zeros([2, 3]) {
+    Ok(native) -> {
+      let layout.TensorLayout(
+        storage,
+        device,
+        dtype,
+        shape,
+        strides,
+        offset,
+        size,
+        rank,
+        contiguous,
+      ) = tensor.layout(native)
+
+      storage |> should.equal(layout.NativeStorage)
+      device |> should.equal(layout.NativeCpu)
+      dtype |> should.equal(layout.Float64)
+      shape |> should.equal([2, 3])
+      strides |> should.equal([3, 1])
+      offset |> should.equal(0)
+      size |> should.equal(6)
+      rank |> should.equal(2)
+      contiguous |> should.be_true()
+    }
+    Error(_) -> should.be_true(True)
+  }
 }
 
 pub fn linspace_single_test() {
