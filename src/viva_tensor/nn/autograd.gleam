@@ -186,14 +186,18 @@ pub fn sub(
   a: Variable,
   b: Variable,
 ) -> Result(Traced(Variable), TensorError) {
-  use res_data <- result.try(ops.sub(a.data, b.data))
+  use res_data <- result.try(ops.add_broadcast(a.data, ops.negate(b.data)))
 
   let res_id = tape.next_id
+  let a_shape = tensor.shape(a.data)
+  let b_shape = tensor.shape(b.data)
 
   // Backward: y = a - b => dy/da = 1*grad, dy/db = -1*grad
   let backward = fn(grad: Tensor) {
     let neg_grad = ops.negate(grad)
-    Ok([#(a.id, grad), #(b.id, neg_grad)])
+    use grad_a <- result.try(sum_to_shape(grad, a_shape))
+    use grad_b <- result.try(sum_to_shape(neg_grad, b_shape))
+    Ok([#(a.id, grad_a), #(b.id, grad_b)])
   }
 
   let new_ops = dict.insert(tape.operations, res_id, backward)
