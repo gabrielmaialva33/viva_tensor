@@ -150,6 +150,46 @@ pub fn softmax_uniform_test() {
   |> should.be_true()
 }
 
+pub fn softmax_axis_rows_sum_to_one_test() {
+  let assert Ok(t) = core_tensor.new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3])
+  let assert Ok(r) = ops.softmax_axis(t, 1)
+  let vals = core_tensor.to_list(r)
+  let assert [a, b, c, d, e, f] = vals
+
+  assert_close(a +. b +. c, 1.0, 0.0001) |> should.be_true()
+  assert_close(d +. e +. f, 1.0, 0.0001) |> should.be_true()
+  { a <. b && b <. c && d <. e && e <. f } |> should.be_true()
+}
+
+pub fn softmax_axis_columns_sum_to_one_test() {
+  let assert Ok(t) = core_tensor.new([1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3])
+  let assert Ok(r) = ops.softmax_axis(t, 0)
+  let vals = core_tensor.to_list(r)
+  let assert [a, b, c, d, e, f] = vals
+
+  assert_close(a +. d, 1.0, 0.0001) |> should.be_true()
+  assert_close(b +. e, 1.0, 0.0001) |> should.be_true()
+  assert_close(c +. f, 1.0, 0.0001) |> should.be_true()
+  { a <. d && b <. e && c <. f } |> should.be_true()
+}
+
+pub fn softmax_axis_large_logits_stays_stable_test() {
+  let assert Ok(t) = core_tensor.new([1000.0, 1001.0, 2000.0, 2001.0], [2, 2])
+  let assert Ok(r) = ops.softmax_axis(t, 1)
+  let vals = core_tensor.to_list(r)
+  let assert [a, b, c, d] = vals
+
+  assert_close(a +. b, 1.0, 0.0001) |> should.be_true()
+  assert_close(c +. d, 1.0, 0.0001) |> should.be_true()
+  assert_list_close(vals, [0.268941, 0.731059, 0.268941, 0.731059], 0.0001)
+  |> should.be_true()
+}
+
+pub fn softmax_axis_invalid_axis_test() {
+  let t = core_tensor.from_list([1.0, 2.0, 3.0])
+  ops.softmax_axis(t, 1) |> should.be_error()
+}
+
 // =============================================================================
 // ELEMENT-WISE MATH OPERATIONS
 // =============================================================================

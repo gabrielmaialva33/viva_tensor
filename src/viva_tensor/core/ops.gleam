@@ -792,8 +792,6 @@ pub fn tanh(t: Tensor) -> Tensor {
 ///   softmax([1000, 1001, 1002]) = softmax([0, 1, 2]) = [0.09, 0.24, 0.67] ✓
 ///
 /// Mathematically equivalent because softmax(x) = softmax(x - c) for any c.
-///
-/// TODO: add axis parameter, this only works on 1D vectors right now
 pub fn softmax(t: Tensor) -> Tensor {
   let data = tensor.to_list(t)
   let max_val = max(t)
@@ -804,6 +802,60 @@ pub fn softmax(t: Tensor) -> Tensor {
     Ok(r) -> r
     Error(_) -> t
   }
+}
+
+/// Softmax along one axis, preserving the input shape.
+///
+/// This is the version you want for batched classification and attention:
+/// each slice along `axis` sums to 1 independently.
+pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  let shp = tensor.shape(t)
+  let rnk = list.length(shp)
+
+  case axis >= 0 && axis < rnk {
+    False -> Error(error.DimensionError("Invalid axis for softmax"))
+    True -> {
+      let data = tensor.to_list(t)
+      let total_size = tensor.size(t)
+      let axis_size = dim_at(shp, axis)
+
+      let result =
+        indices(total_size)
+        |> list.map(fn(flat_idx) {
+          let position = flat_to_multi(flat_idx, shp)
+          let group = softmax_group(data, shp, position, axis, axis_size)
+          let axis_pos = dim_at(position, axis)
+          value_at(group, axis_pos)
+        })
+
+      tensor.new(result, shp)
+    }
+  }
+}
+
+fn softmax_group(
+  data: List(Float),
+  shape: List(Int),
+  position: List(Int),
+  axis: Int,
+  axis_size: Int,
+) -> List(Float) {
+  let values =
+    indices(axis_size)
+    |> list.map(fn(axis_pos) {
+      let group_position = replace_at(position, axis, axis_pos)
+      let flat_idx = multi_to_flat(group_position, shape)
+      value_at(data, flat_idx)
+    })
+
+  let max_value =
+    list.fold(values, value_at(values, 0), fn(acc, value) {
+      float.max(acc, value)
+    })
+  let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
+  let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
+
+  list.map(shifted, fn(value) { value /. total })
 }
 
 // --- Broadcasting -----------------------------------------------------------
@@ -955,6 +1007,37 @@ fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
     let #(idx, stride) = pair
     acc + idx * stride
   })
+}
+
+fn dim_at(values: List(Int), index: Int) -> Int {
+  values
+  |> list.drop(index)
+  |> list.first
+  |> result.unwrap(0)
+}
+
+fn value_at(values: List(Float), index: Int) -> Float {
+  values
+  |> list.drop(index)
+  |> list.first
+  |> result.unwrap(0.0)
+}
+
+fn replace_at(values: List(Int), index: Int, value: Int) -> List(Int) {
+  values
+  |> list.index_map(fn(item, i) {
+    case i == index {
+      True -> value
+      False -> item
+    }
+  })
+}
+
+fn indices(size: Int) -> List(Int) {
+  case size <= 0 {
+    True -> []
+    False -> list.range(0, size - 1)
+  }
 }
 
 fn compute_strides(shape: List(Int)) -> List(Int) {
