@@ -92,6 +92,10 @@ All notable changes to this project will be documented in this file.
 - Added stable root utilities backed by `gleam_community_maths`: `linspace()`,
   `try_linspace()`, `logspace()`, `try_logspace()`, `is_close()`, and
   `all_close()`.
+- Added cumulative and order-statistic reductions backed by
+  `gleam_community_maths`: `cumsum()`, `try_cumsum()`, `cumprod()`,
+  `try_cumprod()`, `median()`, `try_median()`, `percentile()`, and
+  `try_percentile()`.
 
 ### Highlights
 

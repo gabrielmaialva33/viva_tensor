@@ -110,6 +110,14 @@ Use broadcasting-specific functions when shapes differ.
 | `try_mean(tensor)`               | Fallible mean preserving materialization and empty-tensor errors. |
 | `product(tensor)`                | Product over all elements.                             |
 | `try_product(tensor)`            | Fallible product preserving materialization errors.     |
+| `cumsum(tensor)`                 | Cumulative sum over flattened values, preserving shape. |
+| `try_cumsum(tensor)`             | Fallible cumulative sum preserving materialization errors. |
+| `cumprod(tensor)`                | Cumulative product over flattened values, preserving shape. |
+| `try_cumprod(tensor)`            | Fallible cumulative product preserving materialization errors. |
+| `median(tensor)`                 | Median over all elements.                              |
+| `try_median(tensor)`             | Fallible median preserving materialization and empty-tensor errors. |
+| `percentile(tensor, percentile)` | Percentile using linear interpolation.                 |
+| `try_percentile(tensor, percentile)` | Fallible percentile with explicit bounds and empty-tensor errors. |
 | `mean_axis(tensor, axis)`        | Mean along one axis.                                   |
 | `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
 | `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
