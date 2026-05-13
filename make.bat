@@ -19,7 +19,7 @@ REM ============================================================================
 
 setlocal enabledelayedexpansion
 
-set "OUTPUT_DIR=output"
+set "OUTPUT_DIR=bench\reports"
 set "DATE=%date:~-4%-%date:~3,2%-%date:~0,2%_%time:~0,2%-%time:~3,2%-%time:~6,2%"
 set "DATE=%DATE: =0%"
 
@@ -68,7 +68,7 @@ goto end
 :bench
 call :ensure_output
 echo [BENCH] Executando benchmarks...
-gleam run -m viva_tensor/benchmark_full > "%OUTPUT_DIR%\benchmark_%DATE%.txt" 2>&1
+gleam run -m viva_tensor/bench/full > "%OUTPUT_DIR%\benchmark_%DATE%.txt" 2>&1
 echo [OK] Benchmark salvo em: %OUTPUT_DIR%\benchmark_%DATE%.txt
 goto end
 
@@ -87,14 +87,14 @@ goto end
 :demo
 call :ensure_output
 echo [DEMO] Executando demonstracao...
-gleam run -m viva_tensor/demo > "%OUTPUT_DIR%\demo_%DATE%.txt" 2>&1
+gleam run -m viva_tensor/examples/demo > "%OUTPUT_DIR%\demo_%DATE%.txt" 2>&1
 echo [OK] Demo salva em: %OUTPUT_DIR%\demo_%DATE%.txt
 goto end
 
 :docs
 echo [DOCS] Gerando documentacao...
 gleam docs build
-echo [OK] Docs geradas em: build\docs\
+echo [OK] Docs geradas em: build\dev\docs\viva_tensor\index.html
 goto end
 
 :clean
@@ -105,7 +105,7 @@ goto end
 
 :fmt
 echo [FMT] Formatando codigo...
-gleam format src test
+gleam format src test dev
 echo [OK] Codigo formatado!
 goto end
 
@@ -168,7 +168,7 @@ echo.
 echo Comandos:
 echo   make build       - Compila o projeto
 echo   make test        - Roda os testes
-echo   make bench       - Roda benchmarks Gleam (salva em output/)
+echo   make bench       - Roda benchmarks Gleam (salva em bench\reports\)
 echo   make bench-fused - Roda Fused Quantized Matmul benchmark (MKL 800+ GFLOPS!)
 echo   make demo        - Roda demonstracao
 echo   make docs        - Gera documentacao

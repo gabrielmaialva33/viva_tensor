@@ -34,6 +34,7 @@ deps/
 # Benchmark outputs (generated, not committed)
 bench/data/
 bench/reports/
+bench/test_int8_imma
 
 # Editor
 .vscode/

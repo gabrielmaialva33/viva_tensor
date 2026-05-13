@@ -120,7 +120,7 @@ else
 endif
 	@$(LOG) "$(GREEN)[OK]$(NC) NIF-free tests finished!"
 
-## Run benchmarks and save to output/
+## Run benchmarks and save to bench/reports/
 bench: build ensure-output
 	@$(LOG) "$(YELLOW)[BENCH]$(NC) Running benchmarks..."
 	@echo "=== viva_tensor Benchmark - $(DATE) ===" > $(BENCH_OUTPUT)
@@ -148,7 +148,7 @@ bench-regression: build ensure-output
 metrics: build ensure-output
 	@$(LOG) "$(YELLOW)[METRICS]$(NC) Running metrics..."
 	@echo "=== viva_tensor Metrics - $(DATE) ===" > $(METRICS_OUTPUT)
-	gleam run -m viva_tensor/metrics >> $(METRICS_OUTPUT) 2>&1
+	gleam run -m viva_tensor/bench/full >> $(METRICS_OUTPUT) 2>&1
 	@$(LOG) "$(GREEN)[OK]$(NC) Metrics saved to: $(METRICS_OUTPUT)"
 
 ## Run the full demonstration
