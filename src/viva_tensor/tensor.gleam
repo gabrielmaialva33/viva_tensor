@@ -1211,6 +1211,137 @@ pub fn argmin(t: Tensor) -> Int {
   |> result.unwrap(0)
 }
 
+/// Absolute value for every element, preserving materialization failures.
+pub fn try_abs(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, float.absolute_value)
+}
+
+/// Absolute value for every element.
+pub fn abs(t: Tensor) -> Tensor {
+  try_abs(t)
+  |> result.unwrap(t)
+}
+
+/// Square every element, preserving materialization failures.
+pub fn try_square(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) { x *. x })
+}
+
+/// Square every element.
+pub fn square(t: Tensor) -> Tensor {
+  try_square(t)
+  |> result.unwrap(t)
+}
+
+/// Square root every element, rejecting negative values.
+pub fn try_sqrt(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  case list.any(data, fn(x) { x <. 0.0 }) {
+    True -> Error(InvalidShape("sqrt requires all values >= 0"))
+    False -> Ok(Tensor(data: list.map(data, ffi.sqrt), shape: shape(t)))
+  }
+}
+
+/// Square root every element.
+pub fn sqrt(t: Tensor) -> Tensor {
+  try_sqrt(t)
+  |> result.unwrap(t)
+}
+
+/// Exponential for every element, preserving materialization failures.
+pub fn try_exp(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, ffi.exp)
+}
+
+/// Exponential for every element.
+pub fn exp(t: Tensor) -> Tensor {
+  try_exp(t)
+  |> result.unwrap(t)
+}
+
+/// Natural logarithm for every element, rejecting non-positive values.
+pub fn try_log(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  case list.any(data, fn(x) { x <=. 0.0 }) {
+    True -> Error(InvalidShape("log requires all values > 0"))
+    False -> Ok(Tensor(data: list.map(data, ffi.log), shape: shape(t)))
+  }
+}
+
+/// Natural logarithm for every element.
+pub fn log(t: Tensor) -> Tensor {
+  try_log(t)
+  |> result.unwrap(t)
+}
+
+/// Floor every element, preserving materialization failures.
+pub fn try_floor(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, float.floor)
+}
+
+/// Floor every element.
+pub fn floor(t: Tensor) -> Tensor {
+  try_floor(t)
+  |> result.unwrap(t)
+}
+
+/// Ceiling every element, preserving materialization failures.
+pub fn try_ceil(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, float.ceiling)
+}
+
+/// Ceiling every element.
+pub fn ceil(t: Tensor) -> Tensor {
+  try_ceil(t)
+  |> result.unwrap(t)
+}
+
+/// Round every element to the nearest integer value.
+pub fn try_round(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) { int.to_float(float.round(x)) })
+}
+
+/// Round every element to the nearest integer value.
+pub fn round(t: Tensor) -> Tensor {
+  try_round(t)
+  |> result.unwrap(t)
+}
+
+/// Return -1, 0, or 1 for each element.
+pub fn try_sign(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) {
+    case x <. 0.0 {
+      True -> -1.0
+      False ->
+        case x >. 0.0 {
+          True -> 1.0
+          False -> 0.0
+        }
+    }
+  })
+}
+
+/// Return -1, 0, or 1 for each element.
+pub fn sign(t: Tensor) -> Tensor {
+  try_sign(t)
+  |> result.unwrap(t)
+}
+
+/// Reciprocal for every element, rejecting zeros.
+pub fn try_reciprocal(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  case list.any(data, fn(x) { x == 0.0 }) {
+    True -> Error(InvalidShape("reciprocal requires all values != 0"))
+    False -> Ok(Tensor(data: list.map(data, fn(x) { 1.0 /. x }), shape: shape(t)))
+  }
+}
+
+/// Reciprocal for every element.
+pub fn reciprocal(t: Tensor) -> Tensor {
+  try_reciprocal(t)
+  |> result.unwrap(t)
+}
+
 /// Sum along a specific axis, preserving materialization failures.
 /// For a [2, 3] tensor, sum_axis(_, 0) gives [3], sum_axis(_, 1) gives [2].
 pub fn try_sum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
@@ -1426,6 +1557,64 @@ pub fn min_axis_keepdims(
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
   try_min_axis_keepdims(t, axis_idx)
+}
+
+/// Flat argmax index along a specific axis, represented as Float values.
+pub fn try_argmax_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, argmax_list)
+}
+
+/// Flat argmax index along a specific axis, represented as Float values.
+pub fn argmax_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_argmax_axis(t, axis_idx)
+}
+
+/// Flat argmax index along a specific axis while keeping the reduced dimension.
+pub fn try_argmax_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, argmax_list)
+}
+
+/// Flat argmax index along a specific axis while keeping the reduced dimension.
+pub fn argmax_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_argmax_axis_keepdims(t, axis_idx)
+}
+
+/// Flat argmin index along a specific axis, represented as Float values.
+pub fn try_argmin_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, argmin_list)
+}
+
+/// Flat argmin index along a specific axis, represented as Float values.
+pub fn argmin_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_argmin_axis(t, axis_idx)
+}
+
+/// Flat argmin index along a specific axis while keeping the reduced dimension.
+pub fn try_argmin_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, argmin_list)
+}
+
+/// Flat argmin index along a specific axis while keeping the reduced dimension.
+pub fn argmin_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_argmin_axis_keepdims(t, axis_idx)
 }
 
 /// Softmax along one axis, preserving the input shape and materialization failures.
@@ -1662,6 +1851,129 @@ fn sum_axis_output(
   })
 }
 
+fn cumulative_axis(
+  t: Tensor,
+  axis_idx: Int,
+  transform: fn(List(Float)) -> List(Float),
+) -> Result(Tensor, TensorError) {
+  let r = rank(t)
+  case axis_idx >= 0 && axis_idx < r {
+    False -> Error(DimensionError("Invalid axis index"))
+    True -> {
+      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      let inner_size = layout_math.size(list.drop(t.shape, axis_idx + 1))
+
+      case axis_size <= 0 {
+        True -> Ok(Tensor(data: [], shape: t.shape))
+        False -> {
+          use data <- result.try(try_to_list(t))
+          use result_data <- result.try(axis_transform_data(
+            data,
+            size(t),
+            axis_size,
+            inner_size,
+            transform,
+          ))
+          Ok(Tensor(data: result_data, shape: t.shape))
+        }
+      }
+    }
+  }
+}
+
+fn axis_transform_data(
+  data: List(Float),
+  total_size: Int,
+  axis_size: Int,
+  inner_size: Int,
+  transform: fn(List(Float)) -> List(Float),
+) -> Result(List(Float), TensorError) {
+  let group_width = axis_size * inner_size
+
+  case group_width <= 0 {
+    True -> Ok([])
+    False -> {
+      let outer_size = total_size / group_width
+      list.range(0, outer_size - 1)
+      |> list.fold(Ok([]), fn(acc, outer) {
+        use values <- result.try(acc)
+        use chunk <- result.try(axis_transform_outer(
+          data,
+          outer,
+          axis_size,
+          inner_size,
+          transform,
+        ))
+        Ok(list.append(values, chunk))
+      })
+    }
+  }
+}
+
+fn axis_transform_outer(
+  data: List(Float),
+  outer: Int,
+  axis_size: Int,
+  inner_size: Int,
+  transform: fn(List(Float)) -> List(Float),
+) -> Result(List(Float), TensorError) {
+  use groups <- result.try(
+    list.range(0, inner_size - 1)
+    |> list.fold(Ok([]), fn(acc, inner) {
+      use values <- result.try(acc)
+      use axis_values <- result.try(axis_values(
+        data,
+        outer,
+        inner,
+        axis_size,
+        inner_size,
+      ))
+      Ok([transform(axis_values), ..values])
+    })
+    |> result.map(list.reverse),
+  )
+
+  list.range(0, axis_size - 1)
+  |> list.fold(Ok([]), fn(acc, axis_pos) {
+    use values <- result.try(acc)
+    use axis_values <- result.try(
+      groups
+      |> list.fold(Ok([]), fn(group_acc, group) {
+        use group_values <- result.try(group_acc)
+        use value <- result.try(
+          list_at_float(group, axis_pos)
+          |> result.map_error(fn(_) {
+            IndexOutOfBounds(axis_pos, list.length(group))
+          }),
+        )
+        Ok([value, ..group_values])
+      })
+      |> result.map(list.reverse),
+    )
+    Ok(list.append(values, axis_values))
+  })
+}
+
+fn axis_values(
+  data: List(Float),
+  outer: Int,
+  inner: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> Result(List(Float), TensorError) {
+  list.range(0, axis_size - 1)
+  |> list.fold(Ok([]), fn(acc, axis_pos) {
+    use values <- result.try(acc)
+    let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
+    use value <- result.try(
+      list_at_float(data, index)
+      |> result.map_error(fn(_) { IndexOutOfBounds(index, list.length(data)) }),
+    )
+    Ok([value, ..values])
+  })
+  |> result.map(list.reverse)
+}
+
 fn reduce_axis_with_keepdims(
   t: Tensor,
   axis_idx: Int,
@@ -1756,6 +2068,57 @@ fn min_list(values: List(Float)) -> Result(Float, TensorError) {
     [] -> Error(DimensionError("Cannot compute min of an empty tensor"))
     [first, ..rest] ->
       Ok(list.fold(rest, first, fn(acc, x) { float.min(acc, x) }))
+  }
+}
+
+fn variance_list(values: List(Float)) -> Result(Float, TensorError) {
+  case maths.variance(values, 0) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(DimensionError("Cannot compute variance of an empty tensor"))
+  }
+}
+
+fn std_list(values: List(Float)) -> Result(Float, TensorError) {
+  case maths.standard_deviation(values, 0) {
+    Ok(value) -> Ok(value)
+    Error(_) -> Error(DimensionError("Cannot compute std of an empty tensor"))
+  }
+}
+
+fn argmax_list(values: List(Float)) -> Result(Float, TensorError) {
+  case values {
+    [] -> Error(DimensionError("Cannot compute argmax of an empty tensor"))
+    [first, ..rest] -> {
+      let #(idx, _, _) =
+        list.fold(rest, #(0, first, 1), fn(acc, value) {
+          let #(best_idx, best_value, current_idx) = acc
+          case value >. best_value {
+            True -> #(current_idx, value, current_idx + 1)
+            False -> #(best_idx, best_value, current_idx + 1)
+          }
+        })
+
+      Ok(int.to_float(idx))
+    }
+  }
+}
+
+fn argmin_list(values: List(Float)) -> Result(Float, TensorError) {
+  case values {
+    [] -> Error(DimensionError("Cannot compute argmin of an empty tensor"))
+    [first, ..rest] -> {
+      let #(idx, _, _) =
+        list.fold(rest, #(0, first, 1), fn(acc, value) {
+          let #(best_idx, best_value, current_idx) = acc
+          case value <. best_value {
+            True -> #(current_idx, value, current_idx + 1)
+            False -> #(best_idx, best_value, current_idx + 1)
+          }
+        })
+
+      Ok(int.to_float(idx))
+    }
   }
 }
 
@@ -2598,13 +2961,30 @@ pub fn try_clamp(
   min_val: Float,
   max_val: Float,
 ) -> Result(Tensor, TensorError) {
-  try_map(t, fn(x) { float.min(float.max(x, min_val), max_val) })
+  case min_val >. max_val {
+    True -> Error(InvalidShape("clamp requires min <= max"))
+    False -> try_map(t, fn(x) { float.min(float.max(x, min_val), max_val) })
+  }
 }
 
 /// Clamp values to [min, max].
 pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   try_clamp(t, min_val, max_val)
   |> result.unwrap(t)
+}
+
+/// Alias for `try_clamp`.
+pub fn try_clip(
+  t: Tensor,
+  min_val: Float,
+  max_val: Float,
+) -> Result(Tensor, TensorError) {
+  try_clamp(t, min_val, max_val)
+}
+
+/// Alias for `clamp`.
+pub fn clip(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
+  clamp(t, min_val, max_val)
 }
 
 // --- Random ---
@@ -2826,6 +3206,30 @@ pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use pair <- result.try(broadcast_pair(a, b))
   let #(a_bc, b_bc) = pair
   div(a_bc, b_bc)
+}
+
+/// Element-wise maximum with broadcasting.
+pub fn maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
+  map2(a_bc, b_bc, float.max)
+}
+
+/// Alias for `maximum`.
+pub fn try_maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  maximum(a, b)
+}
+
+/// Element-wise minimum with broadcasting.
+pub fn minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
+  map2(a_bc, b_bc, float.min)
+}
+
+/// Alias for `minimum`.
+pub fn try_minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  minimum(a, b)
 }
 
 // --- Shape Manipulation ---
