@@ -24,6 +24,7 @@
 import gleam/list
 import gleam/result
 import viva_tensor/backend/capability as backend_capability
+import viva_tensor/backend/dispatch as backend_dispatch
 import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/layout as tensor_layout
@@ -1895,266 +1896,98 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
   let caps = capabilities()
   let available =
     caps.backend_capabilities
-    |> list.filter(fn(capability) { capability.available })
-    |> list.map(fn(capability) { capability.backend })
+    |> list.map(fn(capability) {
+      backend_dispatch.Capability(
+        backend: capability.backend,
+        available: capability.available,
+        device: capability.device,
+        dtypes: capability.dtypes,
+        operations: capability.operations,
+        reason: capability.reason,
+      )
+    })
+    |> backend_dispatch.available_backends
 
+  backend_dispatch.plan_backend(
+    operation,
+    operation_kind(operation),
+    available,
+    backend_set(),
+    caps.nif_loaded,
+  )
+  |> to_tensor_backend_plan
+}
+
+fn backend_set() -> backend_dispatch.BackendSet(TensorBackend) {
+  backend_dispatch.BackendSet(
+    pure_gleam: BackendPureGleam,
+    zig_simd: BackendZigSimd,
+    mkl: BackendMkl,
+    cuda_fp32: BackendCudaFp32,
+    cuda_fp16: BackendCudaFp16,
+    cuda_int8: BackendCudaInt8,
+    cuda_sparse: BackendCudaSparse,
+  )
+}
+
+fn operation_kind(
+  operation: TensorOperation,
+) -> backend_dispatch.OperationKind {
   case operation {
-    OperationMatmul(m, n, k) ->
-      plan_matmul(operation, m, n, k, available, caps.nif_loaded)
-    OperationElementwise ->
-      plan_first_available(
-        operation,
-        available,
-        [BackendZigSimd, BackendMkl, BackendPureGleam],
-        "Element-wise ops prefer SIMD, then native CPU, then pure Gleam.",
-        "Backend does not support stable element-wise dispatch.",
-      )
-    OperationBroadcast ->
-      plan_first_available(
-        operation,
-        available,
-        [BackendZigSimd, BackendPureGleam],
-        "Broadcasting preserves views and only needs native compute when materialized.",
-        "Backend does not support stable broadcast dispatch.",
-      )
-    OperationReduction ->
-      plan_first_available(
-        operation,
-        available,
-        [BackendZigSimd, BackendMkl, BackendPureGleam],
-        "Reductions prefer SIMD/native CPU and fall back to pure Gleam.",
-        "Backend does not support stable reduction dispatch.",
-      )
-    OperationSoftmax ->
-      plan_first_available(
-        operation,
-        available,
-        [BackendPureGleam],
-        "Softmax currently uses the stable Gleam implementation.",
-        "Softmax currently only has stable pure Gleam dispatch.",
-      )
+    OperationElementwise -> backend_dispatch.Elementwise
+    OperationBroadcast -> backend_dispatch.Broadcast
+    OperationReduction -> backend_dispatch.Reduction
+    OperationSoftmax -> backend_dispatch.Softmax
+    OperationMatmul(m, n, k) -> backend_dispatch.Matmul(m, n, k)
   }
+}
+
+fn to_tensor_backend_plan(
+  plan: backend_dispatch.Plan(TensorOperation, TensorBackend),
+) -> TensorBackendPlan {
+  TensorBackendPlan(
+    operation: plan.operation,
+    selected: plan.selected,
+    fallbacks: plan.fallbacks,
+    rejected: list.map(plan.rejected, fn(rejection) {
+      BackendRejection(backend: rejection.backend, reason: rejection.reason)
+    }),
+    reason: plan.reason,
+  )
 }
 
 fn build_backend_capabilities(
   zig_loaded: Bool,
   backends: List(TflopsBackend),
 ) -> List(BackendCapability) {
-  [
-    BackendCapability(
-      backend: BackendPureGleam,
-      available: True,
-      device: BackendBeamCpu,
-      dtypes: [BackendFloat64],
-      operations: [
-        BackendElementwise,
-        BackendBroadcast,
-        BackendReduction,
-        BackendSoftmax,
-        BackendMatmul,
-      ],
-      reason: "Always available fallback.",
-    ),
-    BackendCapability(
-      backend: BackendZigSimd,
-      available: zig_loaded,
-      device: BackendNativeCpu,
-      dtypes: [BackendFloat64],
-      operations: [
-        BackendElementwise,
-        BackendReduction,
-        BackendMatmul,
-      ],
-      reason: "Portable SIMD NIF for CPU hot paths.",
-    ),
-    BackendCapability(
-      backend: BackendMkl,
-      available: zig_loaded,
-      device: BackendNativeCpu,
-      dtypes: [BackendFloat64, BackendFloat32],
-      operations: [BackendMatmul],
-      reason: "Native BLAS path exposed through the loaded Zig NIF.",
-    ),
-    BackendCapability(
-      backend: BackendCudaFp32,
-      available: list.contains(backends, tflops_mod.CudaFP32),
-      device: BackendCuda,
-      dtypes: [BackendFloat32],
-      operations: [BackendMatmul],
-      reason: "CUDA FP32/cuBLAS dense matrix multiplication.",
-    ),
-    BackendCapability(
-      backend: BackendCudaFp16,
-      available: list.contains(backends, tflops_mod.CudaFP16),
-      device: BackendCuda,
-      dtypes: [BackendFloat16],
-      operations: [BackendMatmul],
-      reason: "CUDA FP16 Tensor Core dense matrix multiplication.",
-    ),
-    BackendCapability(
-      backend: BackendCudaInt8,
-      available: list.contains(backends, tflops_mod.CudaINT8),
-      device: BackendCuda,
-      dtypes: [BackendInt8],
-      operations: [BackendMatmul],
-      reason: "CUDA INT8 IMMA Tensor Core matrix multiplication.",
-    ),
-    BackendCapability(
-      backend: BackendCudaSparse,
-      available: list.contains(backends, tflops_mod.CudaSparse),
-      device: BackendCuda,
-      dtypes: [BackendSparseFloat16],
-      operations: [BackendMatmul],
-      reason: "CUDA 2:4 sparse Tensor Core matrix multiplication.",
-    ),
-  ]
-}
-
-fn plan_matmul(
-  operation: TensorOperation,
-  m: Int,
-  n: Int,
-  k: Int,
-  available: List(TensorBackend),
-  nif_loaded: Bool,
-) -> TensorBackendPlan {
-  let tensor_core_aligned = m % 16 == 0 && n % 16 == 0 && k % 16 == 0
-  let candidates = case tensor_core_aligned {
-    True -> [
-      BackendCudaSparse,
-      BackendCudaFp16,
-      BackendCudaInt8,
-      BackendCudaFp32,
-      BackendMkl,
-      BackendZigSimd,
-      BackendPureGleam,
-    ]
-    False -> [
-      BackendCudaFp32,
-      BackendMkl,
-      BackendZigSimd,
-      BackendPureGleam,
-    ]
-  }
-  let reason = case nif_loaded {
-    True ->
-      case tensor_core_aligned {
-        True -> "Matmul dimensions are Tensor Core aligned; CUDA is preferred."
-        False ->
-          "Matmul dimensions are not Tensor Core aligned; dense CUDA/CPU fallback is preferred."
-      }
-    False -> "Native NIF is not loaded; pure Gleam fallback is selected."
-  }
-
-  plan_first_available(
-    operation,
-    available,
-    candidates,
-    reason,
-    "Backend is not part of the stable matmul dispatch path for this shape.",
+  backend_dispatch.capabilities(
+    backend_set(),
+    BackendBeamCpu,
+    BackendNativeCpu,
+    BackendCuda,
+    BackendFloat64,
+    BackendFloat32,
+    BackendFloat16,
+    BackendInt8,
+    BackendSparseFloat16,
+    BackendElementwise,
+    BackendBroadcast,
+    BackendReduction,
+    BackendSoftmax,
+    BackendMatmul,
+    zig_loaded,
+    backends,
   )
-}
-
-fn plan_first_available(
-  operation: TensorOperation,
-  available: List(TensorBackend),
-  candidates: List(TensorBackend),
-  reason: String,
-  unsupported_reason: String,
-) -> TensorBackendPlan {
-  let selected = select_backend(available, candidates)
-
-  TensorBackendPlan(
-    operation: operation,
-    selected: selected,
-    fallbacks: candidates,
-    rejected: backend_rejections(
-      operation,
-      selected,
-      available,
-      candidates,
-      unsupported_reason,
-    ),
-    reason: reason,
-  )
-}
-
-fn select_backend(
-  available: List(TensorBackend),
-  candidates: List(TensorBackend),
-) -> TensorBackend {
-  candidates
-  |> list.find(fn(candidate) { list.contains(available, candidate) })
-  |> result.unwrap(BackendPureGleam)
-}
-
-fn backend_rejections(
-  operation: TensorOperation,
-  selected: TensorBackend,
-  available: List(TensorBackend),
-  candidates: List(TensorBackend),
-  unsupported_reason: String,
-) -> List(BackendRejection) {
-  all_tensor_backends()
-  |> list.filter(fn(backend) { backend != selected })
-  |> list.map(fn(backend) {
-    BackendRejection(
-      backend: backend,
-      reason: rejection_reason(
-        operation,
-        backend,
-        available,
-        candidates,
-        unsupported_reason,
-      ),
+  |> list.map(fn(capability) {
+    BackendCapability(
+      backend: capability.backend,
+      available: capability.available,
+      device: capability.device,
+      dtypes: capability.dtypes,
+      operations: capability.operations,
+      reason: capability.reason,
     )
   })
-}
-
-fn rejection_reason(
-  operation: TensorOperation,
-  backend: TensorBackend,
-  available: List(TensorBackend),
-  candidates: List(TensorBackend),
-  unsupported_reason: String,
-) -> String {
-  case list.contains(candidates, backend), list.contains(available, backend) {
-    False, _ ->
-      operation_specific_rejection(operation, backend, unsupported_reason)
-    True, False -> "Backend is not available in this VM."
-    True, True -> "A higher-priority backend was selected."
-  }
-}
-
-fn operation_specific_rejection(
-  operation: TensorOperation,
-  backend: TensorBackend,
-  fallback_reason: String,
-) -> String {
-  case operation, backend {
-    OperationMatmul(_, _, _), BackendCudaSparse ->
-      "Sparse Tensor Core dispatch requires an explicit sparse tensor."
-    OperationMatmul(_, _, _), BackendCudaInt8 ->
-      "INT8 Tensor Core dispatch requires explicit quantized tensors."
-    OperationMatmul(m, n, k), BackendCudaFp16 ->
-      case m % 16 == 0 && n % 16 == 0 && k % 16 == 0 {
-        True -> fallback_reason
-        False -> "FP16 Tensor Core matmul requires dimensions aligned to 16."
-      }
-    _, _ -> fallback_reason
-  }
-}
-
-fn all_tensor_backends() -> List(TensorBackend) {
-  [
-    BackendCudaSparse,
-    BackendCudaFp16,
-    BackendCudaInt8,
-    BackendCudaFp32,
-    BackendMkl,
-    BackendZigSimd,
-    BackendPureGleam,
-  ]
 }
 
 fn backend_is_available(
@@ -2162,9 +1995,17 @@ fn backend_is_available(
   capabilities: List(BackendCapability),
 ) -> Bool {
   capabilities
-  |> list.any(fn(capability) {
-    capability.backend == backend && capability.available
+  |> list.map(fn(capability) {
+    backend_dispatch.Capability(
+      backend: capability.backend,
+      available: capability.available,
+      device: capability.device,
+      dtypes: capability.dtypes,
+      operations: capability.operations,
+      reason: capability.reason,
+    )
   })
+  |> fn(capabilities) { backend_dispatch.is_available(backend, capabilities) }
 }
 
 fn run_matmul_backends(
