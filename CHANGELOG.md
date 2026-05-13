@@ -49,6 +49,9 @@ All notable changes to this project will be documented in this file.
   native FFI boundaries, and HexDocs pages.
 - Added `try_to_list()` and routed fallible dense fallback paths through it so
   native materialization failures are not silently converted into empty tensors.
+- Extended error hygiene into internal core tensor, shape, broadcast, and
+  auto-dispatch paths so fallible operations propagate materialization and
+  indexing failures instead of filling with zero-like defaults.
 
 ### Highlights
 

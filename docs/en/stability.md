@@ -25,6 +25,11 @@ Stable functions should preserve semantic-versioning compatibility, return
 `Result` for recoverable failures, and keep a pure BEAM fallback unless the
 function is explicitly documented as native-only.
 
+Fallible tensor operations must not silently convert backend or materialization
+failures into empty tensors, zeros, or partially computed values. When data must
+be materialized from native storage, use `try_to_list()` in `Result`-returning
+paths.
+
 ## Experimental Surface
 
 The following areas are intentionally experimental until their contracts are

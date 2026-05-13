@@ -42,7 +42,9 @@ let b = t.fill([2, 3], 1.5)
 ## Fallible Operations
 
 Shape-changing and binary tensor operations return `Result` rather than
-panicking. Chain them with `gleam/result.try`.
+panicking. Chain them with `gleam/result.try`. Use `try_to_list()` instead of
+`to_list()` inside fallible code when native materialization failures need to be
+preserved.
 
 ```gleam
 pub fn example() {
