@@ -22,8 +22,8 @@ not on the current native or planner internals.
 | `zig_src/` | Native C, CUDA, and Zig implementation for the optional NIF. |
 | `priv/` | Runtime native artifacts loaded by Erlang when present. |
 | `test/` | Unit, behavior, public API contract, and NIF/no-NIF compatibility tests. |
-| `dev/` | Development-only Gleam examples and benchmark entrypoints. |
-| `bench/` | External benchmark scripts, generated comparisons, and low-level native experiments. |
+| `dev/` | Development-only Gleam examples and benchmark entrypoints. These modules are runnable with `gleam run -m ...` but are not supported package API. |
+| `bench/` | External benchmark scripts, grouped by runtime or tool: `python/`, `r/`, `erlang/`, `cuda/`, `scripts/`, and `windows/`. Generated `data/` and `reports/` stay ignored. |
 | `docs/` | Maintainer-authored guides and long-form documentation. |
 
 ## Public API Boundary

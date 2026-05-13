@@ -213,13 +213,13 @@ closely derived code must retain the original notices and be tracked in
 
 ```bash
 # Individual benchmarks (Erlang escripts)
-./bench/bench_gpu_peak.erl       # FP32/TF32
-./bench/bench_fp16_imma.erl      # FP16 Tensor Cores
-./bench/bench_int8_imma.erl      # INT8 IMMA
-./bench/bench_fp8_peak.erl       # FP8 E4M3
-./bench/bench_sparse_peak.erl    # 2:4 Sparsity
-./bench/bench_fused_peak.erl     # Fused GEMM+activation
-./bench/bench_batched_peak.erl   # Batched GEMM
+./bench/erlang/bench_gpu_peak.erl       # FP32/TF32
+./bench/erlang/bench_fp16_imma.erl      # FP16 Tensor Cores
+./bench/erlang/bench_int8_imma.erl      # INT8 IMMA
+./bench/erlang/bench_fp8_peak.erl       # FP8 E4M3
+./bench/erlang/bench_sparse_peak.erl    # 2:4 Sparsity
+./bench/erlang/bench_fused_peak.erl     # Fused GEMM+activation
+./bench/erlang/bench_batched_peak.erl   # Batched GEMM
 ```
 
 ---
