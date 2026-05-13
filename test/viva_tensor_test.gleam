@@ -705,6 +705,25 @@ pub fn softmax_axis_public_facade_test() {
   }
 }
 
+pub fn try_softmax_axis_public_facade_test() {
+  case t.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) {
+    Ok(logits) ->
+      case t.try_softmax_axis(logits, 1) {
+        Ok(probabilities) -> {
+          let assert [a, b, c, d, e, f] = t.to_list(probabilities)
+
+          t.shape(probabilities) |> should.equal([2, 3])
+          { a +. b +. c >. 0.999 && a +. b +. c <. 1.001 }
+          |> should.be_true()
+          { d +. e +. f >. 0.999 && d +. e +. f <. 1.001 }
+          |> should.be_true()
+        }
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn capabilities_smoke_test() {
   let caps = t.capabilities()
   { caps.nif_loaded || !caps.nif_loaded } |> should.be_true()

@@ -116,7 +116,7 @@ pub fn stable_softmax_contract_test() {
 
   case t.reshape(logits, [2, 2]) {
     Ok(matrix) ->
-      case t.softmax_axis(matrix, 1) {
+      case t.try_softmax_axis(matrix, 1) {
         Ok(probabilities) -> {
           t.shape(probabilities) |> should.equal([2, 2])
           t.to_list(probabilities) |> should.equal([0.5, 0.5, 0.5, 0.5])
