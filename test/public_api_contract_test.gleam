@@ -16,8 +16,23 @@ pub fn stable_creation_and_layout_contract_test() {
   t.rank(tensor) |> should.equal(2)
   t.to_list(tensor) |> should.equal([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
   t.try_to_list(tensor) |> should.equal(Ok([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]))
+  t.try_sum(tensor) |> should.equal(Ok(6.0))
   t.device(tensor) |> should.equal(layout.BeamCpu)
   t.dtype(tensor) |> should.equal(layout.Float64)
+}
+
+pub fn stable_fallible_unary_contract_test() {
+  let tensor = t.from_list([1.0, 2.0, 3.0])
+
+  case t.try_map(tensor, fn(x) { x +. 1.0 }) {
+    Ok(mapped) -> t.to_list(mapped) |> should.equal([2.0, 3.0, 4.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.try_scale(tensor, 2.0) {
+    Ok(scaled) -> t.to_list(scaled) |> should.equal([2.0, 4.0, 6.0])
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn stable_broadcasting_contract_test() {

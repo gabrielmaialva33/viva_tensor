@@ -410,16 +410,34 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
 
 // --- Element-wise Operations ---
 
-/// Apply function to each element
-pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
-  let data = get_data(t)
-  Tensor(data: list.map(data, f), shape: t.shape)
+/// Apply function to each element, preserving materialization failures.
+pub fn try_map(
+  t: Tensor,
+  f: fn(Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(Tensor(data: list.map(data, f), shape: t.shape))
 }
 
-/// Apply function with index
+/// Apply function to each element.
+pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
+  try_map(t, f)
+  |> result.unwrap(t)
+}
+
+/// Apply function with index, preserving materialization failures.
+pub fn try_map_indexed(
+  t: Tensor,
+  f: fn(Float, Int) -> Float,
+) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(Tensor(data: list.index_map(data, fn(x, i) { f(x, i) }), shape: t.shape))
+}
+
+/// Apply function with index.
 pub fn map_indexed(t: Tensor, f: fn(Float, Int) -> Float) -> Tensor {
-  let data = get_data(t)
-  Tensor(data: list.index_map(data, fn(x, i) { f(x, i) }), shape: t.shape)
+  try_map_indexed(t, f)
+  |> result.unwrap(t)
 }
 
 /// Apply a binary function element-wise over tensors with the same shape.
@@ -729,16 +747,22 @@ fn get_element_or_zero(t: Tensor, index: Int) -> Float {
 }
 
 /// Scale by constant
-pub fn scale(t: Tensor, s: Float) -> Tensor {
+pub fn try_scale(t: Tensor, s: Float) -> Result(Tensor, TensorError) {
   case t {
     NativeTensor(ref, shape) -> {
       case ffi.nt_scale(ref, s) {
-        Ok(result_ref) -> NativeTensor(ref: result_ref, shape: shape)
-        Error(_) -> map(t, fn(x) { x *. s })
+        Ok(result_ref) -> Ok(NativeTensor(ref: result_ref, shape: shape))
+        Error(_) -> try_map(t, fn(x) { x *. s })
       }
     }
-    _ -> map(t, fn(x) { x *. s })
+    _ -> try_map(t, fn(x) { x *. s })
   }
+}
+
+/// Scale by constant.
+pub fn scale(t: Tensor, s: Float) -> Tensor {
+  try_scale(t, s)
+  |> result.unwrap(t)
 }
 
 /// Add constant
@@ -754,11 +778,11 @@ pub fn negate(t: Tensor) -> Tensor {
 // --- Reduction Operations ---
 
 /// Sum all elements
-pub fn sum(t: Tensor) -> Float {
+pub fn try_sum(t: Tensor) -> Result(Float, TensorError) {
   case t {
     NativeTensor(ref, _) -> {
       case ffi.nt_sum(ref) {
-        Ok(value) -> value
+        Ok(value) -> Ok(value)
         Error(_) -> sum_dense(t)
       }
     }
@@ -766,9 +790,15 @@ pub fn sum(t: Tensor) -> Float {
   }
 }
 
-fn sum_dense(t: Tensor) -> Float {
-  let data = get_data(t)
-  list.fold(data, 0.0, fn(acc, x) { acc +. x })
+/// Sum all elements.
+pub fn sum(t: Tensor) -> Float {
+  try_sum(t)
+  |> result.unwrap(0.0)
+}
+
+fn sum_dense(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(list.fold(data, 0.0, fn(acc, x) { acc +. x }))
 }
 
 /// Product of all elements

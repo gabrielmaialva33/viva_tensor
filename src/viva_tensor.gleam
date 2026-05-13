@@ -362,6 +362,11 @@ pub fn scale(t: Tensor, s: Float) -> Tensor {
   tensor.scale(t, s)
 }
 
+/// Scale by constant, preserving materialization failures.
+pub fn try_scale(t: Tensor, s: Float) -> Result(Tensor, TensorError) {
+  tensor.try_scale(t, s)
+}
+
 /// Write out = a * scalar into a preallocated native tensor.
 pub fn scale_into(
   out: Tensor,
@@ -374,6 +379,14 @@ pub fn scale_into(
 /// Apply function to each element
 pub fn map(t: Tensor, f: fn(Float) -> Float) -> Tensor {
   tensor.map(t, f)
+}
+
+/// Apply function to each element, preserving materialization failures.
+pub fn try_map(
+  t: Tensor,
+  f: fn(Float) -> Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_map(t, f)
 }
 
 /// Apply a binary function element-wise over tensors with the same shape.
@@ -395,6 +408,11 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
 /// Sum everything
 pub fn sum(t: Tensor) -> Float {
   tensor.sum(t)
+}
+
+/// Sum everything, preserving materialization failures.
+pub fn try_sum(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_sum(t)
 }
 
 /// Mean of all elements

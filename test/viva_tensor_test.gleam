@@ -127,10 +127,26 @@ pub fn scale_test() {
   t.to_list(s) |> should.equal([2.0, 4.0, 6.0])
 }
 
+pub fn try_scale_test() {
+  let a = t.from_list([1.0, 2.0, 3.0])
+  case t.try_scale(a, 2.0) {
+    Ok(s) -> t.to_list(s) |> should.equal([2.0, 4.0, 6.0])
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn map_test() {
   let a = t.from_list([1.0, 4.0, 9.0])
   let b = t.map(a, fn(x) { x *. x })
   t.to_list(b) |> should.equal([1.0, 16.0, 81.0])
+}
+
+pub fn try_map_test() {
+  let a = t.from_list([1.0, 4.0, 9.0])
+  case t.try_map(a, fn(x) { x *. x }) {
+    Ok(b) -> t.to_list(b) |> should.equal([1.0, 16.0, 81.0])
+    Error(_) -> should.fail()
+  }
 }
 
 // =============================================================================
@@ -140,6 +156,11 @@ pub fn map_test() {
 pub fn sum_test() {
   let a = t.from_list([1.0, 2.0, 3.0, 4.0])
   t.sum(a) |> should.equal(10.0)
+}
+
+pub fn try_sum_test() {
+  let a = t.from_list([1.0, 2.0, 3.0, 4.0])
+  t.try_sum(a) |> should.equal(Ok(10.0))
 }
 
 pub fn mean_test() {
