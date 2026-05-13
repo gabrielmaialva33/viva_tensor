@@ -68,6 +68,10 @@ pub fn example() {
 | `div(a, b)`             | Element-wise division for equal shapes.       |
 | `scale(tensor, scalar)` | Multiply every element by a scalar.           |
 | `try_scale(tensor, scalar)` | Fallible scalar multiplication preserving native materialization errors. |
+| `add_scalar(tensor, scalar)` | Add a scalar to every element.          |
+| `try_add_scalar(tensor, scalar)` | Fallible scalar addition preserving native materialization errors. |
+| `negate(tensor)`        | Negate every element.                         |
+| `try_negate(tensor)`    | Fallible negation preserving native materialization errors. |
 | `clamp(tensor, min, max)` | Clamp values into a closed interval.        |
 | `try_clamp(tensor, min, max)` | Fallible clamp preserving native materialization errors. |
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |

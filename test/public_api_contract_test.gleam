@@ -51,6 +51,16 @@ pub fn stable_fallible_unary_contract_test() {
     Error(_) -> should.fail()
   }
 
+  case t.try_add_scalar(tensor, 1.5) {
+    Ok(shifted) -> t.to_list(shifted) |> should.equal([2.5, 3.5, 4.5])
+    Error(_) -> should.fail()
+  }
+
+  case t.try_negate(tensor) {
+    Ok(negated) -> t.to_list(negated) |> should.equal([-1.0, -2.0, -3.0])
+    Error(_) -> should.fail()
+  }
+
   case t.try_clamp(t.from_list([-1.0, 0.5, 2.0]), 0.0, 1.0) {
     Ok(clamped) -> t.to_list(clamped) |> should.equal([0.0, 0.5, 1.0])
     Error(_) -> should.fail()

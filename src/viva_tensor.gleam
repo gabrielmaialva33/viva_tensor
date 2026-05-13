@@ -848,6 +848,26 @@ pub fn try_normalize(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_normalize(t)
 }
 
+/// Add a scalar to every element.
+pub fn add_scalar(t: Tensor, scalar: Float) -> Tensor {
+  tensor.add_scalar(t, scalar)
+}
+
+/// Add a scalar to every element, preserving materialization failures.
+pub fn try_add_scalar(t: Tensor, scalar: Float) -> Result(Tensor, TensorError) {
+  tensor.try_add_scalar(t, scalar)
+}
+
+/// Negate every element.
+pub fn negate(t: Tensor) -> Tensor {
+  tensor.negate(t)
+}
+
+/// Negate every element, preserving materialization failures.
+pub fn try_negate(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_negate(t)
+}
+
 /// Clamp values
 pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   tensor.clamp(t, min_val, max_val)
