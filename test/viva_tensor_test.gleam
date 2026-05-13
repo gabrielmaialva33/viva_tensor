@@ -684,6 +684,23 @@ pub fn try_flatten_test() {
   }
 }
 
+pub fn try_norm_test() {
+  let vector = t.from_list([3.0, 4.0])
+  t.try_norm(vector) |> should.equal(Ok(5.0))
+}
+
+pub fn try_normalize_test() {
+  let vector = t.from_list([3.0, 4.0])
+  case t.try_normalize(vector) {
+    Ok(normalized) -> {
+      let assert [a, b] = t.to_list(normalized)
+      { a >. 0.599 && a <. 0.601 } |> should.be_true()
+      { b >. 0.799 && b <. 0.801 } |> should.be_true()
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn squeeze_test() {
   let a = t.zeros([1, 3, 1])
   let s = t.squeeze(a)

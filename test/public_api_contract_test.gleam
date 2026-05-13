@@ -49,6 +49,8 @@ pub fn stable_fallible_unary_contract_test() {
     }
     Error(_) -> should.fail()
   }
+
+  t.try_norm(t.from_list([3.0, 4.0])) |> should.equal(Ok(5.0))
 }
 
 pub fn stable_axis_reduction_contract_test() {

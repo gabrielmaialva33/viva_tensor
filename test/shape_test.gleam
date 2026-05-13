@@ -80,6 +80,17 @@ pub fn take_first_test() {
   tensor.to_list(r) |> should.equal([1.0, 2.0, 3.0])
 }
 
+pub fn try_take_first_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  case tensor.try_take_first(t, 2) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([2])
+      tensor.to_list(r) |> should.equal([1.0, 2.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn take_first_2d_test() {
   // [1, 2, 3]
   // [4, 5, 6]
@@ -106,6 +117,17 @@ pub fn take_last_test() {
   let r = tensor.take_last(t, 2)
   tensor.shape(r) |> should.equal([2])
   tensor.to_list(r) |> should.equal([4.0, 5.0])
+}
+
+pub fn try_take_last_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  case tensor.try_take_last(t, 2) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([2])
+      tensor.to_list(r) |> should.equal([2.0, 3.0])
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn take_last_2d_test() {
