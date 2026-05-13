@@ -33,6 +33,7 @@ import viva_tensor/core/format as tensor_format
 import viva_tensor/core/linalg
 import viva_tensor/data/dataloader
 import viva_tensor/io/hf_loader as hf_loader_io
+import viva_tensor/io/onnx as onnx_io
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/metrics/classification as metrics_classification
@@ -1370,6 +1371,49 @@ pub fn safetensors_write(
   tensors: Dict(String, Tensor),
 ) -> Result(Nil, TensorError) {
   safetensors_io.write(path, tensors)
+}
+
+// --- ONNX I/O ---------------------------------------------------------------
+
+/// Re-export of `viva_tensor/io/onnx.OnnxGraph` for the public facade.
+pub type OnnxGraph =
+  onnx_io.OnnxGraph
+
+/// Re-export of `viva_tensor/io/onnx.OnnxNode`.
+pub type OnnxNode =
+  onnx_io.OnnxNode
+
+/// Re-export of `viva_tensor/io/onnx.OnnxAttribute`.
+pub type OnnxAttribute =
+  onnx_io.OnnxAttribute
+
+/// Re-export of `viva_tensor/io/onnx.OnnxError`.
+pub type OnnxError =
+  onnx_io.OnnxError
+
+/// Parse a JSON-encoded ONNX graph.
+///
+/// Supported op set (v1): `Add`, `Sub`, `Mul`, `MatMul`, `Gemm`, `Relu`,
+/// `Sigmoid`, `Tanh`, `Gelu`, `Softmax`, `Transpose`, `Reshape`, `Constant`,
+/// `LayerNormalization`. See `viva_tensor/io/onnx.parse_graph`.
+pub fn onnx_parse_graph(json_str: String) -> Result(OnnxGraph, OnnxError) {
+  onnx_io.parse_graph(json_str)
+}
+
+/// Execute a parsed ONNX graph against a dict of named input tensors.
+///
+/// Returns the full execution table — pick the named graph outputs from it.
+/// See `viva_tensor/io/onnx.run_graph` for the v1 supported op set.
+pub fn onnx_run_graph(
+  graph: OnnxGraph,
+  feeds: Dict(String, Tensor),
+) -> Result(Dict(String, Tensor), OnnxError) {
+  onnx_io.run_graph(graph, feeds)
+}
+
+/// Return the list of ONNX op_types supported by `onnx_run_graph` in v1.
+pub fn onnx_supported_ops() -> List(String) {
+  onnx_io.supported_ops()
 }
 
 // --- Utils ------------------------------------------------------------------
