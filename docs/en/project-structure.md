@@ -19,10 +19,13 @@ well-documented public module surface.
 |:-----|:--------|
 | `src/` | Packaged runtime code. This is what users compile as a dependency. |
 | `src/viva_tensor.gleam` | Stable facade. User examples should prefer `import viva_tensor as t`. |
-| `src/viva_tensor/` | Domain modules for tensor APIs, layout, axes, named tensors, quantization, sparse tensors, neural-network helpers, and backend adapters. |
+| `src/viva_tensor/` | Domain modules for tensor APIs, layout, axes, named tensors, quantization, neural-network helpers, and internal adapters. |
 | `src/viva_tensor/core/` | Implementation core. Shape, tensor storage, errors, FFI wrappers, and layout math live here. |
 | `src/viva_tensor/backend/` | Backend protocol and planning internals. |
-| `src/viva_tensor/quant/`, `nn/`, `optim/` | Domain-specific experimental areas until their public contracts are stable. |
+| `src/viva_tensor/native/` | Optional native backend adapters and performance helpers for BLAS, CUDA, sparse kernels, and TFLOPS benchmarking. |
+| `src/viva_tensor/observability/` | Telemetry and measurement helpers that support tests, benchmarks, and native-path diagnostics. |
+| `src/viva_tensor/experimental/` | Research-oriented modules such as HDC, Horde, and LNS until they have stable package contracts. |
+| `src/viva_tensor/quant/`, `nn/`, `optim/` | Domain-specific areas whose modules stay internal until their public contracts are stable. |
 | `src/*_ffi.erl`, `src/*_nif.erl`, `src/*_zig.erl` | Erlang bridge modules required by the BEAM target. Keep these explicit and close to packaged source. |
 | `test/` | Unit, behavior, public API contract, and no-NIF compatibility tests. |
 | `dev/` | Development-only Gleam entrypoints for examples and benchmarks. These are intentionally outside `src/` so they do not become package API. |
@@ -60,7 +63,8 @@ Implementation modules should remain listed in `gleam.toml` under
 Use short domain names for stable modules: `layout`, `axis`, `named`.
 
 Use explicit internal names for implementation modules: `core/tensor`,
-`core/layout_math`, `backend/protocol`, `quant/turboquant`.
+`core/layout_math`, `backend/protocol`, `native/cuda`, `observability/metrics`,
+`experimental/horde`, `quant/turboquant`.
 
 Avoid putting benchmark, demo, or one-off experiment modules in `src/`. If a
 module exists to run a measurement or show an idea, put it in `dev/` or `bench/`

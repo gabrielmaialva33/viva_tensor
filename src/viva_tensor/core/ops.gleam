@@ -19,7 +19,7 @@ import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi
 import viva_tensor/core/layout_math
 import viva_tensor/core/tensor.{type Tensor}
-import viva_tensor/telemetry
+import viva_tensor/observability/telemetry
 
 // --- Element-wise Ops -------------------------------------------------------
 

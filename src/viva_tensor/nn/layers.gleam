@@ -17,7 +17,7 @@ import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi
 import viva_tensor/core/tensor
 import viva_tensor/nn/autograd.{type Tape, type Traced, type Variable, Traced}
-import viva_tensor/telemetry
+import viva_tensor/observability/telemetry
 
 // -------------------------------------------------------------------------
 // Linear Layer - The Workhorse of Neural Networks

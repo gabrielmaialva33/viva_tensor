@@ -6,9 +6,9 @@ import viva_tensor as t
 import viva_tensor/axis
 import viva_tensor/core/ops
 import viva_tensor/core/tensor as core_tensor
-import viva_tensor/cuda.{CpuFallback}
 import viva_tensor/layout
 import viva_tensor/named
+import viva_tensor/native/cuda.{CpuFallback}
 import viva_tensor/tensor
 
 pub fn main() -> Nil {

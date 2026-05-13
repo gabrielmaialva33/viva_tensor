@@ -1,7 +1,7 @@
 import gleam/float
 import gleeunit
 import gleeunit/should
-import viva_tensor/metrics
+import viva_tensor/observability/metrics
 import viva_tensor/tensor
 
 pub fn main() -> Nil {

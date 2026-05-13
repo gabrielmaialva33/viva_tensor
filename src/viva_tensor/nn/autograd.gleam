@@ -56,7 +56,7 @@ import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/ops
 import viva_tensor/core/tensor.{type Tensor}
-import viva_tensor/telemetry
+import viva_tensor/observability/telemetry
 
 // -------------------------------------------------------------------------
 // Core Types - The Building Blocks of Differentiation
