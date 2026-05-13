@@ -68,6 +68,8 @@ pub fn example() {
 | `div(a, b)`             | Element-wise division for equal shapes.       |
 | `scale(tensor, scalar)` | Multiply every element by a scalar.           |
 | `try_scale(tensor, scalar)` | Fallible scalar multiplication preserving native materialization errors. |
+| `clamp(tensor, min, max)` | Clamp values into a closed interval.        |
+| `try_clamp(tensor, min, max)` | Fallible clamp preserving native materialization errors. |
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |
 | `try_map(tensor, fun)`  | Fallible scalar mapping preserving native materialization errors. |
 | `softmax_axis(tensor, axis)` | Normalize each slice along an axis.     |

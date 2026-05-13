@@ -74,6 +74,8 @@ All notable changes to this project will be documented in this file.
 - Added fallible `try_take_first()`, `try_take_last()`, `try_norm()`, and
   `try_normalize()` helpers so utility operations can preserve materialization
   failures while keeping the existing convenience API compatible.
+- Added fallible scalar utility helpers `try_add_scalar()`, `try_negate()`, and
+  `try_clamp()`, with `try_clamp()` exposed from the stable root facade.
 
 ### Highlights
 
