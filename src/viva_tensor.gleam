@@ -34,6 +34,8 @@ import viva_tensor/core/linalg
 import viva_tensor/data/dataloader
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
+import viva_tensor/metrics/classification as metrics_classification
+import viva_tensor/metrics/regression as metrics_regression
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
@@ -3330,4 +3332,125 @@ pub fn pad_or_truncate(
   pad_id: Int,
 ) -> List(Int) {
   text_tokenizer.pad_or_truncate(ids, max_length, pad_id)
+}
+
+// --- Classification / regression metrics ------------------------------------
+
+/// Averaging strategy for multi-class precision / recall / F1.
+pub type Average =
+  metrics_classification.Average
+
+/// Classification accuracy: `(1/N) * sum_i [pred_i == target_i]`.
+pub fn accuracy(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_classification.accuracy(predictions, targets)
+}
+
+/// Confusion matrix `[num_classes, num_classes]` where `cm[true, pred]`
+/// counts samples.
+pub fn confusion_matrix(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+) -> Result(Tensor, TensorError) {
+  metrics_classification.confusion_matrix(predictions, targets, num_classes)
+}
+
+/// Precision aggregated by the chosen `Average`.
+pub fn precision(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+  average: Average,
+) -> Result(Float, TensorError) {
+  metrics_classification.precision(predictions, targets, num_classes, average)
+}
+
+/// Recall aggregated by the chosen `Average`.
+pub fn recall(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+  average: Average,
+) -> Result(Float, TensorError) {
+  metrics_classification.recall(predictions, targets, num_classes, average)
+}
+
+/// F1-score aggregated by the chosen `Average`.
+pub fn f1(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+  average: Average,
+) -> Result(Float, TensorError) {
+  metrics_classification.f1(predictions, targets, num_classes, average)
+}
+
+/// Top-K accuracy on 2D logits with 1D class-index targets.
+pub fn top_k_accuracy(
+  logits: Tensor,
+  targets: Tensor,
+  k: Int,
+) -> Result(Float, TensorError) {
+  metrics_classification.top_k_accuracy(logits, targets, k)
+}
+
+/// Per-class intersection-over-union.
+pub fn iou_per_class(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+) -> Result(List(Float), TensorError) {
+  metrics_classification.iou_per_class(predictions, targets, num_classes)
+}
+
+/// Mean of per-class IoU.
+pub fn mean_iou(
+  predictions: Tensor,
+  targets: Tensor,
+  num_classes: Int,
+) -> Result(Float, TensorError) {
+  metrics_classification.mean_iou(predictions, targets, num_classes)
+}
+
+/// Mean Absolute Error: `(1/N) * sum_i |pred_i - target_i|`.
+pub fn mean_absolute_error(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_regression.mean_absolute_error(predictions, targets)
+}
+
+/// Mean Squared Error: `(1/N) * sum_i (pred_i - target_i)^2`.
+pub fn mean_squared_error(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_regression.mean_squared_error(predictions, targets)
+}
+
+/// Root Mean Squared Error: `sqrt(MSE)`.
+pub fn root_mean_squared_error(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_regression.root_mean_squared_error(predictions, targets)
+}
+
+/// Coefficient of determination: `1 - SS_res / SS_tot`.
+pub fn r_squared(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_regression.r_squared(predictions, targets)
+}
+
+/// Mean Absolute Percentage Error: `(100/N) * sum_i |pred_i - target_i| / |target_i|`.
+pub fn mean_absolute_percentage_error(
+  predictions: Tensor,
+  targets: Tensor,
+) -> Result(Float, TensorError) {
+  metrics_regression.mean_absolute_percentage_error(predictions, targets)
 }
