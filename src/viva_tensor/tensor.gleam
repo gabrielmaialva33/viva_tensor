@@ -992,7 +992,10 @@ pub fn cumprod(t: Tensor) -> Tensor {
 }
 
 /// Cumulative sum along one axis, preserving the original shape.
-pub fn try_cumsum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+pub fn try_cumsum_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
   cumulative_axis(t, axis_idx, maths.cumulative_sum)
 }
 
@@ -1002,7 +1005,10 @@ pub fn cumsum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
 }
 
 /// Cumulative product along one axis, preserving the original shape.
-pub fn try_cumprod_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+pub fn try_cumprod_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
   cumulative_axis(t, axis_idx, maths.cumulative_product)
 }
 
@@ -1316,7 +1322,10 @@ fn mean_axis_with_keepdims(
 }
 
 /// Variance along a specific axis, preserving materialization failures.
-pub fn try_variance_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+pub fn try_variance_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
   reduce_axis_with_keepdims(t, axis_idx, False, variance_list)
 }
 
