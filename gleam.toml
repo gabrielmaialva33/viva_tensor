@@ -25,6 +25,7 @@ internal_modules = [
   "viva_tensor/native/*",
   "viva_tensor/nn/activations",
   "viva_tensor/nn/autograd",
+  "viva_tensor/nn/conv",
   "viva_tensor/nn/embedding",
   "viva_tensor/nn/layers",
   "viva_tensor/nn/flash_attention",

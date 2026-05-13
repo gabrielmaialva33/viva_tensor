@@ -33,6 +33,7 @@ import viva_tensor/core/linalg
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
+import viva_tensor/nn/conv as nn_conv
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/embedding as nn_embedding
@@ -2079,6 +2080,100 @@ pub fn avg_pool2d(
   stride_w: Int,
 ) -> Result(Tensor, TensorError) {
   tensor.avg_pool2d(input, pool_h, pool_w, stride_h, stride_w)
+}
+
+// --- Extra Conv Variants (Conv1d / Conv3d / ConvTranspose2d) ---------------
+
+/// Configuration for a 1D convolution layer.
+pub type Conv1dConfig =
+  nn_conv.Conv1dConfig
+
+/// Configuration for a 3D convolution layer.
+pub type Conv3dConfig =
+  nn_conv.Conv3dConfig
+
+/// Configuration for a 2D transposed convolution.
+pub type ConvTranspose2dConfig =
+  nn_conv.ConvTranspose2dConfig
+
+/// Initialize a Conv1d layer with zero weights and bias.
+pub fn conv1d_init(
+  in_channels in_channels: Int,
+  out_channels out_channels: Int,
+  kernel_size kernel_size: Int,
+  stride stride: Int,
+  padding padding: Int,
+) -> Conv1dConfig {
+  nn_conv.conv1d_init(
+    in_channels: in_channels,
+    out_channels: out_channels,
+    kernel_size: kernel_size,
+    stride: stride,
+    padding: padding,
+  )
+}
+
+/// 1D convolution forward pass. Output length =
+/// `(L_in + 2*padding - kernel) / stride + 1`.
+pub fn conv1d_forward(
+  config: Conv1dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_conv.conv1d_forward(config, input)
+}
+
+/// Initialize a Conv3d layer with zero weights and bias.
+pub fn conv3d_init(
+  in_channels in_channels: Int,
+  out_channels out_channels: Int,
+  kernel_size kernel_size: #(Int, Int, Int),
+  stride stride: #(Int, Int, Int),
+  padding padding: #(Int, Int, Int),
+) -> Conv3dConfig {
+  nn_conv.conv3d_init(
+    in_channels: in_channels,
+    out_channels: out_channels,
+    kernel_size: kernel_size,
+    stride: stride,
+    padding: padding,
+  )
+}
+
+/// 3D convolution forward pass. Output dim =
+/// `(In + 2*pad - kernel) / stride + 1` per spatial axis.
+pub fn conv3d_forward(
+  config: Conv3dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_conv.conv3d_forward(config, input)
+}
+
+/// Initialize a ConvTranspose2d layer with zero weights and bias.
+pub fn conv_transpose_2d_init(
+  in_channels in_channels: Int,
+  out_channels out_channels: Int,
+  kernel_size kernel_size: #(Int, Int),
+  stride stride: #(Int, Int),
+  padding padding: #(Int, Int),
+  output_padding output_padding: #(Int, Int),
+) -> ConvTranspose2dConfig {
+  nn_conv.conv_transpose_2d_init(
+    in_channels: in_channels,
+    out_channels: out_channels,
+    kernel_size: kernel_size,
+    stride: stride,
+    padding: padding,
+    output_padding: output_padding,
+  )
+}
+
+/// 2D transposed convolution (deconv) forward pass. Output dim =
+/// `(In - 1) * stride - 2*padding + (kernel - 1) + output_padding + 1`.
+pub fn conv_transpose_2d_forward(
+  config: ConvTranspose2dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_conv.conv_transpose_2d_forward(config, input)
 }
 
 /// Global average pooling
