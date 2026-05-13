@@ -58,6 +58,7 @@ import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
 import viva_tensor/text/tokenizer as text_tokenizer
+import viva_tensor/text/unigram as text_unigram
 import viva_tensor/vision/transforms as vision_transforms
 
 // --- Types ------------------------------------------------------------------
@@ -3683,6 +3684,164 @@ pub fn bpe_encode(tokenizer: BpeTokenizer, text: String) -> List(Int) {
 /// ```
 pub fn bpe_decode(tokenizer: BpeTokenizer, ids: List(Int)) -> String {
   text_tokenizer.bpe_decode(tokenizer, ids)
+}
+
+// --- Unigram / SentencePiece tokenizers (re-export) -------------------------
+
+/// SentencePiece/T5-style Unigram LM tokenizer. Inference uses Viterbi
+/// dynamic programming over the lattice of in-vocab subwords.
+pub type UnigramTokenizer =
+  text_unigram.UnigramTokenizer
+
+/// Which underlying segmentation a `SentencePieceTokenizer` uses.
+pub type SentencePieceMode =
+  text_unigram.SentencePieceMode
+
+/// SentencePiece-compatible wrapper around either a `UnigramTokenizer` or a
+/// `BpeTokenizer`, preserving the `▁`-prefix convention.
+pub type SentencePieceTokenizer =
+  text_unigram.SentencePieceTokenizer
+
+/// Build a `UnigramTokenizer` from a list of `(token, log_prob)` pairs.
+/// Encoding uses **Viterbi** (max-sum of log-probs), not greedy.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hello", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// ```
+pub fn unigram_tokenizer_from_pieces(
+  pieces: List(#(String, Float)),
+  unk_token: String,
+  bos_token: String,
+  eos_token: String,
+) -> UnigramTokenizer {
+  text_unigram.unigram_tokenizer_from_pieces(
+    pieces,
+    unk_token,
+    bos_token,
+    eos_token,
+  )
+}
+
+/// Encode `text` into ids using **Viterbi** dynamic programming. Output is
+/// `[bos_id, ..pieces, eos_id]`. Pieces falling outside the vocab become
+/// `unk_id`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hello", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// let _ = t.unigram_encode(tok, "hello")
+/// ```
+pub fn unigram_encode(tokenizer: UnigramTokenizer, text: String) -> List(Int) {
+  text_unigram.unigram_encode(tokenizer, text)
+}
+
+/// Decode unigram ids back to a string. Strips `bos_id`/`eos_id`, undoes the
+/// `▁`-prefix convention, removes a single leading space.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hello", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// let _ = t.unigram_decode(tok, [1, 3, 2])
+/// ```
+pub fn unigram_decode(tokenizer: UnigramTokenizer, ids: List(Int)) -> String {
+  text_unigram.unigram_decode(tokenizer, ids)
+}
+
+/// Wrap a `UnigramTokenizer` as a `SentencePieceTokenizer`. Encoding goes
+/// through Viterbi.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let inner = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hi", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// let _ = t.sentence_piece_unigram(inner)
+/// ```
+pub fn sentence_piece_unigram(
+  unigram: UnigramTokenizer,
+) -> SentencePieceTokenizer {
+  text_unigram.sentence_piece_unigram(unigram)
+}
+
+/// Wrap a `BpeTokenizer` as a `SentencePieceTokenizer`. Encoding uses the
+/// greedy merge loop on input renormalized to the `▁`-prefix convention.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let inner = t.bpe_tokenizer_from_vocab_and_merges(
+///   ["?", "▁", "h", "i"], [], "?",
+/// )
+/// let _ = t.sentence_piece_bpe(inner)
+/// ```
+pub fn sentence_piece_bpe(bpe: BpeTokenizer) -> SentencePieceTokenizer {
+  text_unigram.sentence_piece_bpe(bpe)
+}
+
+/// Encode `text` with a `SentencePieceTokenizer`. Dispatches on the
+/// wrapper's mode (Viterbi for `SpUnigram`, greedy merges for `SpBpe`).
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let inner = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hi", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// let _ = t.sentence_piece_encode(t.sentence_piece_unigram(inner), "hi")
+/// ```
+pub fn sentence_piece_encode(
+  tokenizer: SentencePieceTokenizer,
+  text: String,
+) -> List(Int) {
+  text_unigram.sentence_piece_encode(tokenizer, text)
+}
+
+/// Decode ids with a `SentencePieceTokenizer`. Reuses the inner Unigram or
+/// BPE decoder and unmaps `▁` to ASCII space.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let inner = t.unigram_tokenizer_from_pieces(
+///   [#("<unk>", -100.0), #("<s>", -100.0), #("</s>", -100.0),
+///    #("▁hi", -1.0)],
+///   "<unk>", "<s>", "</s>",
+/// )
+/// let _ = t.sentence_piece_decode(t.sentence_piece_unigram(inner), [1, 3, 2])
+/// ```
+pub fn sentence_piece_decode(
+  tokenizer: SentencePieceTokenizer,
+  ids: List(Int),
+) -> String {
+  text_unigram.sentence_piece_decode(tokenizer, ids)
 }
 
 /// Convert a list of ids into a `[seq_len]` tensor of integer-valued floats.
