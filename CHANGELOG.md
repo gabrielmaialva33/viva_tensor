@@ -52,6 +52,9 @@ All notable changes to this project will be documented in this file.
 - Extended error hygiene into internal core tensor, shape, broadcast, and
   auto-dispatch paths so fallible operations propagate materialization and
   indexing failures instead of filling with zero-like defaults.
+- Added fallible `try_map()`, `try_scale()`, and `try_sum()` variants for code
+  that must preserve native materialization failures while keeping existing
+  infallible convenience functions compatible.
 
 ### Highlights
 

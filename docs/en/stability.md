@@ -30,6 +30,10 @@ failures into empty tensors, zeros, or partially computed values. When data must
 be materialized from native storage, use `try_to_list()` in `Result`-returning
 paths.
 
+Legacy convenience functions that return plain `Tensor` or `Float` remain for
+compatibility, but new serious code should prefer fallible variants such as
+`try_map()`, `try_scale()`, and `try_sum()` when native storage may be involved.
+
 ## Experimental Surface
 
 The following areas are intentionally experimental until their contracts are

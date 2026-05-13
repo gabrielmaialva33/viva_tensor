@@ -67,7 +67,9 @@ pub fn example() {
 | `mul(a, b)`             | Element-wise multiplication for equal shapes. |
 | `div(a, b)`             | Element-wise division for equal shapes.       |
 | `scale(tensor, scalar)` | Multiply every element by a scalar.           |
+| `try_scale(tensor, scalar)` | Fallible scalar multiplication preserving native materialization errors. |
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |
+| `try_map(tensor, fun)`  | Fallible scalar mapping preserving native materialization errors. |
 | `softmax_axis(tensor, axis)` | Normalize each slice along an axis.     |
 
 Use broadcasting-specific functions when shapes differ.
@@ -89,6 +91,7 @@ Use broadcasting-specific functions when shapes differ.
 | Function           | Description                           |
 |:-------------------|:--------------------------------------|
 | `sum(tensor)`      | Sum all elements.                     |
+| `try_sum(tensor)`  | Fallible sum preserving native materialization errors. |
 | `mean(tensor)`     | Mean over all elements.               |
 | `max(tensor)`      | Maximum value.                        |
 | `min(tensor)`      | Minimum value.                        |
