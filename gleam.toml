@@ -41,6 +41,7 @@ internal_modules = [
   "viva_tensor/nn/pool",
   "viva_tensor/nn/rnn",
   "viva_tensor/nn/scheduler",
+  "viva_tensor/nn/transformer",
   "viva_tensor/observability",
   "viva_tensor/observability/*",
   "viva_tensor/optim",

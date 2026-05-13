@@ -49,6 +49,7 @@ import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
 import viva_tensor/nn/rnn as nn_rnn
 import viva_tensor/nn/scheduler as nn_scheduler
+import viva_tensor/nn/transformer as nn_transformer
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
@@ -3656,4 +3657,156 @@ pub fn linear_gain() -> Float {
 /// `1.0` — gain for layers followed by sigmoid.
 pub fn sigmoid_gain() -> Float {
   nn_init.sigmoid_gain()
+}
+
+// --- Transformer building blocks (re-export) --------------------------------
+
+/// Position-wise feed-forward sublayer used by `EncoderBlock` / `DecoderBlock`.
+pub type FeedForward =
+  nn_transformer.FeedForward
+
+/// Activation tag for the FFN sublayer (`ReluAct` or `GeluAct`).
+pub type Activation =
+  nn_transformer.Activation
+
+/// Transformer encoder block (pre-norm style, self-attention + FFN).
+pub type EncoderBlock =
+  nn_transformer.EncoderBlock
+
+/// Transformer decoder block (pre-norm style, causal self-attn + cross-attn
+/// + FFN).
+pub type DecoderBlock =
+  nn_transformer.DecoderBlock
+
+/// Full Transformer model — a stack of `EncoderBlock`s followed by a stack
+/// of `DecoderBlock`s.
+pub type Transformer =
+  nn_transformer.Transformer
+
+/// Build a zero-weight `FeedForward` sublayer.
+///
+/// Forward: `activation(input @ w1 + b1) @ w2 + b2`.
+pub fn feed_forward_init(
+  embed_dim: Int,
+  hidden_dim: Int,
+  activation: Activation,
+) -> FeedForward {
+  nn_transformer.feed_forward_init(embed_dim, hidden_dim, activation)
+}
+
+/// Run the FFN forward pass on `[seq_len, embed_dim]`-shaped input.
+pub fn feed_forward_forward(
+  ff: FeedForward,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.feed_forward_forward(ff, input)
+}
+
+/// Build a zero-weight pre-norm encoder block.
+///
+/// Forward (per block):
+/// ```
+/// r1     = input + MHA(layer_norm(input), is_causal)
+/// output = r1    + FFN(layer_norm(r1))
+/// ```
+pub fn encoder_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+  activation: Activation,
+) -> Result(EncoderBlock, TensorError) {
+  nn_transformer.encoder_block_init(
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+    activation,
+  )
+}
+
+/// Encoder block forward pass on `[seq_len, embed_dim]` input.
+pub fn encoder_block_forward(
+  block: EncoderBlock,
+  input: Tensor,
+  is_causal: Bool,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.encoder_block_forward(block, input, is_causal)
+}
+
+/// Build a zero-weight pre-norm decoder block (causal self-attn + cross-attn
+/// + FFN).
+///
+/// Forward (per block):
+/// ```
+/// r1     = input + MHA_self(layer_norm1(input), is_causal=True)
+/// r2     = r1    + MHA_cross(layer_norm2(r1), memory, memory)
+/// output = r2    + FFN(layer_norm3(r2))
+/// ```
+pub fn decoder_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+  activation: Activation,
+) -> Result(DecoderBlock, TensorError) {
+  nn_transformer.decoder_block_init(
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+    activation,
+  )
+}
+
+/// Decoder block forward pass. Input is `[tgt_seq_len, embed_dim]`,
+/// `encoder_output` is `[src_seq_len, embed_dim]`.
+pub fn decoder_block_forward(
+  block: DecoderBlock,
+  input: Tensor,
+  encoder_output: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.decoder_block_forward(block, input, encoder_output)
+}
+
+/// Build a full encoder+decoder Transformer stack.
+pub fn transformer_init(
+  num_encoder_layers: Int,
+  num_decoder_layers: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+  activation: Activation,
+) -> Result(Transformer, TensorError) {
+  nn_transformer.transformer_init(
+    num_encoder_layers,
+    num_decoder_layers,
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+    activation,
+  )
+}
+
+/// Run `src` through every encoder block in order.
+pub fn transformer_encode(
+  model: Transformer,
+  src: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.transformer_encode(model, src)
+}
+
+/// Run `tgt` through every decoder block, attending to `memory` per layer.
+pub fn transformer_decode(
+  model: Transformer,
+  tgt: Tensor,
+  memory: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.transformer_decode(model, tgt, memory)
+}
+
+/// End-to-end forward: `transformer_decode(model, tgt,
+/// transformer_encode(model, src))`.
+pub fn transformer_forward(
+  model: Transformer,
+  src: Tensor,
+  tgt: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_transformer.transformer_forward(model, src, tgt)
 }
