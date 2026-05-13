@@ -51,6 +51,8 @@ internal_modules = [
   "viva_tensor/tensor",
   "viva_tensor/text",
   "viva_tensor/text/*",
+  "viva_tensor/vision",
+  "viva_tensor/vision/*",
 ]
 
 [dependencies]

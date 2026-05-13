@@ -54,6 +54,7 @@ import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
 import viva_tensor/text/tokenizer as text_tokenizer
+import viva_tensor/vision/transforms as vision_transforms
 
 // --- Types ------------------------------------------------------------------
 
@@ -3809,4 +3810,126 @@ pub fn transformer_forward(
   tgt: Tensor,
 ) -> Result(Tensor, TensorError) {
   nn_transformer.transformer_forward(model, src, tgt)
+}
+
+// --- Vision transforms ------------------------------------------------------
+
+/// Resampling mode for `vision_resize`.
+///
+/// - `ResizeNearest`: nearest-neighbour, blocky and cheap.
+/// - `ResizeBilinear`: linear interpolation along both spatial axes
+///   (`align_corners=False`).
+pub type ResizeMode =
+  vision_transforms.ResizeMode
+
+/// `ResizeMode.Nearest` re-export for ergonomic call sites.
+pub const resize_nearest: ResizeMode = vision_transforms.Nearest
+
+/// `ResizeMode.Bilinear` re-export for ergonomic call sites.
+pub const resize_bilinear: ResizeMode = vision_transforms.Bilinear
+
+/// Resize a CHW (`[C, H, W]`) or NCHW (`[B, C, H, W]`) image to
+/// `[..., C, new_h, new_w]` using the requested resampling mode.
+pub fn vision_resize(
+  image: Tensor,
+  new_h: Int,
+  new_w: Int,
+  mode: ResizeMode,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.resize(image, new_h, new_w, mode)
+}
+
+/// Crop the centre `target_h x target_w` region of a CHW/NCHW image.
+pub fn vision_center_crop(
+  image: Tensor,
+  target_h: Int,
+  target_w: Int,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.center_crop(image, target_h, target_w)
+}
+
+/// Crop a `target_h x target_w` window at a random top-left corner.
+/// Non-deterministic.
+pub fn vision_random_crop(
+  image: Tensor,
+  target_h: Int,
+  target_w: Int,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.random_crop(image, target_h, target_w)
+}
+
+/// Mirror the image along the width axis.
+pub fn vision_horizontal_flip(image: Tensor) -> Result(Tensor, TensorError) {
+  vision_transforms.horizontal_flip(image)
+}
+
+/// Mirror the image along the height axis.
+pub fn vision_vertical_flip(image: Tensor) -> Result(Tensor, TensorError) {
+  vision_transforms.vertical_flip(image)
+}
+
+/// Flip horizontally with probability `p`. Non-deterministic.
+pub fn vision_random_horizontal_flip(
+  image: Tensor,
+  p: Float,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.random_horizontal_flip(image, p)
+}
+
+/// Per-channel `(x - mean[c]) / std[c]` normalization.
+pub fn vision_normalize(
+  image: Tensor,
+  mean: List(Float),
+  std: List(Float),
+) -> Result(Tensor, TensorError) {
+  vision_transforms.normalize(image, mean, std)
+}
+
+/// Convert a 3-channel image to grayscale (ITU-R 601 luma).
+pub fn vision_to_grayscale(
+  image: Tensor,
+  num_output_channels: Int,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.to_grayscale(image, num_output_channels)
+}
+
+/// Multiply pixel values by `factor`, clamped to `[0, 1]`.
+pub fn vision_adjust_brightness(
+  image: Tensor,
+  factor: Float,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.adjust_brightness(image, factor)
+}
+
+/// Linearly interpolate each pixel toward its channel mean and clamp to
+/// `[0, 1]`.
+pub fn vision_adjust_contrast(
+  image: Tensor,
+  factor: Float,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.adjust_contrast(image, factor)
+}
+
+/// HWC byte image (`[0..255]`) → CHW tensor in `[0, 1]`.
+pub fn vision_to_tensor(
+  byte_image: List(Int),
+  height: Int,
+  width: Int,
+  channels: Int,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.to_tensor(byte_image, height, width, channels)
+}
+
+/// CHW tensor in `[0, 1]` → HWC byte image (`[0..255]`).
+pub fn vision_to_byte_image(image: Tensor) -> Result(List(Int), TensorError) {
+  vision_transforms.to_byte_image(image)
+}
+
+/// Apply a list of transforms in order, threading the result through each
+/// step. Bails on the first `Error`.
+pub fn vision_compose(
+  transforms: List(fn(Tensor) -> Result(Tensor, TensorError)),
+  image: Tensor,
+) -> Result(Tensor, TensorError) {
+  vision_transforms.compose(transforms, image)
 }
