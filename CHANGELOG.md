@@ -47,6 +47,9 @@ All notable changes to this project will be documented in this file.
 - Added a project-structure guide based on current Gleam package conventions,
   documenting the stable facade, internal modules, development-only code,
   native FFI boundaries, and HexDocs pages.
+- Reorganized internal implementation modules into `native/`, `observability/`,
+  and `experimental/` namespaces, and removed the generated
+  `bench/test_int8_imma` executable from source control.
 - Added `try_to_list()` and routed fallible dense fallback paths through it so
   native materialization failures are not silently converted into empty tensors.
 - Extended error hygiene into internal core tensor, shape, broadcast, and
@@ -125,6 +128,9 @@ All notable changes to this project will be documented in this file.
   `minimum()`, comparison masks, numeric-mask logic, `where()`, and
   `count_nonzero()` while preserving pure Gleam fallbacks when the NIF is not
   available.
+- Added future hardware profiles for Ada, Blackwell, Rubin, Vera, and Rubin CPX,
+  plus quantization layout metadata for NVFP4/INT2/INT3 and reversible
+  Hadamard preprocessing for low-bit quantization experiments.
 
 ### Highlights
 
