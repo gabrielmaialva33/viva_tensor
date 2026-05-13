@@ -71,6 +71,7 @@ pub fn example() {
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |
 | `try_map(tensor, fun)`  | Fallible scalar mapping preserving native materialization errors. |
 | `softmax_axis(tensor, axis)` | Normalize each slice along an axis.     |
+| `try_softmax_axis(tensor, axis)` | Fallible softmax preserving native materialization and indexing errors. |
 
 Use broadcasting-specific functions when shapes differ.
 

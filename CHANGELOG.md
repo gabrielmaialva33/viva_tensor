@@ -58,6 +58,9 @@ All notable changes to this project will be documented in this file.
 - Hardened axis reductions with fallible `try_sum_axis()`/`try_mean_axis()`,
   root-facade exports, and `keepdims` variants that avoid silent indexing
   defaults during dense fallback.
+- Added `try_softmax_axis()` and routed public softmax-axis execution through a
+  fallible implementation that preserves native materialization and slice
+  indexing failures.
 
 ### Highlights
 
