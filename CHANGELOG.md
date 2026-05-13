@@ -112,6 +112,9 @@ All notable changes to this project will be documented in this file.
 - Added more NumPy-style element-wise utilities (`clip()`, `floor()`,
   `ceil()`, `round()`, `sign()`, `reciprocal()`) plus broadcasting-aware
   `maximum()` and `minimum()` helpers.
+- Added broadcasting-aware comparison masks (`equal()`, `not_equal()`,
+  `greater()`, `greater_equal()`, `less()`, `less_equal()`) and `where()` for
+  conditional tensor selection.
 
 ### Highlights
 

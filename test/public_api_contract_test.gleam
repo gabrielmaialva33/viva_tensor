@@ -206,7 +206,8 @@ pub fn stable_broadcasting_contract_test() {
   }
 
   case t.where(row, matrix, t.zeros([1])) {
-    Ok(result) -> t.to_list(result) |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    Ok(result) ->
+      t.to_list(result) |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
     Error(_) -> should.fail()
   }
 }

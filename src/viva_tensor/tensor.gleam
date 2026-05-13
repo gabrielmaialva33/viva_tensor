@@ -3314,11 +3314,13 @@ pub fn where(
   when_true: Tensor,
   when_false: Tensor,
 ) -> Result(Tensor, TensorError) {
-  use target_shape <- result.try(broadcast_shapes([
-    shape(condition),
-    shape(when_true),
-    shape(when_false),
-  ]))
+  use target_shape <- result.try(
+    broadcast_shapes([
+      shape(condition),
+      shape(when_true),
+      shape(when_false),
+    ]),
+  )
   use condition_bc <- result.try(broadcast_to(condition, target_shape))
   use true_bc <- result.try(broadcast_to(when_true, target_shape))
   use false_bc <- result.try(broadcast_to(when_false, target_shape))
