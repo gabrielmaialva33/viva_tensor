@@ -60,6 +60,11 @@ All notable changes to this project will be documented in this file.
   are explicit in code that needs strong error contracts.
 - Exposed scalar convenience helpers (`add_scalar()`, `try_add_scalar()`,
   `negate()`, `try_negate()`) from the stable root facade.
+- Added fallible quantization metrics (`try_mse()`, `try_mae()`, `try_rmse()`,
+  `try_cosine_similarity()`, `try_snr_db()`, `try_max_error()`,
+  `try_error_percentile()`, `try_outlier_percentage()`, `try_compute_all()`) so
+  metrics code can reject shape mismatches, empty tensors, and native
+  materialization failures instead of returning zero-like placeholders.
 - Hardened axis reductions with fallible `try_sum_axis()`/`try_mean_axis()`,
   root-facade exports, and `keepdims` variants that avoid silent indexing
   defaults during dense fallback.

@@ -1,24 +1,17 @@
 //// Advanced Metrics for Quantization
 ////
-//// Based on Qwen3-235B analysis of state-of-the-art algorithms:
-//// - MSE (Mean Squared Error)
-//// - MAE (Mean Absolute Error)
-//// - Cosine Similarity
-//// - SNR (Signal-to-Noise Ratio)
-//// - SQNR (Signal-to-Quantization-Noise Ratio)
-//// - Perplexity Delta (for LLMs)
-////
-//// QWEN3 INSIGHTS:
-//// 1. AWQ: Protecting 1% of salient weights drastically reduces error
-//// 2. NF4: Non-uniform quantiles (normal distribution) > uniform
-//// 3. GPTQ: Weighting error by Hessian improves precision
-//// 4. Flash Attention: Online softmax with shifting avoids overflow
+//// Provides reconstruction-error and signal-quality metrics used by
+//// quantization experiments. Fallible `try_*` functions preserve shape,
+//// materialization, and empty-input errors; infallible wrappers remain for
+//// compatibility with benchmark-style code.
 
 import gleam/float
 import gleam/int
 import gleam/io
 import gleam/list
+import gleam/result
 import gleam/string
+import viva_tensor/core/error.{DimensionError, InvalidShape, ShapeMismatch}
 import viva_tensor/tensor.{type Tensor, Tensor}
 
 // ============================================================================
@@ -64,9 +57,12 @@ pub type LayerMetrics {
 // ============================================================================
 
 /// MSE - Mean Squared Error
-pub fn mse(original: Tensor, quantized: Tensor) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+pub fn try_mse(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
 
   let squared_errors =
     list.map2(orig, quant, fn(o, q) {
@@ -74,89 +70,114 @@ pub fn mse(original: Tensor, quantized: Tensor) -> Float {
       diff *. diff
     })
 
-  list.fold(squared_errors, 0.0, fn(acc, x) { acc +. x })
-  /. int.to_float(list.length(squared_errors))
+  mean(squared_errors)
+}
+
+/// MSE - Mean Squared Error
+pub fn mse(original: Tensor, quantized: Tensor) -> Float {
+  try_mse(original, quantized)
+  |> result.unwrap(0.0)
 }
 
 /// MAE - Mean Absolute Error
-pub fn mae(original: Tensor, quantized: Tensor) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+pub fn try_mae(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
 
   let abs_errors =
     list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
 
-  list.fold(abs_errors, 0.0, fn(acc, x) { acc +. x })
-  /. int.to_float(list.length(abs_errors))
+  mean(abs_errors)
+}
+
+/// MAE - Mean Absolute Error
+pub fn mae(original: Tensor, quantized: Tensor) -> Float {
+  try_mae(original, quantized)
+  |> result.unwrap(0.0)
+}
+
+/// RMSE - Root Mean Squared Error
+pub fn try_rmse(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use mse_val <- result.try(try_mse(original, quantized))
+
+  case float.square_root(mse_val) {
+    Ok(sqrt) -> Ok(sqrt)
+    Error(_) -> Error(DimensionError("RMSE received a negative MSE"))
+  }
 }
 
 /// RMSE - Root Mean Squared Error
 pub fn rmse(original: Tensor, quantized: Tensor) -> Float {
-  let mse_val = mse(original, quantized)
-  case float.square_root(mse_val) {
-    Ok(sqrt) -> sqrt
-    Error(_) -> 0.0
+  try_rmse(original, quantized)
+  |> result.unwrap(0.0)
+}
+
+/// Cosine Similarity - measures direction, not magnitude
+/// 1.0 = identical vectors, 0.0 = orthogonal, -1.0 = opposite
+pub fn try_cosine_similarity(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
+
+  let dot =
+    list.map2(orig, quant, fn(o, q) { o *. q })
+    |> list.fold(0.0, fn(acc, x) { acc +. x })
+
+  use norm_orig <- result.try(vector_norm(orig))
+  use norm_quant <- result.try(vector_norm(quant))
+
+  case norm_orig >. 0.0 && norm_quant >. 0.0 {
+    True -> Ok(dot /. { norm_orig *. norm_quant })
+    False ->
+      Error(DimensionError("Cosine similarity requires non-zero norm tensors"))
   }
 }
 
 /// Cosine Similarity - measures direction, not magnitude
 /// 1.0 = identical vectors, 0.0 = orthogonal, -1.0 = opposite
 pub fn cosine_similarity(original: Tensor, quantized: Tensor) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+  try_cosine_similarity(original, quantized)
+  |> result.unwrap(0.0)
+}
 
-  // dot product
-  let dot =
-    list.map2(orig, quant, fn(o, q) { o *. q })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
+/// SNR - Signal-to-Noise Ratio in dB
+/// SNR = 10 * log10(signal_power / noise_power)
+pub fn try_snr_db(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
 
-  // norms
-  let norm_orig =
-    orig
-    |> list.map(fn(x) { x *. x })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-    |> float.square_root
+  use signal_power <- result.try(mean(list.map(orig, fn(x) { x *. x })))
 
-  let norm_quant =
-    quant
-    |> list.map(fn(x) { x *. x })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-    |> float.square_root
+  use noise_power <- result.try(
+    list.map2(orig, quant, fn(o, q) {
+      let diff = o -. q
+      diff *. diff
+    })
+    |> mean,
+  )
 
-  case norm_orig, norm_quant {
-    Ok(no), Ok(nq) if no >. 0.0 && nq >. 0.0 -> dot /. { no *. nq }
-    _, _ -> 0.0
+  case noise_power >. 0.0 {
+    True -> Ok(10.0 *. log10(signal_power /. noise_power))
+    False -> Ok(100.0)
   }
 }
 
 /// SNR - Signal-to-Noise Ratio in dB
 /// SNR = 10 * log10(signal_power / noise_power)
 pub fn snr_db(original: Tensor, quantized: Tensor) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
-
-  // Signal power = mean(x²)
-  let signal_power =
-    orig
-    |> list.map(fn(x) { x *. x })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-    |> fn(sum) { sum /. int.to_float(list.length(orig)) }
-
-  // Noise power = mean((x - x')²)
-  let noise_power =
-    list.map2(orig, quant, fn(o, q) {
-      let diff = o -. q
-      diff *. diff
-    })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-    |> fn(sum) { sum /. int.to_float(list.length(orig)) }
-
-  // Avoid division by zero
-  case noise_power >. 0.0 {
-    True -> 10.0 *. log10(signal_power /. noise_power)
-    False -> 100.0
-    // No noise = infinite SNR, capped
-  }
+  try_snr_db(original, quantized)
+  |> result.unwrap(0.0)
 }
 
 /// SQNR - Signal-to-Quantization-Noise Ratio
@@ -166,12 +187,23 @@ pub fn theoretical_sqnr(bits: Int) -> Float {
 }
 
 /// Max Error - worst case
-pub fn max_error(original: Tensor, quantized: Tensor) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+pub fn try_max_error(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
 
-  list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
-  |> list.fold(0.0, float.max)
+  Ok(
+    list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
+    |> list.fold(0.0, float.max),
+  )
+}
+
+/// Max Error - worst case
+pub fn max_error(original: Tensor, quantized: Tensor) -> Float {
+  try_max_error(original, quantized)
+  |> result.unwrap(0.0)
 }
 
 // ============================================================================
@@ -184,8 +216,19 @@ pub fn error_percentile(
   quantized: Tensor,
   percentile: Float,
 ) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+  try_error_percentile(original, quantized, percentile)
+  |> result.unwrap(0.0)
+}
+
+/// Error percentile (approximated via sorting)
+pub fn try_error_percentile(
+  original: Tensor,
+  quantized: Tensor,
+  percentile: Float,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
+  use Nil <- result.try(validate_percentile(percentile))
 
   let errors =
     list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
@@ -195,13 +238,10 @@ pub fn error_percentile(
   let idx = float.round(int.to_float(n) *. percentile /. 100.0)
   let safe_idx = int.min(idx, n - 1) |> int.max(0)
 
-  list.drop(errors, safe_idx)
-  |> list.first
-  |> fn(r) {
-    case r {
-      Ok(v) -> v
-      Error(_) -> 0.0
-    }
+  case list.drop(errors, safe_idx) |> list.first {
+    Ok(v) -> Ok(v)
+    Error(_) ->
+      Error(InvalidShape("Cannot compute percentile for empty tensors"))
   }
 }
 
@@ -211,15 +251,25 @@ pub fn outlier_percentage(
   quantized: Tensor,
   threshold: Float,
 ) -> Float {
-  let orig = tensor.to_list(original)
-  let quant = tensor.to_list(quantized)
+  try_outlier_percentage(original, quantized, threshold)
+  |> result.unwrap(0.0)
+}
+
+/// Percentage of outliers (error > threshold)
+pub fn try_outlier_percentage(
+  original: Tensor,
+  quantized: Tensor,
+  threshold: Float,
+) -> Result(Float, tensor.TensorError) {
+  use pair <- result.try(metric_data(original, quantized))
+  let #(orig, quant) = pair
 
   let errors = list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
 
   let outliers = list.filter(errors, fn(e) { e >. threshold })
   let n = list.length(errors)
 
-  100.0 *. int.to_float(list.length(outliers)) /. int.to_float(n)
+  Ok(100.0 *. int.to_float(list.length(outliers)) /. int.to_float(n))
 }
 
 // ============================================================================
@@ -227,22 +277,21 @@ pub fn outlier_percentage(
 // ============================================================================
 
 /// Computes all metrics at once
-pub fn compute_all(original: Tensor, quantized: Tensor) -> QuantMetrics {
-  let mse_val = mse(original, quantized)
-  let mae_val = mae(original, quantized)
-  let rmse_val = case float.square_root(mse_val) {
-    Ok(sqrt) -> sqrt
-    Error(_) -> 0.0
-  }
-  let cosine_val = cosine_similarity(original, quantized)
-  let snr_val = snr_db(original, quantized)
+pub fn try_compute_all(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(QuantMetrics, tensor.TensorError) {
+  use mse_val <- result.try(try_mse(original, quantized))
+  use mae_val <- result.try(try_mae(original, quantized))
+  use rmse_val <- result.try(try_rmse(original, quantized))
+  use cosine_val <- result.try(try_cosine_similarity(original, quantized))
+  use snr_val <- result.try(try_snr_db(original, quantized))
   let sqnr_val = snr_val
-  // For quantization, SNR ≈ SQNR
-  let max_err = max_error(original, quantized)
-  let p99 = error_percentile(original, quantized, 99.0)
-  let outliers = outlier_percentage(original, quantized, 0.01)
+  use max_err <- result.try(try_max_error(original, quantized))
+  use p99 <- result.try(try_error_percentile(original, quantized, 99.0))
+  use outliers <- result.try(try_outlier_percentage(original, quantized, 0.01))
 
-  QuantMetrics(
+  Ok(QuantMetrics(
     mse: mse_val,
     mae: mae_val,
     rmse: rmse_val,
@@ -252,7 +301,23 @@ pub fn compute_all(original: Tensor, quantized: Tensor) -> QuantMetrics {
     max_error: max_err,
     p99_error: p99,
     outlier_pct: outliers,
-  )
+  ))
+}
+
+/// Computes all metrics at once
+pub fn compute_all(original: Tensor, quantized: Tensor) -> QuantMetrics {
+  try_compute_all(original, quantized)
+  |> result.unwrap(QuantMetrics(
+    mse: 0.0,
+    mae: 0.0,
+    rmse: 0.0,
+    cosine_sim: 0.0,
+    snr_db: 0.0,
+    sqnr_db: 0.0,
+    max_error: 0.0,
+    p99_error: 0.0,
+    outlier_pct: 0.0,
+  ))
 }
 
 // ============================================================================
@@ -448,6 +513,53 @@ pub fn benchmark_metrics() {
 // ============================================================================
 // HELPERS
 // ============================================================================
+
+fn metric_data(
+  original: Tensor,
+  quantized: Tensor,
+) -> Result(#(List(Float), List(Float)), tensor.TensorError) {
+  case original.shape == quantized.shape {
+    False -> Error(ShapeMismatch(original.shape, quantized.shape))
+    True -> {
+      use orig <- result.try(tensor.try_to_list(original))
+      use quant <- result.try(tensor.try_to_list(quantized))
+
+      case orig {
+        [] -> Error(InvalidShape("Metrics require at least one element"))
+        _ -> Ok(#(orig, quant))
+      }
+    }
+  }
+}
+
+fn mean(values: List(Float)) -> Result(Float, tensor.TensorError) {
+  case values {
+    [] -> Error(InvalidShape("Cannot compute mean of an empty list"))
+    _ -> {
+      let total = list.fold(values, 0.0, fn(acc, value) { acc +. value })
+      Ok(total /. int.to_float(list.length(values)))
+    }
+  }
+}
+
+fn vector_norm(values: List(Float)) -> Result(Float, tensor.TensorError) {
+  let squared_sum =
+    values
+    |> list.map(fn(x) { x *. x })
+    |> list.fold(0.0, fn(acc, x) { acc +. x })
+
+  case float.square_root(squared_sum) {
+    Ok(norm) -> Ok(norm)
+    Error(_) -> Error(DimensionError("Cannot compute vector norm"))
+  }
+}
+
+fn validate_percentile(percentile: Float) -> Result(Nil, tensor.TensorError) {
+  case percentile >=. 0.0 && percentile <=. 100.0 {
+    True -> Ok(Nil)
+    False -> Error(DimensionError("Percentile must be between 0 and 100"))
+  }
+}
 
 fn add_noise(t: Tensor, noise_level: Float) -> Tensor {
   let data = tensor.to_list(t)
