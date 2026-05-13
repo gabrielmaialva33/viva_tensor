@@ -88,17 +88,23 @@ Use broadcasting-specific functions when shapes differ.
 
 ## Reductions
 
-| Function           | Description                           |
-|:-------------------|:--------------------------------------|
-| `sum(tensor)`      | Sum all elements.                     |
-| `try_sum(tensor)`  | Fallible sum preserving native materialization errors. |
-| `mean(tensor)`     | Mean over all elements.               |
-| `max(tensor)`      | Maximum value.                        |
-| `min(tensor)`      | Minimum value.                        |
-| `argmax(tensor)`   | Flat index of the maximum value.      |
-| `argmin(tensor)`   | Flat index of the minimum value.      |
-| `variance(tensor)` | Variance over all elements.           |
-| `std(tensor)`      | Standard deviation over all elements. |
+| Function                         | Description                                            |
+|:---------------------------------|:-------------------------------------------------------|
+| `sum(tensor)`                    | Sum all elements.                                      |
+| `try_sum(tensor)`                | Fallible sum preserving native materialization errors. |
+| `sum_axis(tensor, axis)`         | Sum along one axis.                                    |
+| `try_sum_axis(tensor, axis)`     | Fallible sum along one axis.                           |
+| `sum_axis_keepdims(tensor, axis)`| Sum along one axis while keeping a size-1 dimension.   |
+| `mean(tensor)`                   | Mean over all elements.                                |
+| `mean_axis(tensor, axis)`        | Mean along one axis.                                   |
+| `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
+| `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
+| `max(tensor)`                    | Maximum value.                                         |
+| `min(tensor)`                    | Minimum value.                                         |
+| `argmax(tensor)`                 | Flat index of the maximum value.                       |
+| `argmin(tensor)`                 | Flat index of the minimum value.                       |
+| `variance(tensor)`               | Variance over all elements.                            |
+| `std(tensor)`                    | Standard deviation over all elements.                  |
 
 ## Linear Algebra
 
