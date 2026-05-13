@@ -57,3 +57,6 @@ __pycache__/
 
 # Codex
 .codex
+
+# Misc
+tmp

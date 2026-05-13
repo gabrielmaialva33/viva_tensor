@@ -1166,7 +1166,6 @@ fn all_tensor_backends() -> List(TensorBackend) {
     BackendCudaFp16,
     BackendCudaInt8,
     BackendCudaFp32,
-    BackendCudaFp32,
     BackendMkl,
     BackendZigSimd,
     BackendPureGleam,
