@@ -25,6 +25,8 @@ internal_modules = [
   "viva_tensor/distributed/*",
   "viva_tensor/experimental",
   "viva_tensor/experimental/*",
+  "viva_tensor/generate",
+  "viva_tensor/generate/*",
   "viva_tensor/io",
   "viva_tensor/io/*",
   "viva_tensor/metrics",

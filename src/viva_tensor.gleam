@@ -35,6 +35,7 @@ import viva_tensor/core/tensor as core_tensor
 import viva_tensor/data/dataloader
 import viva_tensor/diffusion/samplers as diffusion_samplers
 import viva_tensor/distributed/trainer as distributed_trainer
+import viva_tensor/generate/speculative as generate_speculative
 import viva_tensor/io/hf_loader as hf_loader_io
 import viva_tensor/io/onnx as onnx_io
 import viva_tensor/io/safetensors as safetensors_io
@@ -5148,3 +5149,75 @@ pub const average_grads: GradAggregation = distributed_trainer.AverageGrads
 
 /// Sum per-worker gradients before applying.
 pub const sum_grads: GradAggregation = distributed_trainer.SumGrads
+
+// Text generation — sampling + speculative decoding
+// =============================================================================
+
+/// Sampling hyperparameters (temperature, top-k, top-p).
+pub type SamplingConfig =
+  generate_speculative.SamplingConfig
+
+/// Configuration for speculative decoding (draft tokens, sampling, cap).
+pub type SpeculativeConfig =
+  generate_speculative.SpeculativeConfig
+
+/// Greedy argmax over a 1-D logits tensor.
+pub fn greedy_sample(logits: Tensor) -> Result(Int, TensorError) {
+  generate_speculative.greedy_sample(logits)
+}
+
+/// Temperature + top-k + top-p sample from a 1-D logits tensor.
+///
+/// Named `sample_token` to avoid colliding with `viva_tensor.sample` from
+/// the diffusion samplers re-export.
+pub fn sample_token(
+  logits: Tensor,
+  config: generate_speculative.SamplingConfig,
+) -> Result(Int, TensorError) {
+  generate_speculative.sample(logits, config)
+}
+
+/// Divide every logit by `temperature` (no-op for `1.0`, defensive for `0.0`).
+pub fn apply_temperature(logits: Tensor, temperature: Float) -> Tensor {
+  generate_speculative.apply_temperature(logits, temperature)
+}
+
+/// Mask logits outside the top-`k` (set to large negative sentinel).
+pub fn top_k_filter(logits: Tensor, k: Int) -> Result(Tensor, TensorError) {
+  generate_speculative.top_k_filter(logits, k)
+}
+
+/// Nucleus (top-p) filter — mask the smallest-prob tail until cum > p.
+pub fn top_p_filter(logits: Tensor, p: Float) -> Result(Tensor, TensorError) {
+  generate_speculative.top_p_filter(logits, p)
+}
+
+/// Speculative decoding (Chen 2023 / Leviathan 2023).
+pub fn speculative_decode(
+  config: generate_speculative.SpeculativeConfig,
+  initial_tokens: List(Int),
+  draft_fn: fn(List(Int)) -> Result(Tensor, TensorError),
+  verify_fn: fn(List(Int)) -> Result(Tensor, TensorError),
+) -> Result(List(Int), TensorError) {
+  generate_speculative.speculative_decode(
+    config,
+    initial_tokens,
+    draft_fn,
+    verify_fn,
+  )
+}
+
+/// Autoregressive greedy generation with optional stop token.
+pub fn greedy_generate(
+  initial_tokens: List(Int),
+  max_new_tokens: Int,
+  model_fn: fn(List(Int)) -> Result(Tensor, TensorError),
+  stop_token: Option(Int),
+) -> Result(List(Int), TensorError) {
+  generate_speculative.greedy_generate(
+    initial_tokens,
+    max_new_tokens,
+    model_fn,
+    stop_token,
+  )
+}
