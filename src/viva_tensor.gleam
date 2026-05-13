@@ -34,6 +34,7 @@ import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
+import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
@@ -1140,6 +1141,67 @@ pub fn try_masked_select(
   mask: Tensor,
 ) -> Result(Tensor, TensorError) {
   tensor.try_masked_select(t, mask)
+}
+
+// --- Embeddings & Positional Encoding --------------------------------------
+
+/// Learnable embedding table: integer ids -> dense vectors.
+pub type Embedding =
+  nn_embedding.Embedding
+
+/// Learnable positional encoding table.
+pub type LearnedPositionalEncoding =
+  nn_embedding.LearnedPositionalEncoding
+
+/// Initialize an embedding table with zero weights.
+pub fn embedding_init(num_embeddings: Int, embedding_dim: Int) -> Embedding {
+  nn_embedding.embedding_init(num_embeddings, embedding_dim)
+}
+
+/// Initialize an embedding table with uniform random weights in
+/// `[-1/sqrt(embedding_dim), 1/sqrt(embedding_dim)]`.
+pub fn embedding_init_uniform(
+  num_embeddings: Int,
+  embedding_dim: Int,
+) -> Embedding {
+  nn_embedding.embedding_init_uniform(num_embeddings, embedding_dim)
+}
+
+/// Forward pass: gather rows of `weight` by integer indices.
+pub fn embedding_forward(
+  layer: Embedding,
+  indices: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_embedding.embedding_forward(layer, indices)
+}
+
+/// Sinusoidal positional encoding ("Attention Is All You Need").
+pub fn sinusoidal_encoding(
+  max_len: Int,
+  embedding_dim: Int,
+) -> Result(Tensor, TensorError) {
+  nn_embedding.sinusoidal_encoding(max_len, embedding_dim)
+}
+
+/// Initialize a learned positional encoding table.
+pub fn learned_positional_init(
+  max_len: Int,
+  embedding_dim: Int,
+) -> LearnedPositionalEncoding {
+  nn_embedding.learned_positional_init(max_len, embedding_dim)
+}
+
+/// Look up positions `0..len-1` from a learned positional encoding.
+pub fn learned_positional_forward(
+  layer: LearnedPositionalEncoding,
+  len: Int,
+) -> Result(Tensor, TensorError) {
+  nn_embedding.learned_positional_forward(layer, len)
+}
+
+/// Apply Rotary Positional Embedding (RoPE) to a `[seq_len, dim]` tensor.
+pub fn rope(input: Tensor, base: Float) -> Result(Tensor, TensorError) {
+  nn_embedding.rope(input, base)
 }
 
 // --- Accessors --------------------------------------------------------------
