@@ -55,10 +55,12 @@ import viva_tensor/nn/rnn as nn_rnn
 import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/nn/transformer as nn_transformer
 import viva_tensor/quant/hadamard as quant_hadamard
+import viva_tensor/diffusion/samplers as diffusion_samplers
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
 import viva_tensor/text/tokenizer as text_tokenizer
 import viva_tensor/text/unigram as text_unigram
+import viva_tensor/vision/augmentations as vision_augmentations
 import viva_tensor/vision/transforms as vision_transforms
 
 // --- Types ------------------------------------------------------------------
@@ -4506,4 +4508,102 @@ pub fn from_safetensors_file(
   config: TransformerConfig,
 ) -> Result(Transformer, HfLoadError) {
   hf_loader_io.from_safetensors_file(path, config)
+}
+
+// --- Vision augmentations ---------------------------------------------------
+
+/// Configuration for `color_jitter_forward`. See
+/// `viva_tensor/vision/augmentations` for the full docs.
+pub type ColorJitterConfig =
+  vision_augmentations.ColorJitterConfig
+
+/// Build a `ColorJitterConfig` (brightness/contrast/saturation/hue strengths).
+pub fn color_jitter_init(
+  brightness: Float,
+  contrast: Float,
+  saturation: Float,
+  hue: Float,
+) -> ColorJitterConfig {
+  vision_augmentations.color_jitter_init(brightness, contrast, saturation, hue)
+}
+
+/// Apply randomized brightness/contrast/saturation/hue to `[C, H, W]` or
+/// `[B, C, H, W]` RGB images.
+pub fn color_jitter_forward(
+  config: ColorJitterConfig,
+  image: Tensor,
+) -> Result(Tensor, TensorError) {
+  vision_augmentations.color_jitter_forward(config, image)
+}
+
+/// MixUp on a batch — convex combination of images + soft labels with mixing
+/// ratio drawn from `Beta(alpha, alpha)`.
+pub fn mixup(
+  images: Tensor,
+  labels: Tensor,
+  num_classes: Int,
+  alpha: Float,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  vision_augmentations.mixup(images, labels, num_classes, alpha)
+}
+
+/// CutMix on a batch — paste a random rectangle from a partner image, label
+/// mixing reflects the actual pasted area.
+pub fn cutmix(
+  images: Tensor,
+  labels: Tensor,
+  num_classes: Int,
+  alpha: Float,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  vision_augmentations.cutmix(images, labels, num_classes, alpha)
+}
+
+// --- Diffusion samplers -----------------------------------------------------
+
+/// Noise schedule specification (`LinearSchedule` or `CosineSchedule`).
+pub type NoiseSchedule =
+  diffusion_samplers.NoiseSchedule
+
+/// Precomputed schedule lookup tables (`betas`, `alphas`, `alpha_bars`).
+pub type SchedulerState =
+  diffusion_samplers.SchedulerState
+
+/// Sampler configuration (`schedule` + DDIM `eta`).
+pub type SamplerConfig =
+  diffusion_samplers.SamplerConfig
+
+/// Precompute the schedule tables for either a linear or cosine `NoiseSchedule`.
+pub fn build_schedule(schedule: NoiseSchedule) -> SchedulerState {
+  diffusion_samplers.build_schedule(schedule)
+}
+
+/// One DDPM reverse step at index `t`.
+pub fn ddpm_step(
+  state: SchedulerState,
+  x_t: Tensor,
+  model_pred: Tensor,
+  t: Int,
+) -> Result(Tensor, TensorError) {
+  diffusion_samplers.ddpm_step(state, x_t, model_pred, t)
+}
+
+/// One DDIM reverse step at index `t`. `eta=0` is deterministic.
+pub fn ddim_step(
+  state: SchedulerState,
+  x_t: Tensor,
+  model_pred: Tensor,
+  t: Int,
+  eta: Float,
+) -> Result(Tensor, TensorError) {
+  diffusion_samplers.ddim_step(state, x_t, model_pred, t, eta)
+}
+
+/// Full reverse sampling loop. Calls `model_fn` at each step.
+pub fn sample(
+  config: SamplerConfig,
+  state: SchedulerState,
+  shape: List(Int),
+  model_fn: fn(Tensor, Int) -> Result(Tensor, TensorError),
+) -> Result(Tensor, TensorError) {
+  diffusion_samplers.sample(config, state, shape, model_fn)
 }
