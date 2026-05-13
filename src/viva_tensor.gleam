@@ -965,6 +965,14 @@ pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.outer(a, b)
 }
 
+/// Einstein summation. See `viva_tensor/tensor.einsum` for the full spec.
+pub fn einsum(
+  equation: String,
+  operands: List(Tensor),
+) -> Result(Tensor, TensorError) {
+  tensor.einsum(equation, operands)
+}
+
 // --- Shape Ops --------------------------------------------------------------
 
 /// Reshape (total size must match)

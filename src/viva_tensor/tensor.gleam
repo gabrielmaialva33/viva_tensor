@@ -14,6 +14,7 @@ import gleam/int
 import gleam/list
 import gleam/result
 import gleam_community/maths
+import viva_tensor/core/einsum as einsum_kernel
 import viva_tensor/core/error.{
   AxisOutOfBounds, BackendMismatch, BroadcastError, DimensionError,
   IndexOutOfBounds, InvalidShape, NifNotLoaded, OperandShapeMismatch,
@@ -5078,5 +5079,231 @@ fn string_join(strings: List(String), sep: String) -> String {
     [] -> ""
     [s] -> s
     [s, ..rest] -> s <> sep <> string_join(rest, sep)
+  }
+}
+
+// --- einsum -----------------------------------------------------------------
+
+/// Einstein summation over one or two tensors using NumPy-style notation.
+///
+/// Supported v1 patterns (explicit mode only):
+///   * `"ij->ji"` — transpose
+///   * `"ii->"` — trace
+///   * `"ij,jk->ik"` — matmul
+///   * `"i,i->"` — inner / dot product
+///   * `"i,j->ij"` — outer product
+///   * `"ij,ij->ij"` — element-wise multiply
+///   * `"ij,ij->"` — Frobenius inner product
+///   * `"ij->i"` / `"ij->j"` / `"ij->"` — axis / total sum
+///
+/// Anything else within the supported shape (<=2 operands, explicit mode,
+/// no ellipsis) is handled by a generic nested-loop kernel.
+///
+/// ## Example
+///
+/// ```gleam
+/// import gleam/result
+/// import viva_tensor/tensor as t
+///
+/// let assert Ok(a) = t.from_list2d([[1.0, 2.0], [3.0, 4.0]])
+/// let assert Ok(b) = t.from_list2d([[5.0, 6.0], [7.0, 8.0]])
+/// use c <- result.try(t.einsum("ij,jk->ik", [a, b]))
+/// t.to_list(c)
+/// // -> [19.0, 22.0, 43.0, 50.0]
+/// ```
+pub fn einsum(
+  equation: String,
+  operands: List(Tensor),
+) -> Result(Tensor, TensorError) {
+  use parsed <- result.try(einsum_kernel.parse(equation))
+  let #(lhs_labels, rhs_labels) = parsed
+  let ops = list.map(operands, fn(t) { tensor_to_operand(t) })
+  use dim_map <- result.try(einsum_kernel.validate(
+    lhs_labels,
+    rhs_labels,
+    ops,
+  ))
+
+  case operands, lhs_labels {
+    [a], [labels_a] ->
+      einsum_dispatch_one(a, labels_a, rhs_labels, ops, dim_map)
+    [a, b], [labels_a, labels_b] ->
+      einsum_dispatch_two(a, b, labels_a, labels_b, rhs_labels, ops, dim_map)
+    _, _ ->
+      Error(DimensionError(
+        "einsum: feature not supported in v1: more than 2 input operands",
+      ))
+  }
+}
+
+fn tensor_to_operand(t: Tensor) -> einsum_kernel.Operand {
+  einsum_kernel.Operand(data: to_list(t), shape: shape(t))
+}
+
+fn einsum_finish(
+  op_result: Result(einsum_kernel.Operand, TensorError),
+) -> Result(Tensor, TensorError) {
+  use op <- result.try(op_result)
+  Ok(Tensor(data: op.data, shape: op.shape))
+}
+
+fn einsum_dispatch_one(
+  a: Tensor,
+  labels: List(String),
+  rhs: List(String),
+  ops: List(einsum_kernel.Operand),
+  dims: List(#(String, Int)),
+) -> Result(Tensor, TensorError) {
+  case labels, rhs {
+    // "ij->ji" — transpose
+    [x, y], [y2, x2] if x == x2 && y == y2 && x != y -> transpose(a)
+
+    // "ii->" — trace
+    [x, y], [] if x == y -> einsum_trace(a)
+
+    // "ij->" / "i->" / general scalar reduction
+    _, [] -> Ok(Tensor(data: [sum(a)], shape: []))
+
+    // "ij->i" — row sums
+    [x, y], [x2] if x == x2 && y != x -> einsum_sum_axis_1(a)
+
+    // "ij->j" — col sums
+    [x, y], [y2] if y == y2 && x != y -> einsum_sum_axis_0(a)
+
+    // identity & everything else
+    _, _ -> einsum_finish(einsum_kernel.general(ops, [labels], rhs, dims))
+  }
+}
+
+fn einsum_dispatch_two(
+  a: Tensor,
+  b: Tensor,
+  labels_a: List(String),
+  labels_b: List(String),
+  rhs: List(String),
+  ops: List(einsum_kernel.Operand),
+  dims: List(#(String, Int)),
+) -> Result(Tensor, TensorError) {
+  case labels_a, labels_b, rhs {
+    // "ij,jk->ik" — matmul
+    [i, j], [j2, k], [i2, k2]
+      if i == i2 && j == j2 && k == k2 && i != j && j != k && i != k
+    -> matmul(a, b)
+
+    // "i,i->" — inner / dot
+    [i], [i2], [] if i == i2 -> {
+      use v <- result.try(dot(a, b))
+      Ok(Tensor(data: [v], shape: []))
+    }
+
+    // "i,j->ij" — outer
+    [i], [j], [i2, j2] if i == i2 && j == j2 && i != j -> outer(a, b)
+
+    // "ij,ij->ij" — element-wise multiply
+    [i, j], [i2, j2], [i3, j3]
+      if i == i2 && i == i3 && j == j2 && j == j3 && i != j
+    -> einsum_elementwise_mul(a, b)
+
+    // "ij,ij->" — Frobenius
+    [i, j], [i2, j2], [] if i == i2 && j == j2 && i != j ->
+      einsum_frobenius(a, b)
+
+    // Fallback
+    _, _, _ ->
+      einsum_finish(einsum_kernel.general(ops, [labels_a, labels_b], rhs, dims))
+  }
+}
+
+fn einsum_trace(a: Tensor) -> Result(Tensor, TensorError) {
+  case shape(a) {
+    [n, m] if n == m -> {
+      let data = to_list(a)
+      let s =
+        list.range(0, n - 1)
+        |> list.fold(0.0, fn(acc, i) {
+          case einsum_nth(data, i * n + i) {
+            Ok(v) -> acc +. v
+            Error(_) -> acc
+          }
+        })
+      Ok(Tensor(data: [s], shape: []))
+    }
+    _ -> Error(DimensionError("einsum: trace requires a square 2D tensor"))
+  }
+}
+
+fn einsum_sum_axis_0(a: Tensor) -> Result(Tensor, TensorError) {
+  case shape(a) {
+    [rows, cols] -> {
+      let data = to_list(a)
+      let out =
+        list.range(0, cols - 1)
+        |> list.map(fn(j) {
+          list.range(0, rows - 1)
+          |> list.fold(0.0, fn(acc, i) {
+            case einsum_nth(data, i * cols + j) {
+              Ok(v) -> acc +. v
+              Error(_) -> acc
+            }
+          })
+        })
+      Ok(Tensor(data: out, shape: [cols]))
+    }
+    _ -> Error(DimensionError("einsum: axis sum requires a 2D tensor"))
+  }
+}
+
+fn einsum_sum_axis_1(a: Tensor) -> Result(Tensor, TensorError) {
+  case shape(a) {
+    [rows, cols] -> {
+      let data = to_list(a)
+      let out =
+        list.range(0, rows - 1)
+        |> list.map(fn(i) {
+          list.range(0, cols - 1)
+          |> list.fold(0.0, fn(acc, j) {
+            case einsum_nth(data, i * cols + j) {
+              Ok(v) -> acc +. v
+              Error(_) -> acc
+            }
+          })
+        })
+      Ok(Tensor(data: out, shape: [rows]))
+    }
+    _ -> Error(DimensionError("einsum: axis sum requires a 2D tensor"))
+  }
+}
+
+fn einsum_elementwise_mul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  let sa = shape(a)
+  let sb = shape(b)
+  case sa == sb {
+    True -> {
+      let da = to_list(a)
+      let db = to_list(b)
+      let out = list.map2(da, db, fn(x, y) { x *. y })
+      Ok(Tensor(data: out, shape: sa))
+    }
+    False -> Error(ShapeMismatch(expected: sa, got: sb))
+  }
+}
+
+fn einsum_frobenius(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use prod <- result.try(einsum_elementwise_mul(a, b))
+  Ok(Tensor(data: [sum(prod)], shape: []))
+}
+
+fn einsum_nth(items: List(Float), index: Int) -> Result(Float, Nil) {
+  case index < 0 {
+    True -> Error(Nil)
+    False -> einsum_nth_loop(items, index)
+  }
+}
+
+fn einsum_nth_loop(items: List(Float), index: Int) -> Result(Float, Nil) {
+  case items, index {
+    [], _ -> Error(Nil)
+    [x, ..], 0 -> Ok(x)
+    [_, ..rest], n -> einsum_nth_loop(rest, n - 1)
   }
 }
