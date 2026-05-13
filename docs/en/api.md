@@ -209,10 +209,28 @@ the Zig SIMD backend, which TFLOPS backends are visible, and the stable backend
 capability records. Use `backend_capabilities()` when you only need the
 capability table, or `plan_backend(operation)` to see which backend the stable
 planner would choose for an operation. Plans include `rejected` backend entries with human-readable reasons for unavailable or unsuitable backends.
+Use `hardware_profiles()` when planning ahead for accelerator-specific work:
+current hardware is marked available only when detected, while future profiles
+such as Blackwell, Rubin, Vera, and Rubin CPX remain explicit but unavailable
+until a runtime path can prove support.
 
 ```gleam
 let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
 ```
+
+## Quantization Readiness
+
+| Function                                      | Description                                  |
+|:----------------------------------------------|:---------------------------------------------|
+| `nvfp4_block_scaled_layout(shape)`            | Describe a Rubin-style NVFP4 micro-block layout. |
+| `int2_progressive_layout(shape, block_size)`  | Describe an experimental INT2 progressive quantization layout. |
+| `int3_progressive_layout(shape, block_size)`  | Describe an experimental INT3 progressive quantization layout. |
+| `quant_layout_memory_bytes(layout)`           | Estimate payload bytes for a quantized layout. |
+| `quant_layout_compression_ratio_against(layout, bits)` | Estimate compression versus a baseline element width. |
+| `quant_layout_is_rubin_native_candidate(layout)` | Check whether a layout matches Rubin micro-block assumptions. |
+| `try_hadamard_preprocess(tensor, seed)`       | Apply reversible randomized Hadamard preprocessing to a vector. |
+| `try_inverse_hadamard_preprocess(plan)`       | Restore a vector after Hadamard preprocessing. |
+| `try_normalized_walsh_hadamard(values)`       | Transform power-of-two vector data with normalized WHT. |
 
 ## Shape And Layout
 
