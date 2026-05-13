@@ -1315,6 +1315,58 @@ fn mean_axis_with_keepdims(
   }
 }
 
+/// Variance along a specific axis, preserving materialization failures.
+pub fn try_variance_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, variance_list)
+}
+
+/// Variance along a specific axis.
+pub fn variance_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_variance_axis(t, axis_idx)
+}
+
+/// Variance along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_variance_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, variance_list)
+}
+
+/// Variance along a specific axis while keeping the reduced dimension as size 1.
+pub fn variance_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_variance_axis_keepdims(t, axis_idx)
+}
+
+/// Standard deviation along a specific axis, preserving materialization failures.
+pub fn try_std_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, std_list)
+}
+
+/// Standard deviation along a specific axis.
+pub fn std_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_std_axis(t, axis_idx)
+}
+
+/// Standard deviation along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_std_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, std_list)
+}
+
+/// Standard deviation along a specific axis while keeping the reduced dimension as size 1.
+pub fn std_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_std_axis_keepdims(t, axis_idx)
+}
+
 /// Maximum along a specific axis, preserving materialization failures.
 pub fn try_max_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
   reduce_axis_with_keepdims(t, axis_idx, False, max_list)
