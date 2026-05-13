@@ -78,12 +78,7 @@ pub fn ddpm_step_at_t0_test() {
   case t.ddpm_step(state, x_t, pred, 0), t.ddpm_step(state, x_t, pred, 0) {
     Ok(a), Ok(b) -> {
       t.shape(a) |> should.equal([4])
-      numerics.lists_close(
-        t.to_list(a),
-        t.to_list(b),
-        0.000_000_1,
-        0.000_000_1,
-      )
+      numerics.lists_close(t.to_list(a), t.to_list(b), 0.000_000_1, 0.000_000_1)
       |> should.be_true()
     }
     _, _ -> should.fail()
@@ -96,7 +91,8 @@ pub fn ddim_step_deterministic_test() {
   let state = t.build_schedule(samplers.LinearSchedule(0.0001, 0.02, 20))
   let x_t = Tensor(data: [0.5, -0.3, 1.2, -0.7], shape: [4])
   let pred = Tensor(data: [0.1, 0.2, -0.1, 0.0], shape: [4])
-  case t.ddim_step(state, x_t, pred, 10, 0.0),
+  case
+    t.ddim_step(state, x_t, pred, 10, 0.0),
     t.ddim_step(state, x_t, pred, 10, 0.0)
   {
     Ok(a), Ok(b) -> {
@@ -113,7 +109,11 @@ pub fn sample_loop_constant_model_test() {
   // has the right shape, and is not all NaN/Inf.
   let num_steps = 5
   let state = t.build_schedule(samplers.LinearSchedule(0.001, 0.02, num_steps))
-  let config = samplers.SamplerConfig(schedule: samplers.LinearSchedule(0.001, 0.02, num_steps), eta: 0.0)
+  let config =
+    samplers.SamplerConfig(
+      schedule: samplers.LinearSchedule(0.001, 0.02, num_steps),
+      eta: 0.0,
+    )
   let model_fn = fn(x_t: Tensor, _t: Int) -> Result(Tensor, t.TensorError) {
     Ok(t.zeros_like(x_t))
   }
@@ -133,7 +133,11 @@ pub fn sample_loop_constant_model_test() {
 pub fn sample_shape_test() {
   let num_steps = 4
   let state = t.build_schedule(samplers.LinearSchedule(0.001, 0.02, num_steps))
-  let config = samplers.SamplerConfig(schedule: samplers.LinearSchedule(0.001, 0.02, num_steps), eta: 0.0)
+  let config =
+    samplers.SamplerConfig(
+      schedule: samplers.LinearSchedule(0.001, 0.02, num_steps),
+      eta: 0.0,
+    )
   let model_fn = fn(x_t: Tensor, _t: Int) -> Result(Tensor, t.TensorError) {
     Ok(t.zeros_like(x_t))
   }

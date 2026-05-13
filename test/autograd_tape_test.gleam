@@ -166,12 +166,10 @@ pub fn traced_two_layer_test() {
   }
 
   let eps = 0.0001
-  let numerical_a1 = numerical_gradient(a1_data, [4, 3], eps, fn(t) {
-    two_layer(t, a2_t)
-  })
-  let numerical_a2 = numerical_gradient(a2_data, [2, 4], eps, fn(t) {
-    two_layer(a1_t, t)
-  })
+  let numerical_a1 =
+    numerical_gradient(a1_data, [4, 3], eps, fn(t) { two_layer(t, a2_t) })
+  let numerical_a2 =
+    numerical_gradient(a2_data, [2, 4], eps, fn(t) { two_layer(a1_t, t) })
 
   tensor.shape(da1) |> should.equal([4, 3])
   tensor.shape(da2) |> should.equal([2, 4])
@@ -305,12 +303,7 @@ pub fn traced_softmax_directional_grad_test() {
   let assert Ok(dx) = dict.get(grads, x.id)
 
   // grad_y = 1/3 everywhere; same argument as above => grad_x is zero.
-  numerics.lists_close(
-    tensor.to_list(dx),
-    [0.0, 0.0, 0.0],
-    1.0e-9,
-    1.0e-9,
-  )
+  numerics.lists_close(tensor.to_list(dx), [0.0, 0.0, 0.0], 1.0e-9, 1.0e-9)
   |> should.be_true()
 }
 

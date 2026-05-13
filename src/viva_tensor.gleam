@@ -31,7 +31,9 @@ import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/format as tensor_format
 import viva_tensor/core/linalg
+import viva_tensor/core/tensor as core_tensor
 import viva_tensor/data/dataloader
+import viva_tensor/diffusion/samplers as diffusion_samplers
 import viva_tensor/io/hf_loader as hf_loader_io
 import viva_tensor/io/onnx as onnx_io
 import viva_tensor/io/safetensors as safetensors_io
@@ -40,7 +42,6 @@ import viva_tensor/metrics/classification as metrics_classification
 import viva_tensor/metrics/regression as metrics_regression
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
-import viva_tensor/core/tensor as core_tensor
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/autograd
@@ -57,7 +58,6 @@ import viva_tensor/nn/rnn as nn_rnn
 import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/nn/transformer as nn_transformer
 import viva_tensor/quant/hadamard as quant_hadamard
-import viva_tensor/diffusion/samplers as diffusion_samplers
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
 import viva_tensor/text/tokenizer as text_tokenizer

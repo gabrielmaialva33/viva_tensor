@@ -111,7 +111,8 @@ pub fn color_jitter_forward(
               let #(r1, g1, b1) =
                 apply_brightness(r, g, b_ch, config.brightness)
               let #(r2, g2, b2) = apply_contrast(r1, g1, b1, config.contrast)
-              let #(r3, g3, b3) = apply_saturation(r2, g2, b2, config.saturation)
+              let #(r3, g3, b3) =
+                apply_saturation(r2, g2, b2, config.saturation)
               let #(r4, g4, b4) = apply_hue(r3, g3, b3, config.hue)
               list.append(r4, list.append(g4, b4))
             })
@@ -286,11 +287,9 @@ pub fn mixup(
 
   let image_data = tensor.to_list(images)
   let per_image_size = element_count(image_shape) / batch
-  let mixed_image_data =
-    mix_batched(image_data, perm, per_image_size, lambda)
+  let mixed_image_data = mix_batched(image_data, perm, per_image_size, lambda)
 
-  let mixed_label_data =
-    mix_batched(label_matrix, perm, num_classes, lambda)
+  let mixed_label_data = mix_batched(label_matrix, perm, num_classes, lambda)
 
   Ok(#(
     Tensor(data: mixed_image_data, shape: image_shape),
@@ -358,8 +357,7 @@ pub fn cutmix(
   let box_h = y2 - y1
   let lambda = case width * height <= 0 {
     True -> 1.0
-    False ->
-      1.0 -. int.to_float(box_w * box_h) /. int.to_float(width * height)
+    False -> 1.0 -. int.to_float(box_w * box_h) /. int.to_float(width * height)
   }
 
   let perm = random_permutation(batch)
@@ -367,7 +365,18 @@ pub fn cutmix(
   let mixed_image_data = case box_w == 0 || box_h == 0 {
     True -> image_data
     False ->
-      paste_box(image_data, perm, batch, channels, height, width, x1, x2, y1, y2)
+      paste_box(
+        image_data,
+        perm,
+        batch,
+        channels,
+        height,
+        width,
+        x1,
+        x2,
+        y1,
+        y2,
+      )
   }
 
   let mixed_label_data = mix_batched(label_matrix, perm, num_classes, lambda)
@@ -407,14 +416,15 @@ fn normalize_labels(
   case num_classes <= 0 {
     True ->
       Error(InvalidShape(
-        op <> ": num_classes must be positive, got " <> int.to_string(num_classes),
+        op
+        <> ": num_classes must be positive, got "
+        <> int.to_string(num_classes),
       ))
     False -> {
       let label_shape = tensor.shape(labels)
       let label_data = tensor.to_list(labels)
       case label_shape {
-        [b] if b == batch ->
-          Ok(one_hot_from_indices(label_data, num_classes))
+        [b] if b == batch -> Ok(one_hot_from_indices(label_data, num_classes))
         [b, k] if b == batch && k == num_classes -> Ok(label_data)
         _ ->
           Error(OperandShapeMismatch(
@@ -428,10 +438,7 @@ fn normalize_labels(
   }
 }
 
-fn one_hot_from_indices(
-  indices: List(Float),
-  num_classes: Int,
-) -> List(Float) {
+fn one_hot_from_indices(indices: List(Float), num_classes: Int) -> List(Float) {
   list.flat_map(indices, fn(idx_f) {
     let idx = float.round(idx_f)
     list.range(0, num_classes - 1)
@@ -617,8 +624,7 @@ fn marsaglia_loop(d: Float, c: Float, attempts: Int) -> Float {
           let v = v_base *. v_base *. v_base
           let u = float.max(ffi.random_uniform(), 1.0e-12)
           let lhs = u
-          let rhs =
-            ffi.exp(0.5 *. x *. x +. d -. d *. v +. d *. ffi.log(v))
+          let rhs = ffi.exp(0.5 *. x *. x +. d -. d *. v +. d *. ffi.log(v))
           case lhs <. rhs {
             True -> d *. v
             False -> marsaglia_loop(d, c, attempts + 1)

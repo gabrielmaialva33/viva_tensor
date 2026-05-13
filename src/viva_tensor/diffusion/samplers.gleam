@@ -108,10 +108,7 @@ pub fn build_schedule(schedule: NoiseSchedule) -> SchedulerState {
   }
 }
 
-fn schedule_from_betas(
-  betas: List(Float),
-  num_steps: Int,
-) -> SchedulerState {
+fn schedule_from_betas(betas: List(Float), num_steps: Int) -> SchedulerState {
   let alphas = list.map(betas, fn(b) { 1.0 -. b })
   let alpha_bars = cumulative_product(alphas)
   SchedulerState(
@@ -327,7 +324,8 @@ pub fn sample(
         False -> {
           let x_t =
             Tensor(
-              data: list.range(1, total) |> list.map(fn(_) { standard_normal() }),
+              data: list.range(1, total)
+                |> list.map(fn(_) { standard_normal() }),
               shape: shape,
             )
           sampling_loop(config, state, x_t, state.num_steps - 1, model_fn)

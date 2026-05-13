@@ -254,7 +254,8 @@ fn json_error_to_string(err: json.DecodeError) -> String {
     json.UnexpectedEndOfInput -> "unexpected end of JSON input"
     json.UnexpectedByte(byte) -> "unexpected byte " <> byte
     json.UnexpectedSequence(seq) -> "unexpected sequence " <> seq
-    json.UnableToDecode(errors) -> "schema mismatch: " <> describe_errors(errors)
+    json.UnableToDecode(errors) ->
+      "schema mismatch: " <> describe_errors(errors)
   }
 }
 
@@ -379,8 +380,8 @@ fn binary_op(
     _ ->
       Error(ShapeError(
         node.op_type
-          <> ": expected 2 inputs, got "
-          <> int.to_string(list.length(node.inputs)),
+        <> ": expected 2 inputs, got "
+        <> int.to_string(list.length(node.inputs)),
       ))
   }
 }
@@ -457,9 +458,9 @@ fn run_softmax(
         False ->
           Error(ShapeError(
             "Softmax: axis "
-              <> int.to_string(raw_axis)
-              <> " out of bounds for rank "
-              <> int.to_string(rank),
+            <> int.to_string(raw_axis)
+            <> " out of bounds for rank "
+            <> int.to_string(rank),
           ))
         True ->
           case activations.softmax(x, axis) {
@@ -504,7 +505,9 @@ fn transpose_with_perm(
     // 2D explicit swap — delegate to tensor.transpose.
     2, [1, 0], _ ->
       tensor.transpose(x)
-      |> result.map_error(fn(_) { ShapeError("Transpose: tensor.transpose failed") })
+      |> result.map_error(fn(_) {
+        ShapeError("Transpose: tensor.transpose failed")
+      })
     // 1D or identity permutation — return as-is.
     _, _, _ -> {
       let identity = list.range(0, rank - 1)
@@ -532,8 +535,7 @@ fn run_reshape(
       // ONNX encodes shape as an int64 tensor; in our JSON it arrives as a
       // Float tensor — round to int.
       let shape_floats = tensor.to_list(shape_tensor)
-      let new_shape =
-        list.map(shape_floats, fn(f) { float.round(f) })
+      let new_shape = list.map(shape_floats, fn(f) { float.round(f) })
       use resolved <- result.try(resolve_reshape_dims(
         new_shape,
         tensor.shape(data),
@@ -571,12 +573,14 @@ fn resolve_reshape_dims(
           case source_size % known == 0 {
             True -> {
               let inferred = source_size / known
-              Ok(list.map(target, fn(d) {
-                case d == -1 {
-                  True -> inferred
-                  False -> d
-                }
-              }))
+              Ok(
+                list.map(target, fn(d) {
+                  case d == -1 {
+                    True -> inferred
+                    False -> d
+                  }
+                }),
+              )
             }
             False ->
               Error(ShapeError(
@@ -672,8 +676,8 @@ fn layer_norm_last_axis(
     False ->
       Error(ShapeError(
         "LayerNormalization: scale/bias must have shape ["
-          <> int.to_string(last)
-          <> "]",
+        <> int.to_string(last)
+        <> "]",
       ))
     True -> {
       let x_data = tensor.to_list(x)
@@ -692,14 +696,11 @@ fn layer_norm_last_axis(
             })
             /. n
           let denom = safe_sqrt(var +. eps)
-          list.map(
-            list.zip(chunk, list.zip(scale_data, bias_data)),
-            fn(triple) {
-              let #(v, sb) = triple
-              let #(s, b) = sb
-              { v -. mean } /. denom *. s +. b
-            },
-          )
+          list.map(list.zip(chunk, list.zip(scale_data, bias_data)), fn(triple) {
+            let #(v, sb) = triple
+            let #(s, b) = sb
+            { v -. mean } /. denom *. s +. b
+          })
         })
         |> list.flatten
       let out = Tensor(data: normalized, shape: x_shape)
@@ -729,7 +730,11 @@ fn chunk_by(data: List(Float), n: Int) -> List(List(Float)) {
 
 // --- Attribute helpers -----------------------------------------------------
 
-fn int_attr(attrs: Dict(String, OnnxAttribute), name: String, default: Int) -> Int {
+fn int_attr(
+  attrs: Dict(String, OnnxAttribute),
+  name: String,
+  default: Int,
+) -> Int {
   case dict.get(attrs, name) {
     Ok(IntAttr(v)) -> v
     _ -> default

@@ -91,12 +91,7 @@ pub fn run_gemm_test() {
   let assert Ok(outputs) = onnx.run_graph(graph, feeds)
   let assert Ok(y) = dict.get(outputs, "Y")
   t.shape(y) |> should.equal([2, 2])
-  numerics.lists_close(
-    t.to_list(y),
-    [38.5, 44.5, 86.5, 100.5],
-    1.0e-6,
-    1.0e-9,
-  )
+  numerics.lists_close(t.to_list(y), [38.5, 44.5, 86.5, 100.5], 1.0e-6, 1.0e-9)
   |> should.be_true
 }
 
@@ -127,10 +122,7 @@ pub fn run_softmax_axis_test() {
   let assert Ok(graph) = onnx.parse_graph(json_str)
   let feeds =
     dict.from_list([
-      #(
-        "x",
-        Tensor(data: [1.0, 2.0, 3.0, 1.0, 2.0, 3.0], shape: [2, 3]),
-      ),
+      #("x", Tensor(data: [1.0, 2.0, 3.0, 1.0, 2.0, 3.0], shape: [2, 3])),
     ])
   let assert Ok(outputs) = onnx.run_graph(graph, feeds)
   let assert Ok(y) = dict.get(outputs, "y")

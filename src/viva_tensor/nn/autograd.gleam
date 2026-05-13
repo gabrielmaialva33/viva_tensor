@@ -609,16 +609,17 @@ pub fn traced_layer_norm(
 
   let scale_shape = tensor.shape(scale_var.data)
   let bias_shape = tensor.shape(bias_var.data)
-  use _ <- result.try(case scale_shape == [features] && bias_shape == [features]
-  {
-    True -> Ok(Nil)
-    False ->
-      Error(DimensionError(
-        "traced_layer_norm scale/bias shape mismatch: expected ["
-        <> int.to_string(features)
-        <> "]",
-      ))
-  })
+  use _ <- result.try(
+    case scale_shape == [features] && bias_shape == [features] {
+      True -> Ok(Nil)
+      False ->
+        Error(DimensionError(
+          "traced_layer_norm scale/bias shape mismatch: expected ["
+          <> int.to_string(features)
+          <> "]",
+        ))
+    },
+  )
 
   let x_data = tensor.to_list(x.data)
   let scale_data = tensor.to_list(scale_var.data)
@@ -691,8 +692,7 @@ pub fn traced_layer_norm(
           let #(grad_xhat, rstd) = triple
           let #(g, xh) = grad_xhat
           let dxhat = list.map(list.zip(g, saved_scale), fn(p) { p.0 *. p.1 })
-          let mean_dxhat =
-            list.fold(dxhat, 0.0, fn(acc, v) { acc +. v }) /. n_f
+          let mean_dxhat = list.fold(dxhat, 0.0, fn(acc, v) { acc +. v }) /. n_f
           let mean_dxhat_xhat =
             list.fold(list.zip(dxhat, xh), 0.0, fn(acc, pair) {
               acc +. pair.0 *. pair.1
