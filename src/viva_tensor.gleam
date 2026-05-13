@@ -31,6 +31,7 @@ import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/format as tensor_format
 import viva_tensor/core/linalg
+import viva_tensor/data/dataloader
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
@@ -227,6 +228,22 @@ pub type BatchNorm1d =
 /// Group normalization layer.
 pub type GroupNorm =
   nn_norm.GroupNorm
+
+/// A labeled training example: an input tensor paired with a target tensor.
+pub type Sample =
+  dataloader.Sample
+
+/// In-memory dataset of `Sample`s.
+pub type Dataset =
+  dataloader.Dataset
+
+/// Stacked batch produced by a `DataLoader`.
+pub type Batch =
+  dataloader.Batch
+
+/// Iterator-style data loader.
+pub type DataLoader =
+  dataloader.DataLoader
 
 // --- Constructors -----------------------------------------------------------
 
@@ -2847,4 +2864,113 @@ pub fn lstm_sequence(
   initial_cell: Tensor,
 ) -> Result(#(List(Tensor), Tensor, Tensor), TensorError) {
   nn_rnn.lstm_sequence(cell, inputs, initial_hidden, initial_cell)
+}
+
+// --- Data -------------------------------------------------------------------
+
+/// Build an in-memory dataset from a list of labeled samples.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let x = t.from_list([1.0])
+/// let y = t.from_list([0.0])
+/// let _ds = t.dataset_from_samples([t.Sample(input: x, target: y)])
+/// ```
+pub fn dataset_from_samples(samples: List(Sample)) -> Dataset {
+  dataloader.dataset_from_samples(samples)
+}
+
+/// Build a dataset from parallel input and target tensor lists.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let assert Ok(_ds) =
+///   t.dataset_from_lists([t.from_list([1.0])], [t.from_list([0.0])])
+/// ```
+pub fn dataset_from_lists(
+  inputs: List(Tensor),
+  targets: List(Tensor),
+) -> Result(Dataset, TensorError) {
+  dataloader.dataset_from_lists(inputs, targets)
+}
+
+/// Number of samples in the dataset.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.dataset_len(t.dataset_from_samples([]))
+/// ```
+pub fn dataset_len(d: Dataset) -> Int {
+  dataloader.dataset_len(d)
+}
+
+/// Fetch the i-th sample (zero-indexed; negative indices wrap).
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let ds =
+///   t.dataset_from_samples([
+///     t.Sample(input: t.from_list([1.0]), target: t.from_list([0.0])),
+///   ])
+/// let assert Ok(_) = t.dataset_get(ds, -1)
+/// ```
+pub fn dataset_get(d: Dataset, index: Int) -> Result(Sample, TensorError) {
+  dataloader.dataset_get(d, index)
+}
+
+/// Create a new data loader.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.data_loader_new(t.dataset_from_samples([]), 32, True, False)
+/// ```
+pub fn data_loader_new(
+  dataset: Dataset,
+  batch_size: Int,
+  shuffle: Bool,
+  drop_last: Bool,
+) -> DataLoader {
+  dataloader.data_loader_new(dataset, batch_size, shuffle, drop_last)
+}
+
+/// Iterate the loader once, returning all batches.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let ds =
+///   t.dataset_from_samples([
+///     t.Sample(input: t.from_list([1.0]), target: t.from_list([0.0])),
+///   ])
+/// let loader = t.data_loader_new(ds, 1, False, False)
+/// let assert Ok(_) = t.data_loader_batches(loader)
+/// ```
+pub fn data_loader_batches(
+  loader: DataLoader,
+) -> Result(List(Batch), TensorError) {
+  dataloader.data_loader_batches(loader)
+}
+
+/// Total number of batches a single iteration will yield.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let loader = t.data_loader_new(t.dataset_from_samples([]), 4, False, False)
+/// let _ = t.data_loader_len(loader)
+/// ```
+pub fn data_loader_len(loader: DataLoader) -> Int {
+  dataloader.data_loader_len(loader)
 }
