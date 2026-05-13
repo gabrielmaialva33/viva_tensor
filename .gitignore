@@ -35,6 +35,7 @@ deps/
 bench/data/
 bench/reports/
 bench/test_int8_imma
+bench/cuda/test_int8_imma
 
 # Editor
 .vscode/
