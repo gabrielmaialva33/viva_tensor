@@ -153,6 +153,7 @@ let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
 | `dtype(tensor)`           | Tensor element type.                                             |
 | `try_to_list(tensor)`     | Materialize tensor data while preserving native failures.        |
 | `flatten(tensor)`         | Convert to one dimension.                                        |
+| `try_flatten(tensor)`     | Fallible flatten preserving materialization failures.            |
 | `squeeze(tensor)`         | Remove size-one dimensions.                                      |
 | `unsqueeze(tensor, axis)` | Insert a size-one dimension.                                     |
 | `layout(tensor)`          | Inspect storage, device, dtype, strides, offset, and contiguity. |

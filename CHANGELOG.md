@@ -67,6 +67,10 @@ All notable changes to this project will be documented in this file.
 - Added fallible `try_mean()`, `try_product()`, `try_variance()`, and
   `try_std()` variants, plus root exports, so scalar reductions consistently
   expose empty-tensor and materialization failures.
+- Added fallible shape/materialization helpers `try_clone()`, `try_flatten()`,
+  and `try_concat()`, and hardened `reshape()`, `concat_axis()`, and `slice()`
+  to propagate materialization and indexing failures instead of filling with
+  empty or zero-like defaults.
 
 ### Highlights
 
