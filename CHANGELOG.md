@@ -64,6 +64,9 @@ All notable changes to this project will be documented in this file.
 - Added fallible `try_max()`, `try_min()`, `try_argmax()`, and `try_argmin()`
   variants so empty tensors and native materialization failures are explicit
   instead of collapsing to zero-like defaults.
+- Added fallible `try_mean()`, `try_product()`, `try_variance()`, and
+  `try_std()` variants, plus root exports, so scalar reductions consistently
+  expose empty-tensor and materialization failures.
 
 ### Highlights
 

@@ -97,6 +97,9 @@ Use broadcasting-specific functions when shapes differ.
 | `try_sum_axis(tensor, axis)`     | Fallible sum along one axis.                           |
 | `sum_axis_keepdims(tensor, axis)`| Sum along one axis while keeping a size-1 dimension.   |
 | `mean(tensor)`                   | Mean over all elements.                                |
+| `try_mean(tensor)`               | Fallible mean preserving materialization and empty-tensor errors. |
+| `product(tensor)`                | Product over all elements.                             |
+| `try_product(tensor)`            | Fallible product preserving materialization errors.     |
 | `mean_axis(tensor, axis)`        | Mean along one axis.                                   |
 | `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
 | `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
@@ -109,7 +112,9 @@ Use broadcasting-specific functions when shapes differ.
 | `argmin(tensor)`                 | Flat index of the minimum value.                       |
 | `try_argmin(tensor)`             | Fallible flat index of the minimum value.              |
 | `variance(tensor)`               | Variance over all elements.                            |
+| `try_variance(tensor)`           | Fallible variance preserving materialization and empty-tensor errors. |
 | `std(tensor)`                    | Standard deviation over all elements.                  |
+| `try_std(tensor)`                | Fallible standard deviation preserving materialization and empty-tensor errors. |
 
 ## Linear Algebra
 
