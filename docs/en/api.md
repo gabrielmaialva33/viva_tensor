@@ -61,6 +61,7 @@ pub fn example() {
 | `div(a, b)`             | Element-wise division for equal shapes.       |
 | `scale(tensor, scalar)` | Multiply every element by a scalar.           |
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |
+| `softmax_axis(tensor, axis)` | Normalize each slice along an axis.     |
 
 Use broadcasting-specific functions when shapes differ.
 
@@ -69,7 +70,9 @@ Use broadcasting-specific functions when shapes differ.
 | `can_broadcast(a, b)`         | Check whether two shapes are compatible. |
 | `broadcast_to(tensor, shape)` | Create a broadcast view when possible.   |
 | `add_broadcast(a, b)`         | Add with NumPy-style broadcasting.       |
+| `sub_broadcast(a, b)`         | Subtract with NumPy-style broadcasting.  |
 | `mul_broadcast(a, b)`         | Multiply with NumPy-style broadcasting.  |
+| `div_broadcast(a, b)`         | Divide with NumPy-style broadcasting.    |
 
 ## Reductions
 
@@ -98,6 +101,9 @@ Native-backed variants such as `matmul_into`, `to_accelerated`, and
 `matmul_accelerated_into` are available from the root module for hot paths that
 can reuse buffers or persistent GPU memory.
 
+Use `capabilities()` to inspect whether the current VM loaded the native NIF,
+the Zig SIMD backend, and which TFLOPS backends are visible.
+
 ## Shape And Layout
 
 | Function                  | Description                                                      |
@@ -114,6 +120,10 @@ can reuse buffers or persistent GPU memory.
 ```gleam
 let info = t.layout(t.zeros([2, 3]))
 ```
+
+Broadcasting, squeeze, unsqueeze, and contiguous reshape preserve strided views
+where possible. Call `to_contiguous()` before a heavy native hot path if a view
+would be slower than a dense buffer.
 
 ## Public Companion Modules
 

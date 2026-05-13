@@ -163,6 +163,9 @@ make build && make test
 # CI-style fallback check without the native NIF
 make test-no-nif
 
+# Small stable API regression benchmark
+make bench-regression
+
 # With NIF acceleration (Intel MKL + CUDA)
 make zig && make build
 
@@ -179,6 +182,16 @@ make build-all
 - CUDA 13+ with cuBLAS, cuBLASLt (GPU)
 - cuSPARSELt 0.8.1+ (sparse ops)
 - CUTLASS 4.3+ (FP8, INT4 sparse)
+
+## API Stability
+
+Use `import viva_tensor as t` for the stable library surface. The root module
+exports tensor creation, math, reductions, broadcasting, shape/layout inspection,
+native acceleration helpers, `softmax_axis`, and runtime `capabilities()`.
+
+Lower-level backend, quantization, sparse, neural-network, telemetry, benchmark,
+and example modules remain experimental until their contracts are documented and
+covered by stable compatibility tests.
 
 ## GPU Benchmark Suite
 

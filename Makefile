@@ -6,6 +6,7 @@
 #   make build      - Build the project
 #   make test       - Run tests
 #   make bench      - Run benchmarks and save to bench/reports/
+#   make bench-regression - Run small stable API regression benchmark
 #   make demo       - Run the demonstration
 #   make docs       - Generate documentation
 #   make clean      - Clean build artifacts
@@ -72,7 +73,7 @@ endif
 # MAIN TARGETS
 # =============================================================================
 
-.PHONY: all verify build test bench bench-rtx metrics demo docs clean fmt fmt-check check help
+.PHONY: all verify build test bench bench-regression bench-rtx metrics demo docs clean fmt fmt-check check help
 .PHONY: zig zig-clean zig-info build-all
 .PHONY: bench-int8 bench-nf4 bench-awq bench-flash bench-sparse bench-all
 .PHONY: watch deps publish
@@ -135,6 +136,13 @@ bench-rtx: build ensure-output
 	@echo "=== viva_tensor RTX Benchmark - $(DATE) ===" > $(OUTPUT_DIR)$(SEP)rtx_$(DATE).txt
 	gleam run -m viva_tensor/bench/rtx >> $(OUTPUT_DIR)$(SEP)rtx_$(DATE).txt 2>&1
 	@$(LOG) "$(GREEN)[OK]$(NC) RTX benchmark saved to: $(OUTPUT_DIR)$(SEP)rtx_$(DATE).txt"
+
+## Run small stable API regression benchmark
+bench-regression: build ensure-output
+	@$(LOG) "$(YELLOW)[BENCH]$(NC) Stable API regression benchmark..."
+	@echo "=== viva_tensor Regression Benchmark - $(DATE) ===" > $(OUTPUT_DIR)$(SEP)regression_$(DATE).txt
+	gleam run -m viva_tensor/bench/regression >> $(OUTPUT_DIR)$(SEP)regression_$(DATE).txt 2>&1
+	@$(LOG) "$(GREEN)[OK]$(NC) Regression benchmark saved to: $(OUTPUT_DIR)$(SEP)regression_$(DATE).txt"
 
 ## Run advanced metrics
 metrics: build ensure-output

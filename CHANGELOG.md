@@ -24,6 +24,12 @@ All notable changes to this project will be documented in this file.
 - Added zero-stride broadcast views to `viva_tensor/core/tensor` and made
   `core/ops.broadcast_to` preserve views instead of materializing expanded
   lists.
+- Exposed `softmax_axis`, `sub_broadcast`, `div_broadcast`, and
+  `capabilities()` from the stable root API.
+- Preserved dense and strided storage through safe `reshape`, `squeeze`, and
+  `unsqueeze` operations where view semantics are valid.
+- Added a small `make bench-regression` benchmark for stable public API hot
+  paths.
 
 ### Highlights
 
