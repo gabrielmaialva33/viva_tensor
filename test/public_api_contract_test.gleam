@@ -38,6 +38,9 @@ pub fn stable_fallible_unary_contract_test() {
   t.try_min(tensor) |> should.equal(Ok(1.0))
   t.try_argmax(tensor) |> should.equal(Ok(2))
   t.try_argmin(tensor) |> should.equal(Ok(0))
+  t.try_mean(tensor) |> should.equal(Ok(2.0))
+  t.try_product(tensor) |> should.equal(Ok(6.0))
+  t.try_variance(tensor) |> should.equal(Ok(0.6666666666666666))
 }
 
 pub fn stable_axis_reduction_contract_test() {

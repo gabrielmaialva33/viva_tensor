@@ -168,6 +168,33 @@ pub fn mean_test() {
   t.mean(a) |> should.equal(5.0)
 }
 
+pub fn try_mean_test() {
+  let a = t.from_list([2.0, 4.0, 6.0, 8.0])
+  t.try_mean(a) |> should.equal(Ok(5.0))
+}
+
+pub fn try_mean_empty_test() {
+  t.from_list([])
+  |> t.try_mean()
+  |> should.be_error()
+}
+
+pub fn product_test() {
+  let a = t.from_list([2.0, 3.0, 4.0])
+  t.product(a) |> should.equal(24.0)
+}
+
+pub fn try_product_test() {
+  let a = t.from_list([2.0, 3.0, 4.0])
+  t.try_product(a) |> should.equal(Ok(24.0))
+}
+
+pub fn try_product_empty_identity_test() {
+  t.from_list([])
+  |> t.try_product()
+  |> should.equal(Ok(1.0))
+}
+
 pub fn max_test() {
   let a = t.from_list([1.0, 5.0, 3.0, 2.0])
   t.max(a) |> should.equal(5.0)
@@ -229,6 +256,31 @@ pub fn try_argmin_test() {
 pub fn try_argmin_empty_test() {
   t.from_list([])
   |> t.try_argmin()
+  |> should.be_error()
+}
+
+pub fn try_variance_test() {
+  let a = t.from_list([2.0, 4.0, 6.0, 8.0])
+  t.try_variance(a) |> should.equal(Ok(5.0))
+}
+
+pub fn try_variance_empty_test() {
+  t.from_list([])
+  |> t.try_variance()
+  |> should.be_error()
+}
+
+pub fn try_std_test() {
+  let a = t.from_list([2.0, 4.0, 6.0, 8.0])
+  case t.try_std(a) {
+    Ok(value) -> { value >. 2.23 && value <. 2.24 } |> should.be_true()
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn try_std_empty_test() {
+  t.from_list([])
+  |> t.try_std()
   |> should.be_error()
 }
 
