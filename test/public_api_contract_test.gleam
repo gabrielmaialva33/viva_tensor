@@ -210,6 +210,15 @@ pub fn stable_broadcasting_contract_test() {
       t.to_list(result) |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
     Error(_) -> should.fail()
   }
+
+  case t.logical_and(row, t.from_list([1.0, 0.0, 1.0])) {
+    Ok(mask) -> t.to_list(mask) |> should.equal([1.0, 0.0, 1.0])
+    Error(_) -> should.fail()
+  }
+
+  t.try_any(row) |> should.equal(Ok(True))
+  t.try_all(row) |> should.equal(Ok(True))
+  t.try_count_nonzero(row) |> should.equal(Ok(3))
 }
 
 pub fn stable_linear_algebra_contract_test() {

@@ -121,6 +121,11 @@ Use broadcasting-specific functions when shapes differ.
 | `greater(a, b)` / `greater_equal(a, b)` | Element-wise comparison masks with broadcasting. |
 | `less(a, b)` / `less_equal(a, b)` | Element-wise comparison masks with broadcasting. |
 | `where(condition, true, false)` | Select values using a non-zero condition mask. |
+| `logical_not(mask)`          | Invert a numeric mask.                     |
+| `logical_and(a, b)` / `logical_or(a, b)` | Combine numeric masks with broadcasting. |
+| `logical_xor(a, b)`          | Exclusive-or over numeric masks.           |
+| `any(mask)` / `all(mask)`    | Reduce a numeric mask to a boolean.        |
+| `count_nonzero(tensor)`      | Count non-zero tensor values.              |
 
 ## Reductions
 

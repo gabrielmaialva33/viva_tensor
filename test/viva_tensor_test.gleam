@@ -1206,6 +1206,40 @@ pub fn where_broadcast_test() {
   }
 }
 
+pub fn logical_mask_ops_broadcast_test() {
+  let left = t.from_list([1.0, 0.0, 2.0, 0.0])
+  let right = t.from_list([0.0, 0.0, 3.0, 4.0])
+
+  t.logical_not(left) |> t.to_list() |> should.equal([0.0, 1.0, 0.0, 1.0])
+
+  case t.logical_and(left, right) {
+    Ok(mask) -> t.to_list(mask) |> should.equal([0.0, 0.0, 1.0, 0.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.logical_or(left, right) {
+    Ok(mask) -> t.to_list(mask) |> should.equal([1.0, 0.0, 1.0, 1.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.logical_xor(left, right) {
+    Ok(mask) -> t.to_list(mask) |> should.equal([1.0, 0.0, 0.0, 1.0])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn mask_reductions_test() {
+  let values = t.from_list([0.0, 2.0, 0.0, -3.0])
+
+  t.any(values) |> should.be_true()
+  t.all(values) |> should.be_false()
+  t.count_nonzero(values) |> should.equal(2)
+
+  t.try_any(t.from_list([])) |> should.equal(Ok(False))
+  t.try_all(t.from_list([])) |> should.equal(Ok(True))
+  t.try_count_nonzero(t.from_list([])) |> should.equal(Ok(0))
+}
+
 pub fn softmax_axis_public_facade_test() {
   case t.matrix(2, 2, [0.0, 0.0, 1.0, 1.0]) {
     Ok(logits) ->

@@ -115,6 +115,9 @@ All notable changes to this project will be documented in this file.
 - Added broadcasting-aware comparison masks (`equal()`, `not_equal()`,
   `greater()`, `greater_equal()`, `less()`, `less_equal()`) and `where()` for
   conditional tensor selection.
+- Added numeric-mask logic helpers (`logical_not()`, `logical_and()`,
+  `logical_or()`, `logical_xor()`) plus `any()`, `all()`, and
+  `count_nonzero()` reductions.
 
 ### Highlights
 

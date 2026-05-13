@@ -3349,6 +3349,114 @@ pub fn try_where(
   where(condition, when_true, when_false)
 }
 
+/// Logical NOT over a numeric mask.
+pub fn try_logical_not(t: Tensor) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) {
+    case x == 0.0 {
+      True -> 1.0
+      False -> 0.0
+    }
+  })
+}
+
+/// Logical NOT over a numeric mask.
+pub fn logical_not(t: Tensor) -> Tensor {
+  try_logical_not(t)
+  |> result.unwrap(t)
+}
+
+/// Logical AND over numeric masks with broadcasting.
+pub fn logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_broadcast(a, b, fn(x, y) { x != 0.0 && y != 0.0 })
+}
+
+/// Alias for `logical_and`.
+pub fn try_logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_and(a, b)
+}
+
+/// Logical OR over numeric masks with broadcasting.
+pub fn logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_broadcast(a, b, fn(x, y) { x != 0.0 || y != 0.0 })
+}
+
+/// Alias for `logical_or`.
+pub fn try_logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_or(a, b)
+}
+
+/// Logical XOR over numeric masks with broadcasting.
+pub fn logical_xor(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_broadcast(a, b, fn(x, y) {
+    let x_truthy = x != 0.0
+    let y_truthy = y != 0.0
+    x_truthy != y_truthy
+  })
+}
+
+/// Alias for `logical_xor`.
+pub fn try_logical_xor(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  logical_xor(a, b)
+}
+
+fn logical_broadcast(
+  a: Tensor,
+  b: Tensor,
+  predicate: fn(Float, Float) -> Bool,
+) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
+  map2(a_bc, b_bc, fn(x, y) {
+    case predicate(x, y) {
+      True -> 1.0
+      False -> 0.0
+    }
+  })
+}
+
+/// Does the mask contain any non-zero value?
+pub fn try_any(t: Tensor) -> Result(Bool, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(list.any(data, fn(x) { x != 0.0 }))
+}
+
+/// Does the mask contain any non-zero value?
+pub fn any(t: Tensor) -> Bool {
+  try_any(t)
+  |> result.unwrap(False)
+}
+
+/// Are all mask values non-zero?
+pub fn try_all(t: Tensor) -> Result(Bool, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(list.all(data, fn(x) { x != 0.0 }))
+}
+
+/// Are all mask values non-zero?
+pub fn all(t: Tensor) -> Bool {
+  try_all(t)
+  |> result.unwrap(False)
+}
+
+/// Count non-zero values in a tensor.
+pub fn try_count_nonzero(t: Tensor) -> Result(Int, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(
+    list.fold(data, 0, fn(count, x) {
+      case x != 0.0 {
+        True -> count + 1
+        False -> count
+      }
+    }),
+  )
+}
+
+/// Count non-zero values in a tensor.
+pub fn count_nonzero(t: Tensor) -> Int {
+  try_count_nonzero(t)
+  |> result.unwrap(0)
+}
+
 // --- Shape Manipulation ---
 
 /// Remove dimensions of size 1 (squeeze operation)

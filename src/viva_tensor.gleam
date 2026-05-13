@@ -1445,6 +1445,76 @@ pub fn try_where(
   tensor.try_where(condition, when_true, when_false)
 }
 
+/// Logical NOT over a numeric mask.
+pub fn logical_not(t: Tensor) -> Tensor {
+  tensor.logical_not(t)
+}
+
+/// Logical NOT over a numeric mask, preserving materialization failures.
+pub fn try_logical_not(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_logical_not(t)
+}
+
+/// Logical AND over numeric masks with broadcasting.
+pub fn logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.logical_and(a, b)
+}
+
+/// Alias for `logical_and`.
+pub fn try_logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_logical_and(a, b)
+}
+
+/// Logical OR over numeric masks with broadcasting.
+pub fn logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.logical_or(a, b)
+}
+
+/// Alias for `logical_or`.
+pub fn try_logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_logical_or(a, b)
+}
+
+/// Logical XOR over numeric masks with broadcasting.
+pub fn logical_xor(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.logical_xor(a, b)
+}
+
+/// Alias for `logical_xor`.
+pub fn try_logical_xor(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_logical_xor(a, b)
+}
+
+/// Does the mask contain any non-zero value?
+pub fn any(t: Tensor) -> Bool {
+  tensor.any(t)
+}
+
+/// Does the mask contain any non-zero value, preserving materialization failures.
+pub fn try_any(t: Tensor) -> Result(Bool, TensorError) {
+  tensor.try_any(t)
+}
+
+/// Are all mask values non-zero?
+pub fn all(t: Tensor) -> Bool {
+  tensor.all(t)
+}
+
+/// Are all mask values non-zero, preserving materialization failures.
+pub fn try_all(t: Tensor) -> Result(Bool, TensorError) {
+  tensor.try_all(t)
+}
+
+/// Count non-zero values in a tensor.
+pub fn count_nonzero(t: Tensor) -> Int {
+  tensor.count_nonzero(t)
+}
+
+/// Count non-zero values in a tensor, preserving materialization failures.
+pub fn try_count_nonzero(t: Tensor) -> Result(Int, TensorError) {
+  tensor.try_count_nonzero(t)
+}
+
 // --- Strided (Zero-copy) ----------------------------------------------------
 
 /// Convert to strided representation for O(1) element access
