@@ -41,6 +41,9 @@ Experimental modules may change shape as the implementation matures. Prefer the
 root module unless you are working on internals or benchmarking a specific
 backend.
 
+The directory and module ownership rules are documented in
+[Project Structure](project-structure.md).
+
 ## Public API Guardrails
 
 Each stable API addition should include:

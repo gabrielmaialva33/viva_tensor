@@ -199,6 +199,9 @@ The detailed stability boundary is documented in
 covered by `test/public_api_contract_test.gleam` so accidental public API drift
 is caught by `gleam test`.
 
+The package layout and module boundary rules are documented in
+[docs/en/project-structure.md](docs/en/project-structure.md).
+
 ## Third-Party Code
 
 The project may learn from or closely port permissively licensed tensor-library

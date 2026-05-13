@@ -13,11 +13,11 @@ graph LR
     ZH --> C[zh-cn/]
 ```
 
-|           |           Docs            |         API         |          Paper          |         Stability         |
-|:----------|:-------------------------:|:-------------------:|:-----------------------:|:-------------------------:|
-| **PT-BR** | [README](pt-br/README.md) | [api](pt-br/api.md) | [paper](pt-br/paper.md) |             -             |
-| **EN**    |  [README](en/README.md)   |  [api](en/api.md)   |  [paper](en/paper.md)   | [policy](en/stability.md) |
-| **中文**    | [README](zh-cn/README.md) | [api](zh-cn/api.md) | [paper](zh-cn/paper.md) |             -             |
+|           |           Docs            |         API         |          Paper          |         Stability         |              Structure              |
+|:----------|:-------------------------:|:-------------------:|:-----------------------:|:-------------------------:|:-----------------------------------:|
+| **PT-BR** | [README](pt-br/README.md) | [api](pt-br/api.md) | [paper](pt-br/paper.md) |             -             |                  -                  |
+| **EN**    |  [README](en/README.md)   |  [api](en/api.md)   |  [paper](en/paper.md)   | [policy](en/stability.md) | [layout](en/project-structure.md) |
+| **中文**    | [README](zh-cn/README.md) | [api](zh-cn/api.md) | [paper](zh-cn/paper.md) |             -             |                  -                  |
 
 ## Metrics
 
