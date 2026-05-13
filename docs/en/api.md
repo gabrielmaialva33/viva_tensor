@@ -102,7 +102,14 @@ Native-backed variants such as `matmul_into`, `to_accelerated`, and
 can reuse buffers or persistent GPU memory.
 
 Use `capabilities()` to inspect whether the current VM loaded the native NIF,
-the Zig SIMD backend, and which TFLOPS backends are visible.
+the Zig SIMD backend, which TFLOPS backends are visible, and the stable backend
+capability records. Use `backend_capabilities()` when you only need the
+capability table, or `plan_backend(operation)` to see which backend the stable
+planner would choose for an operation.
+
+```gleam
+let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
+```
 
 ## Shape And Layout
 

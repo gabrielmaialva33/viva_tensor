@@ -30,6 +30,9 @@ All notable changes to this project will be documented in this file.
   `unsqueeze` operations where view semantics are valid.
 - Added a small `make bench-regression` benchmark for stable public API hot
   paths.
+- Added stable backend capability records and `plan_backend()` so callers can
+  inspect BEAM CPU, native CPU, CUDA FP32/FP16/INT8, and sparse backend
+  availability without touching experimental modules.
 
 ### Highlights
 

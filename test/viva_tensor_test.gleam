@@ -1,3 +1,5 @@
+import gleam/list
+import gleam/string
 import gleeunit
 import gleeunit/should
 import viva_tensor as t
@@ -595,6 +597,35 @@ pub fn capabilities_smoke_test() {
   let caps = t.capabilities()
   { caps.nif_loaded || !caps.nif_loaded } |> should.be_true()
   { caps.zig_loaded || !caps.zig_loaded } |> should.be_true()
+  list.any(caps.backend_capabilities, fn(capability) {
+    capability.backend == t.BackendPureGleam && capability.available
+  })
+  |> should.be_true()
+}
+
+pub fn backend_capabilities_include_stable_fallback_test() {
+  let capabilities = t.backend_capabilities()
+
+  list.any(capabilities, fn(capability) {
+    capability.backend == t.BackendPureGleam
+    && capability.device == t.BackendBeamCpu
+    && capability.available
+  })
+  |> should.be_true()
+}
+
+pub fn softmax_backend_plan_uses_stable_gleam_path_test() {
+  let plan = t.plan_backend(t.OperationSoftmax)
+
+  plan.selected |> should.equal(t.BackendPureGleam)
+  plan.fallbacks |> should.equal([t.BackendPureGleam])
+}
+
+pub fn matmul_backend_plan_has_safe_fallback_test() {
+  let plan = t.plan_backend(t.OperationMatmul(16, 16, 16))
+
+  list.any(plan.fallbacks, fn(backend) { backend == t.BackendPureGleam })
+  |> should.be_true()
 }
 
 pub fn map2_test() {
@@ -905,10 +936,3 @@ pub fn conv2d_batch_test() {
   let data = tensor.get_data(output)
   list.first(data) |> should.equal(Ok(4.0))
 }
-
-// =============================================================================
-// IMPORTS FOR TESTS
-// =============================================================================
-
-import gleam/list
-import gleam/string

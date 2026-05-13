@@ -21,6 +21,8 @@
 //// c
 //// ```
 
+import gleam/list
+import gleam/result
 import viva_tensor/core/ffi
 import viva_tensor/cuda
 import viva_tensor/layout as tensor_layout
@@ -53,6 +55,73 @@ pub type TensorLayout =
 pub type TensorError =
   tensor.TensorError
 
+/// Backend device class used by runtime capability discovery.
+pub type BackendDevice {
+  BackendBeamCpu
+  BackendNativeCpu
+  BackendCuda
+}
+
+/// Element type supported by a runtime backend.
+pub type BackendDtype {
+  BackendFloat64
+  BackendFloat32
+  BackendFloat16
+  BackendInt8
+  BackendSparseFloat16
+}
+
+/// Stable backend names used by capability discovery and operation planning.
+pub type TensorBackend {
+  BackendPureGleam
+  BackendZigSimd
+  BackendMkl
+  BackendCudaFp32
+  BackendCudaFp16
+  BackendCudaInt8
+  BackendCudaSparse
+}
+
+/// Operation family used by the public backend planner.
+pub type TensorOperation {
+  OperationElementwise
+  OperationBroadcast
+  OperationReduction
+  OperationSoftmax
+  OperationMatmul(m: Int, n: Int, k: Int)
+}
+
+/// Operation family supported by a backend capability record.
+pub type BackendOperation {
+  BackendElementwise
+  BackendBroadcast
+  BackendReduction
+  BackendSoftmax
+  BackendMatmul
+}
+
+/// Runtime capability for one backend.
+pub type BackendCapability {
+  BackendCapability(
+    backend: TensorBackend,
+    available: Bool,
+    device: BackendDevice,
+    dtypes: List(BackendDtype),
+    operations: List(BackendOperation),
+    reason: String,
+  )
+}
+
+/// Backend decision for a tensor operation.
+pub type TensorBackendPlan {
+  TensorBackendPlan(
+    operation: TensorOperation,
+    selected: TensorBackend,
+    fallbacks: List(TensorBackend),
+    reason: String,
+  )
+}
+
 /// Runtime acceleration capabilities detected for this VM.
 pub type TensorCapabilities {
   TensorCapabilities(
@@ -60,6 +129,7 @@ pub type TensorCapabilities {
     zig_loaded: Bool,
     backend_info: String,
     tflops_backends: List(TflopsBackend),
+    backend_capabilities: List(BackendCapability),
   )
 }
 
@@ -780,5 +850,195 @@ pub fn capabilities() -> TensorCapabilities {
     zig_loaded: zig_loaded,
     backend_info: backend_info,
     tflops_backends: backends,
+    backend_capabilities: build_backend_capabilities(zig_loaded, backends),
+  )
+}
+
+/// Inspect stable backend capability records.
+pub fn backend_capabilities() -> List(BackendCapability) {
+  let nif_loaded = ffi.is_nif_loaded()
+  let zig_loaded = case nif_loaded {
+    True -> ffi.zig_is_loaded()
+    False -> False
+  }
+  let backends = case nif_loaded {
+    True -> detect_backends()
+    False -> [tflops_mod.PureErlang]
+  }
+
+  build_backend_capabilities(zig_loaded, backends)
+}
+
+/// Plan which backend should handle an operation on this VM.
+pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
+  let caps = capabilities()
+  let available =
+    caps.backend_capabilities
+    |> list.filter(fn(capability) { capability.available })
+    |> list.map(fn(capability) { capability.backend })
+
+  case operation {
+    OperationMatmul(m, n, k) ->
+      plan_matmul(operation, m, n, k, available, caps.nif_loaded)
+    OperationElementwise ->
+      plan_first_available(
+        operation,
+        available,
+        [BackendZigSimd, BackendMkl, BackendPureGleam],
+        "Element-wise ops prefer SIMD, then native CPU, then pure Gleam.",
+      )
+    OperationBroadcast ->
+      plan_first_available(
+        operation,
+        available,
+        [BackendZigSimd, BackendPureGleam],
+        "Broadcasting preserves views and only needs native compute when materialized.",
+      )
+    OperationReduction ->
+      plan_first_available(
+        operation,
+        available,
+        [BackendZigSimd, BackendMkl, BackendPureGleam],
+        "Reductions prefer SIMD/native CPU and fall back to pure Gleam.",
+      )
+    OperationSoftmax ->
+      plan_first_available(
+        operation,
+        available,
+        [BackendPureGleam],
+        "Softmax currently uses the stable Gleam implementation.",
+      )
+  }
+}
+
+fn build_backend_capabilities(
+  zig_loaded: Bool,
+  backends: List(TflopsBackend),
+) -> List(BackendCapability) {
+  [
+    BackendCapability(
+      backend: BackendPureGleam,
+      available: True,
+      device: BackendBeamCpu,
+      dtypes: [BackendFloat64],
+      operations: [
+        BackendElementwise,
+        BackendBroadcast,
+        BackendReduction,
+        BackendSoftmax,
+        BackendMatmul,
+      ],
+      reason: "Always available fallback.",
+    ),
+    BackendCapability(
+      backend: BackendZigSimd,
+      available: zig_loaded,
+      device: BackendNativeCpu,
+      dtypes: [BackendFloat64],
+      operations: [
+        BackendElementwise,
+        BackendReduction,
+        BackendMatmul,
+      ],
+      reason: "Portable SIMD NIF for CPU hot paths.",
+    ),
+    BackendCapability(
+      backend: BackendMkl,
+      available: zig_loaded,
+      device: BackendNativeCpu,
+      dtypes: [BackendFloat64, BackendFloat32],
+      operations: [BackendMatmul],
+      reason: "Native BLAS path exposed through the loaded Zig NIF.",
+    ),
+    BackendCapability(
+      backend: BackendCudaFp32,
+      available: list.contains(backends, tflops_mod.CudaFP32),
+      device: BackendCuda,
+      dtypes: [BackendFloat32],
+      operations: [BackendMatmul],
+      reason: "CUDA FP32/cuBLAS dense matrix multiplication.",
+    ),
+    BackendCapability(
+      backend: BackendCudaFp16,
+      available: list.contains(backends, tflops_mod.CudaFP16),
+      device: BackendCuda,
+      dtypes: [BackendFloat16],
+      operations: [BackendMatmul],
+      reason: "CUDA FP16 Tensor Core dense matrix multiplication.",
+    ),
+    BackendCapability(
+      backend: BackendCudaInt8,
+      available: list.contains(backends, tflops_mod.CudaINT8),
+      device: BackendCuda,
+      dtypes: [BackendInt8],
+      operations: [BackendMatmul],
+      reason: "CUDA INT8 IMMA Tensor Core matrix multiplication.",
+    ),
+    BackendCapability(
+      backend: BackendCudaSparse,
+      available: list.contains(backends, tflops_mod.CudaSparse),
+      device: BackendCuda,
+      dtypes: [BackendSparseFloat16],
+      operations: [BackendMatmul],
+      reason: "CUDA 2:4 sparse Tensor Core matrix multiplication.",
+    ),
+  ]
+}
+
+fn plan_matmul(
+  operation: TensorOperation,
+  m: Int,
+  n: Int,
+  k: Int,
+  available: List(TensorBackend),
+  nif_loaded: Bool,
+) -> TensorBackendPlan {
+  let tensor_core_aligned = m % 16 == 0 && n % 16 == 0 && k % 16 == 0
+  let candidates = case tensor_core_aligned {
+    True -> [
+      BackendCudaSparse,
+      BackendCudaFp16,
+      BackendCudaInt8,
+      BackendCudaFp32,
+      BackendMkl,
+      BackendZigSimd,
+      BackendPureGleam,
+    ]
+    False -> [
+      BackendCudaFp32,
+      BackendMkl,
+      BackendZigSimd,
+      BackendPureGleam,
+    ]
+  }
+  let reason = case nif_loaded {
+    True ->
+      case tensor_core_aligned {
+        True -> "Matmul dimensions are Tensor Core aligned; CUDA is preferred."
+        False ->
+          "Matmul dimensions are not Tensor Core aligned; dense CUDA/CPU fallback is preferred."
+      }
+    False -> "Native NIF is not loaded; pure Gleam fallback is selected."
+  }
+
+  plan_first_available(operation, available, candidates, reason)
+}
+
+fn plan_first_available(
+  operation: TensorOperation,
+  available: List(TensorBackend),
+  candidates: List(TensorBackend),
+  reason: String,
+) -> TensorBackendPlan {
+  let selected =
+    candidates
+    |> list.find(fn(candidate) { list.contains(available, candidate) })
+    |> result.unwrap(BackendPureGleam)
+
+  TensorBackendPlan(
+    operation: operation,
+    selected: selected,
+    fallbacks: candidates,
+    reason: reason,
   )
 }
