@@ -20,16 +20,16 @@ Rscript bench/r/analysis.R
 
 ## Layout
 
-| Path | Purpose |
-|:-----|:--------|
-| `python/` | Statistical and comparison benchmarks. |
-| `r/` | Statistical analysis and plots. |
-| `erlang/` | Low-level BEAM/NIF escript benchmarks. |
-| `cuda/` | CUDA benchmark probes and native fixtures. |
-| `scripts/` | Cross-runtime benchmark runners. |
-| `windows/` | Windows helper scripts. |
-| `data/` | Generated raw benchmark data, ignored by git. |
-| `reports/` | Generated reports and plots, ignored by git. |
+| Path       | Purpose                                       |
+|:-----------|:----------------------------------------------|
+| `python/`  | Statistical and comparison benchmarks.        |
+| `r/`       | Statistical analysis and plots.               |
+| `erlang/`  | Low-level BEAM/NIF escript benchmarks.        |
+| `cuda/`    | CUDA benchmark probes and native fixtures.    |
+| `scripts/` | Cross-runtime benchmark runners.              |
+| `windows/` | Windows helper scripts.                       |
+| `data/`    | Generated raw benchmark data, ignored by git. |
+| `reports/` | Generated reports and plots, ignored by git.  |
 
 ## Output
 

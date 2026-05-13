@@ -7,24 +7,24 @@ not on the current native or planner internals.
 
 ## Package Layout
 
-| Path | Purpose |
-|:-----|:--------|
-| `src/viva_tensor.gleam` | Stable public facade. User examples should prefer `import viva_tensor as t`. |
-| `src/viva_tensor/axis.gleam`, `layout.gleam`, `named.gleam` | Public companion modules for durable tensor concepts. |
-| `src/viva_tensor/tensor.gleam` | Internal tensor implementation used by the facade. It owns pure operations, native dispatch, shape behavior, and fallback paths. |
-| `src/viva_tensor/core/` | Internal storage, shape, dtype, errors, layout math, and FFI wrappers. |
-| `src/viva_tensor/backend/` | Backend protocol and capability descriptions used by planner-style selection code. |
-| `src/viva_tensor/native/` | Gleam-facing native helpers for BLAS, CUDA, sparse kernels, and TFLOPS/backend diagnostics. |
-| `src/viva_tensor/quant.gleam` | Internal quantization entrypoint that re-exports the supported quantization modules. |
-| `src/viva_tensor/quant/` | Quantization implementations: compression, NF4, AWQ, Hadamard preprocessing, tensor-core layout helpers, and TurboQuant reference code. |
-| `src/viva_tensor/nn/`, `optim/`, `observability/`, `experimental/` | Internal domain modules until their contracts are stable enough for public API. |
-| `src/*_ffi.erl`, `src/*_nif.erl`, `src/*_zig.erl` | Erlang bridge modules required by the BEAM target and NIF loading path. |
-| `zig_src/` | Native C, CUDA, and Zig implementation for the optional NIF. |
-| `priv/` | Runtime native artifacts loaded by Erlang when present. |
-| `test/` | Unit, behavior, public API contract, and NIF/no-NIF compatibility tests. |
-| `dev/` | Development-only Gleam examples and benchmark entrypoints. These modules are runnable with `gleam run -m ...` but are not supported package API. |
-| `bench/` | External benchmark scripts, grouped by runtime or tool: `python/`, `r/`, `erlang/`, `cuda/`, `scripts/`, and `windows/`. Generated `data/` and `reports/` stay ignored. |
-| `docs/` | Maintainer-authored guides and long-form documentation. |
+| Path                                                               | Purpose                                                                                                                                                                 |
+|:-------------------------------------------------------------------|:------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `src/viva_tensor.gleam`                                            | Stable public facade. User examples should prefer `import viva_tensor as t`.                                                                                            |
+| `src/viva_tensor/axis.gleam`, `layout.gleam`, `named.gleam`        | Public companion modules for durable tensor concepts.                                                                                                                   |
+| `src/viva_tensor/tensor.gleam`                                     | Internal tensor implementation used by the facade. It owns pure operations, native dispatch, shape behavior, and fallback paths.                                        |
+| `src/viva_tensor/core/`                                            | Internal storage, shape, dtype, errors, layout math, and FFI wrappers.                                                                                                  |
+| `src/viva_tensor/backend/`                                         | Backend protocol and capability descriptions used by planner-style selection code.                                                                                      |
+| `src/viva_tensor/native/`                                          | Gleam-facing native helpers for BLAS, CUDA, sparse kernels, and TFLOPS/backend diagnostics.                                                                             |
+| `src/viva_tensor/quant.gleam`                                      | Internal quantization entrypoint that re-exports the supported quantization modules.                                                                                    |
+| `src/viva_tensor/quant/`                                           | Quantization implementations: compression, NF4, AWQ, Hadamard preprocessing, tensor-core layout helpers, and TurboQuant reference code.                                 |
+| `src/viva_tensor/nn/`, `optim/`, `observability/`, `experimental/` | Internal domain modules until their contracts are stable enough for public API.                                                                                         |
+| `src/*_ffi.erl`, `src/*_nif.erl`, `src/*_zig.erl`                  | Erlang bridge modules required by the BEAM target and NIF loading path.                                                                                                 |
+| `zig_src/`                                                         | Native C, CUDA, and Zig implementation for the optional NIF.                                                                                                            |
+| `priv/`                                                            | Runtime native artifacts loaded by Erlang when present.                                                                                                                 |
+| `test/`                                                            | Unit, behavior, public API contract, and NIF/no-NIF compatibility tests.                                                                                                |
+| `dev/`                                                             | Development-only Gleam examples and benchmark entrypoints. These modules are runnable with `gleam run -m ...` but are not supported package API.                        |
+| `bench/`                                                           | External benchmark scripts, grouped by runtime or tool: `python/`, `r/`, `erlang/`, `cuda/`, `scripts/`, and `windows/`. Generated `data/` and `reports/` stay ignored. |
+| `docs/`                                                            | Maintainer-authored guides and long-form documentation.                                                                                                                 |
 
 ## Public API Boundary
 

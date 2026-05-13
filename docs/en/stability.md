@@ -14,12 +14,12 @@ quantization, sparse formats, and neural-network helpers keep evolving.
 
 The stable public surface is:
 
-| Module               | Status | Purpose                                      |
-|:---------------------|:------:|:---------------------------------------------|
+| Module               | Status | Purpose                                                                                                            |
+|:---------------------|:------:|:-------------------------------------------------------------------------------------------------------------------|
 | `viva_tensor`        | Stable | Tensor creation, math, reductions, layout inspection, broadcasting, backend planning, and safe fallback execution. |
-| `viva_tensor/layout` | Stable | Canonical tensor layout metadata.            |
-| `viva_tensor/axis`   | Stable | Semantic axis names and axis specifications. |
-| `viva_tensor/named`  | Stable | Tensor wrapper with named axes.              |
+| `viva_tensor/layout` | Stable | Canonical tensor layout metadata.                                                                                  |
+| `viva_tensor/axis`   | Stable | Semantic axis names and axis specifications.                                                                       |
+| `viva_tensor/named`  | Stable | Tensor wrapper with named axes.                                                                                    |
 
 Stable functions should preserve semantic-versioning compatibility, return
 `Result` for recoverable failures, and keep a pure BEAM fallback unless the

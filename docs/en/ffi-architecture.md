@@ -21,15 +21,15 @@ is complete and validated.
 
 ## Ownership Rules
 
-| Area | Owner | Rule |
-|:-----|:------|:-----|
-| Public API | `src/viva_tensor.gleam` and documented companions | Must not expose native-only requirements unless explicitly documented. |
-| Tensor behavior | `src/viva_tensor/tensor.gleam` and domain modules | Owns fallback selection and tensor semantics. |
-| FFI facade | `src/viva_tensor/core/ffi.gleam` | Owns stable internal wrapper names used by Gleam call sites. |
-| FFI split modules | `src/viva_tensor/core/ffi/*` | May own grouped internal wrappers after import compatibility is validated. |
-| Erlang bridge | `src/*_ffi.erl`, `src/*_nif.erl`, `src/*_zig.erl` | Owns BEAM module exports and NIF stubs. |
-| Native implementation | `zig_src/` | Owns C, CUDA, and Zig implementation details. |
-| Documentation | `docs/en/ffi-architecture.md` | Owns the split contract and migration rules. |
+| Area                  | Owner                                             | Rule                                                                       |
+|:----------------------|:--------------------------------------------------|:---------------------------------------------------------------------------|
+| Public API            | `src/viva_tensor.gleam` and documented companions | Must not expose native-only requirements unless explicitly documented.     |
+| Tensor behavior       | `src/viva_tensor/tensor.gleam` and domain modules | Owns fallback selection and tensor semantics.                              |
+| FFI facade            | `src/viva_tensor/core/ffi.gleam`                  | Owns stable internal wrapper names used by Gleam call sites.               |
+| FFI split modules     | `src/viva_tensor/core/ffi/*`                      | May own grouped internal wrappers after import compatibility is validated. |
+| Erlang bridge         | `src/*_ffi.erl`, `src/*_nif.erl`, `src/*_zig.erl` | Owns BEAM module exports and NIF stubs.                                    |
+| Native implementation | `zig_src/`                                        | Owns C, CUDA, and Zig implementation details.                              |
+| Documentation         | `docs/en/ffi-architecture.md`                     | Owns the split contract and migration rules.                               |
 
 ## Split Contract
 
