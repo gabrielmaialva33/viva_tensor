@@ -21,6 +21,9 @@ All notable changes to this project will be documented in this file.
 - Centralized row-major layout/indexing helpers in an internal
   `viva_tensor/core/layout_math` module and optimized `softmax_axis` to
   normalize each axis slice once.
+- Added zero-stride broadcast views to `viva_tensor/core/tensor` and made
+  `core/ops.broadcast_to` preserve views instead of materializing expanded
+  lists.
 
 ### Highlights
 
