@@ -1699,6 +1699,29 @@ pub fn broadcast_shape(
   }
 }
 
+/// Compute the common shape for any number of broadcastable shapes.
+pub fn broadcast_shapes(
+  shapes: List(List(Int)),
+) -> Result(List(Int), TensorError) {
+  case shapes {
+    [] -> Ok([])
+    [first, ..rest] -> broadcast_shapes_loop(rest, first)
+  }
+}
+
+fn broadcast_shapes_loop(
+  shapes: List(List(Int)),
+  current: List(Int),
+) -> Result(List(Int), TensorError) {
+  case shapes {
+    [] -> Ok(current)
+    [next, ..rest] -> {
+      use result_shape <- result.try(broadcast_shape(current, next))
+      broadcast_shapes_loop(rest, result_shape)
+    }
+  }
+}
+
 /// Broadcast tensor to target shape.
 /// Dense and strided tensors return a zero-stride view; native tensors
 /// materialize until the NIF layer exposes strided/broadcast views.
@@ -1749,35 +1772,42 @@ pub fn broadcast_to(
   }
 }
 
-/// Element-wise addition with broadcasting
-pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+/// Broadcast two tensors to their common shape.
+pub fn broadcast_pair(
+  a: Tensor,
+  b: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
   use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
   use a_bc <- result.try(broadcast_to(a, result_shape))
   use b_bc <- result.try(broadcast_to(b, result_shape))
+  Ok(#(a_bc, b_bc))
+}
+
+/// Element-wise addition with broadcasting
+pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
   add(a_bc, b_bc)
 }
 
 /// Element-wise subtraction with broadcasting
 pub fn sub_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
-  use a_bc <- result.try(broadcast_to(a, result_shape))
-  use b_bc <- result.try(broadcast_to(b, result_shape))
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
   sub(a_bc, b_bc)
 }
 
 /// Element-wise multiplication with broadcasting
 pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
-  use a_bc <- result.try(broadcast_to(a, result_shape))
-  use b_bc <- result.try(broadcast_to(b, result_shape))
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
   mul(a_bc, b_bc)
 }
 
 /// Element-wise division with broadcasting
 pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
-  use a_bc <- result.try(broadcast_to(a, result_shape))
-  use b_bc <- result.try(broadcast_to(b, result_shape))
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
   div(a_bc, b_bc)
 }
 

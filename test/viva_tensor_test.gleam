@@ -6,8 +6,8 @@ import viva_tensor as t
 import viva_tensor/axis
 import viva_tensor/core/ops
 import viva_tensor/core/tensor as core_tensor
-import viva_tensor/layout
 import viva_tensor/cuda.{CpuFallback}
+import viva_tensor/layout
 import viva_tensor/named
 import viva_tensor/tensor
 
@@ -170,6 +170,23 @@ pub fn dot_test() {
 }
 
 pub fn matmul_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case t.matmul(a, b) {
+            Ok(c) -> {
+              t.shape(c) |> should.equal([2, 2])
+              t.to_list(c) |> should.equal([19.0, 22.0, 43.0, 50.0])
+            }
+            Error(_) -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn matmul_planned_test() {
@@ -554,12 +571,52 @@ pub fn can_broadcast_test() {
   t.can_broadcast([2, 3], [4]) |> should.be_false()
 }
 
+pub fn broadcast_shape_public_test() {
+  case t.broadcast_shape([1, 3], [3, 1]) {
+    Ok(shape) -> shape |> should.equal([3, 3])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn broadcast_shapes_public_test() {
+  case t.broadcast_shapes([[6, 7], [5, 6, 1], [7], [5, 1, 7]]) {
+    Ok(shape) -> shape |> should.equal([5, 6, 7])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn broadcast_shapes_empty_public_test() {
+  case t.broadcast_shapes([]) {
+    Ok(shape) -> shape |> should.equal([])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn broadcast_shapes_error_public_test() {
+  t.broadcast_shapes([[1, 3, 4], [2, 3, 3]]) |> should.be_error()
+}
+
 pub fn broadcast_to_test() {
   let a = t.from_list([1.0, 2.0, 3.0])
   case t.broadcast_to(a, [2, 3]) {
     Ok(b) -> {
       t.shape(b) |> should.equal([2, 3])
       t.to_list(b) |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn broadcast_pair_test() {
+  let a = t.zeros([2, 3])
+  let b = t.from_list([1.0, 2.0, 3.0])
+
+  case t.broadcast_pair(a, b) {
+    Ok(pair) -> {
+      let #(left, right) = pair
+      t.shape(left) |> should.equal([2, 3])
+      t.shape(right) |> should.equal([2, 3])
+      t.to_list(right) |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
     }
     Error(_) -> should.fail()
   }
@@ -648,13 +705,13 @@ pub fn matmul_backend_plan_has_safe_fallback_test() {
 
   list.any(plan.fallbacks, fn(backend) { backend == t.BackendPureGleam })
   |> should.be_true()
+}
+
 pub fn tensor_device_and_dtype_test() {
   let values = t.from_list([1.0, 2.0, 3.0])
 
   t.device(values) |> should.equal(layout.BeamCpu)
   t.dtype(values) |> should.equal(layout.Float64)
-}
-
 }
 
 pub fn matmul_backend_plan_reports_rejections_test() {

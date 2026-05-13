@@ -13,7 +13,6 @@
 ////
 //// ```gleam
 //// import gleam/result
-import viva_tensor/core/error.{DimensionError}
 //// import viva_tensor as t
 ////
 //// let a = t.zeros([2, 3])
@@ -680,6 +679,7 @@ pub fn rank(t: Tensor) -> Int {
 pub fn layout(t: Tensor) -> TensorLayout {
   tensor.layout(t)
 }
+
 /// Inspect where a tensor payload lives.
 pub fn device(t: Tensor) -> TensorDevice {
   let info = layout(t)
@@ -691,7 +691,6 @@ pub fn dtype(t: Tensor) -> TensorDtype {
   let info = layout(t)
   info.dtype
 }
-
 
 /// Convert to list
 pub fn to_list(t: Tensor) -> List(Float) {
@@ -722,12 +721,35 @@ pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
   tensor.can_broadcast(a, b)
 }
 
+/// Compute the common shape for two broadcastable shapes.
+pub fn broadcast_shape(
+  a: List(Int),
+  b: List(Int),
+) -> Result(List(Int), TensorError) {
+  tensor.broadcast_shape(a, b)
+}
+
+/// Compute the common shape for any number of broadcastable shapes.
+pub fn broadcast_shapes(
+  shapes: List(List(Int)),
+) -> Result(List(Int), TensorError) {
+  tensor.broadcast_shapes(shapes)
+}
+
 /// Broadcast tensor to a target shape.
 pub fn broadcast_to(
   t: Tensor,
   target_shape: List(Int),
 ) -> Result(Tensor, TensorError) {
   tensor.broadcast_to(t, target_shape)
+}
+
+/// Broadcast two tensors to their common shape.
+pub fn broadcast_pair(
+  a: Tensor,
+  b: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  tensor.broadcast_pair(a, b)
 }
 
 /// Add with broadcasting

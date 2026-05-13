@@ -7,6 +7,9 @@ internal until their contracts are stable.
 Development-only benchmark and example entrypoints live under `dev/` so they can
 be run locally without becoming part of the packaged library surface.
 
+See [Stability Policy](stability.md) for the stable/experimental boundary and
+the compatibility expectations for root-module additions.
+
 ## Stable Imports
 
 ```gleam
@@ -65,14 +68,17 @@ pub fn example() {
 
 Use broadcasting-specific functions when shapes differ.
 
-| Function                      | Description                              |
-|:------------------------------|:-----------------------------------------|
-| `can_broadcast(a, b)`         | Check whether two shapes are compatible. |
-| `broadcast_to(tensor, shape)` | Create a broadcast view when possible.   |
-| `add_broadcast(a, b)`         | Add with NumPy-style broadcasting.       |
-| `sub_broadcast(a, b)`         | Subtract with NumPy-style broadcasting.  |
-| `mul_broadcast(a, b)`         | Multiply with NumPy-style broadcasting.  |
-| `div_broadcast(a, b)`         | Divide with NumPy-style broadcasting.    |
+| Function                      | Description                               |
+|:------------------------------|:------------------------------------------|
+| `can_broadcast(a, b)`         | Check whether two shapes are compatible.  |
+| `broadcast_shape(a, b)`       | Compute the common shape for two shapes.  |
+| `broadcast_shapes(shapes)`    | Compute the common shape for many shapes. |
+| `broadcast_to(tensor, shape)` | Create a broadcast view when possible.    |
+| `broadcast_pair(a, b)`        | Broadcast two tensors to common views.    |
+| `add_broadcast(a, b)`         | Add with NumPy-style broadcasting.        |
+| `sub_broadcast(a, b)`         | Subtract with NumPy-style broadcasting.   |
+| `mul_broadcast(a, b)`         | Multiply with NumPy-style broadcasting.   |
+| `div_broadcast(a, b)`         | Divide with NumPy-style broadcasting.     |
 
 ## Reductions
 
@@ -146,6 +152,8 @@ would be slower than a dense buffer.
 ## Stability Policy
 
 Public modules are documented by `gleam docs build` and should avoid panics,
-prefer `Result` for recoverable errors, and preserve semantic-versioning
-compatibility. Internal modules may change while the native acceleration,
-quantization, sparse, and neural-network APIs continue to mature.
+prefer `Result` for recoverable errors, preserve semantic-versioning
+compatibility, and keep a portable fallback when possible. Internal modules may
+change while the native acceleration, quantization, sparse, and neural-network
+APIs continue to mature. The detailed policy lives in
+[Stability Policy](stability.md).
