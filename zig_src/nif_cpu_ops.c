@@ -33,6 +33,23 @@ static void nt_binary_elementwise(const NativeTensor *a, const NativeTensor *b,
 static double op_add(double a, double b) { return a + b; }
 static double op_sub(double a, double b) { return a - b; }
 static double op_mul(double a, double b) { return a * b; }
+static double op_maximum(double a, double b) { return a > b ? a : b; }
+static double op_minimum(double a, double b) { return a < b ? a : b; }
+static double op_equal(double a, double b) { return a == b ? 1.0 : 0.0; }
+static double op_not_equal(double a, double b) { return a != b ? 1.0 : 0.0; }
+static double op_greater(double a, double b) { return a > b ? 1.0 : 0.0; }
+static double op_greater_equal(double a, double b) { return a >= b ? 1.0 : 0.0; }
+static double op_less(double a, double b) { return a < b ? 1.0 : 0.0; }
+static double op_less_equal(double a, double b) { return a <= b ? 1.0 : 0.0; }
+static double op_logical_and(double a, double b) {
+  return (a != 0.0 && b != 0.0) ? 1.0 : 0.0;
+}
+static double op_logical_or(double a, double b) {
+  return (a != 0.0 || b != 0.0) ? 1.0 : 0.0;
+}
+static double op_logical_xor(double a, double b) {
+  return ((a != 0.0) != (b != 0.0)) ? 1.0 : 0.0;
+}
 
 static int nt_can_write_into(const NativeTensor *out) {
   return out && out->owns_data && tensor_is_contiguous(out);
@@ -55,6 +72,40 @@ static double op_relu(double x) { return x > 0.0 ? x : 0.0; }
 static double op_sigmoid(double x) { return 1.0 / (1.0 + exp(-x)); }
 static double op_exp(double x) { return exp(x); }
 static double op_log(double x) { return log(x); }
+static double op_logical_not(double x) { return x == 0.0 ? 1.0 : 0.0; }
+
+static ERL_NIF_TERM nt_binary_resource_op(ErlNifEnv *env,
+                                          const ERL_NIF_TERM argv[],
+                                          double (*op)(double, double)) {
+  NativeTensor *a = get_tensor(env, argv[0]);
+  NativeTensor *b = get_tensor(env, argv[1]);
+  if (!a || !b)
+    return make_error(env, "invalid_tensor");
+  if (a->size != b->size)
+    return make_error(env, "size_mismatch");
+
+  NativeTensor *c = alloc_tensor_uninit(a->ndim, a->shape);
+  if (!c)
+    return make_error(env, "out_of_memory");
+
+  nt_binary_elementwise(a, b, c, op);
+  return make_ok(env, make_tensor_term(env, c));
+}
+
+static ERL_NIF_TERM nt_unary_resource_op(ErlNifEnv *env,
+                                         const ERL_NIF_TERM argv[],
+                                         double (*op)(double)) {
+  NativeTensor *a = get_tensor(env, argv[0]);
+  if (!a)
+    return make_error(env, "invalid_tensor");
+
+  NativeTensor *c = alloc_tensor_uninit(a->ndim, a->shape);
+  if (!c)
+    return make_error(env, "out_of_memory");
+
+  nt_unary_elementwise(a, c, op);
+  return make_ok(env, make_tensor_term(env, c));
+}
 
 static ERL_NIF_TERM fused_linear_relu_into_checked(ErlNifEnv *env,
                                                   NativeTensor *out,
@@ -164,7 +215,7 @@ ERL_NIF_TERM nt_scale(ErlNifEnv *env, int argc,
 
 /** nt_negate(Ref) -> {ok, RefC} */
 ERL_NIF_TERM nt_negate(ErlNifEnv *env, int argc,
-                              const ERL_NIF_TERM argv[]) {
+                               const ERL_NIF_TERM argv[]) {
   (void)argc;
   NativeTensor *a = get_tensor(env, argv[0]);
   if (!a)
@@ -179,6 +230,102 @@ ERL_NIF_TERM nt_negate(ErlNifEnv *env, int argc,
   else
     nt_unary_elementwise(a, c, op_negate);
   return make_ok(env, make_tensor_term(env, c));
+}
+
+ERL_NIF_TERM nt_maximum(ErlNifEnv *env, int argc,
+                               const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_maximum);
+}
+
+ERL_NIF_TERM nt_minimum(ErlNifEnv *env, int argc,
+                               const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_minimum);
+}
+
+ERL_NIF_TERM nt_equal(ErlNifEnv *env, int argc,
+                             const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_equal);
+}
+
+ERL_NIF_TERM nt_not_equal(ErlNifEnv *env, int argc,
+                                 const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_not_equal);
+}
+
+ERL_NIF_TERM nt_greater(ErlNifEnv *env, int argc,
+                               const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_greater);
+}
+
+ERL_NIF_TERM nt_greater_equal(ErlNifEnv *env, int argc,
+                                     const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_greater_equal);
+}
+
+ERL_NIF_TERM nt_less(ErlNifEnv *env, int argc,
+                            const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_less);
+}
+
+ERL_NIF_TERM nt_less_equal(ErlNifEnv *env, int argc,
+                                  const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_less_equal);
+}
+
+ERL_NIF_TERM nt_logical_not(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_unary_resource_op(env, argv, op_logical_not);
+}
+
+ERL_NIF_TERM nt_logical_and(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_logical_and);
+}
+
+ERL_NIF_TERM nt_logical_or(ErlNifEnv *env, int argc,
+                                  const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_logical_or);
+}
+
+ERL_NIF_TERM nt_logical_xor(ErlNifEnv *env, int argc,
+                                   const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  return nt_binary_resource_op(env, argv, op_logical_xor);
+}
+
+ERL_NIF_TERM nt_where(ErlNifEnv *env, int argc,
+                             const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  NativeTensor *condition = get_tensor(env, argv[0]);
+  NativeTensor *when_true = get_tensor(env, argv[1]);
+  NativeTensor *when_false = get_tensor(env, argv[2]);
+  if (!condition || !when_true || !when_false)
+    return make_error(env, "invalid_tensor");
+  if (condition->size != when_true->size || condition->size != when_false->size)
+    return make_error(env, "size_mismatch");
+
+  NativeTensor *out = alloc_tensor_uninit(condition->ndim, condition->shape);
+  if (!out)
+    return make_error(env, "out_of_memory");
+
+  for (int i = 0; i < condition->size; i++) {
+    double c = tensor_get_flat(condition, i);
+    out->data[i] = c != 0.0 ? tensor_get_flat(when_true, i)
+                            : tensor_get_flat(when_false, i);
+  }
+
+  return make_ok(env, make_tensor_term(env, out));
 }
 
 /* =========================================================================
@@ -268,6 +415,29 @@ ERL_NIF_TERM nt_min(ErlNifEnv *env, int argc,
     }
   }
   return make_ok(env, enif_make_double(env, mn));
+}
+
+ERL_NIF_TERM nt_count_nonzero(ErlNifEnv *env, int argc,
+                                     const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  NativeTensor *a = get_tensor(env, argv[0]);
+  if (!a)
+    return make_error(env, "invalid_tensor");
+
+  int count = 0;
+  if (tensor_is_contiguous(a)) {
+    for (int i = 0; i < a->size; i++) {
+      if (a->data[a->offset + i] != 0.0)
+        count++;
+    }
+  } else {
+    for (int i = 0; i < a->size; i++) {
+      if (tensor_get_flat(a, i) != 0.0)
+        count++;
+    }
+  }
+
+  return make_ok(env, enif_make_int(env, count));
 }
 
 /* =========================================================================

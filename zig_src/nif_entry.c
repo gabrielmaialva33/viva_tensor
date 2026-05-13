@@ -170,12 +170,26 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_mul", 2, nt_mul, 0},
     {"nt_scale", 2, nt_scale, 0},
     {"nt_negate", 1, nt_negate, 0},
+    {"nt_maximum", 2, nt_maximum, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_minimum", 2, nt_minimum, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_equal", 2, nt_equal, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_not_equal", 2, nt_not_equal, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_greater", 2, nt_greater, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_greater_equal", 2, nt_greater_equal, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_less", 2, nt_less, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_less_equal", 2, nt_less_equal, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_logical_not", 1, nt_logical_not, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_logical_and", 2, nt_logical_and, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_logical_or", 2, nt_logical_or, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_logical_xor", 2, nt_logical_xor, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_where", 3, nt_where, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
     /* NIF Resource API — reductions */
     {"nt_dot", 2, nt_dot, 0},
     {"nt_sum", 1, nt_sum, 0},
     {"nt_max", 1, nt_max, 0},
     {"nt_min", 1, nt_min, 0},
+    {"nt_count_nonzero", 1, nt_count_nonzero, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
     /* NIF Resource API — matrix ops */
     {"nt_matmul", 5, nt_matmul_blas, ERL_NIF_DIRTY_JOB_CPU_BOUND},
