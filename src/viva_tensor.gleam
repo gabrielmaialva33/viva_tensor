@@ -27,6 +27,7 @@ import viva_tensor/backend/capability as backend_capability
 import viva_tensor/backend/dispatch as backend_dispatch
 import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
+import viva_tensor/core/format as tensor_format
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
@@ -1071,6 +1072,59 @@ pub fn to_list(t: Tensor) -> List(Float) {
 /// Convert to list, preserving native materialization failures.
 pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
   tensor.try_to_list(t)
+}
+
+// --- Pretty Printing --------------------------------------------------------
+
+/// Options controlling tensor pretty-printing (precision, threshold,
+/// edgeitems, linewidth, scientific notation, etc.).
+pub type PrintOptions =
+  tensor_format.PrintOptions
+
+/// Scientific-notation mode used by `PrintOptions`.
+pub type SciMode =
+  tensor_format.SciMode
+
+/// Sign mode used by `PrintOptions`.
+pub type SignMode =
+  tensor_format.SignMode
+
+/// Default print options. Matches a sensible NumPy/PyTorch baseline:
+/// `precision=4, threshold=1000, edgeitems=3, linewidth=80`.
+pub fn default_print_options() -> PrintOptions {
+  tensor_format.default_print_options()
+}
+
+/// Render a tensor as a pretty multi-line string with column alignment
+/// and elision for large tensors.
+pub fn to_string(t: Tensor) -> String {
+  tensor_format.to_string(t)
+}
+
+/// Render a tensor with caller-supplied print options.
+pub fn to_string_with(t: Tensor, opts: PrintOptions) -> String {
+  tensor_format.to_string_with(t, opts)
+}
+
+/// Alias for `to_string` — matches the NumPy/PyTorch `inspect` /
+/// `__repr__` convention.
+pub fn inspect(t: Tensor) -> String {
+  tensor_format.inspect(t)
+}
+
+/// Render an accelerated tensor (CudaFp16/CudaFp32/Cpu) as a pretty
+/// string. Large CUDA tensors above the threshold render as
+/// header-only to avoid surprise H2D copies.
+pub fn accelerated_to_string(t: AcceleratedTensor) -> String {
+  tensor_format.accelerated_to_string(t)
+}
+
+/// Render an accelerated tensor with caller-supplied print options.
+pub fn accelerated_to_string_with(
+  t: AcceleratedTensor,
+  opts: PrintOptions,
+) -> String {
+  tensor_format.accelerated_to_string_with(t, opts)
 }
 
 // --- Utils ------------------------------------------------------------------
