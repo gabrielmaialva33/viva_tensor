@@ -33,6 +33,7 @@ import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
+import viva_tensor/nn/losses as nn_losses
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
@@ -2178,4 +2179,70 @@ fn matmul_native_cpu(
   use a_native <- result.try(tensor.native_from_list(tensor.to_list(a), [m, k]))
   use b_native <- result.try(tensor.native_from_list(tensor.to_list(b), [k, n]))
   tensor.matmul(a_native, b_native)
+}
+
+// --- Loss functions ---------------------------------------------------------
+//
+// Forward-pass-only re-exports of `viva_tensor/nn/losses`. Backward passes
+// (autograd integration) are a follow-up — these functions return a Tensor,
+// not a Variable.
+
+/// Reduction strategy for loss functions. See `viva_tensor/nn/losses`.
+pub type Reduction =
+  nn_losses.Reduction
+
+/// `ReductionNone` keeps the per-element loss tensor.
+pub const reduction_none: Reduction = nn_losses.ReductionNone
+
+/// `ReductionMean` returns the arithmetic mean as a 1-element tensor.
+pub const reduction_mean: Reduction = nn_losses.ReductionMean
+
+/// `ReductionSum` returns the sum as a 1-element tensor.
+pub const reduction_sum: Reduction = nn_losses.ReductionSum
+
+/// Mean Squared Error. See `viva_tensor/nn/losses.mse_loss`.
+pub fn mse_loss(
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_losses.mse_loss(prediction, target, reduction)
+}
+
+/// L1 / Mean Absolute Error. See `viva_tensor/nn/losses.l1_loss`.
+pub fn l1_loss(
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_losses.l1_loss(prediction, target, reduction)
+}
+
+/// Binary Cross-Entropy. See `viva_tensor/nn/losses.bce_loss`.
+pub fn bce_loss(
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_losses.bce_loss(prediction, target, reduction)
+}
+
+/// Softmax cross-entropy with integer-valued class targets. See
+/// `viva_tensor/nn/losses.cross_entropy_loss`.
+pub fn cross_entropy_loss(
+  logits: Tensor,
+  targets: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_losses.cross_entropy_loss(logits, targets, reduction)
+}
+
+/// Huber loss (smooth L1). See `viva_tensor/nn/losses.huber_loss`.
+pub fn huber_loss(
+  prediction: Tensor,
+  target: Tensor,
+  delta: Float,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_losses.huber_loss(prediction, target, delta, reduction)
 }
