@@ -109,6 +109,9 @@ All notable changes to this project will be documented in this file.
   `argmin_axis()`, `try_argmin_axis()`) and common element-wise math helpers
   (`abs()`, `square()`, `sqrt()`, `exp()`, `log()`) with fallible variants for
   domain-sensitive operations.
+- Added more NumPy-style element-wise utilities (`clip()`, `floor()`,
+  `ceil()`, `round()`, `sign()`, `reciprocal()`) plus broadcasting-aware
+  `maximum()` and `minimum()` helpers.
 
 ### Highlights
 

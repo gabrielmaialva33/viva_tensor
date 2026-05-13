@@ -1091,6 +1091,56 @@ pub fn try_log(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_log(t)
 }
 
+/// Floor every element.
+pub fn floor(t: Tensor) -> Tensor {
+  tensor.floor(t)
+}
+
+/// Floor every element, preserving materialization failures.
+pub fn try_floor(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_floor(t)
+}
+
+/// Ceiling every element.
+pub fn ceil(t: Tensor) -> Tensor {
+  tensor.ceil(t)
+}
+
+/// Ceiling every element, preserving materialization failures.
+pub fn try_ceil(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_ceil(t)
+}
+
+/// Round every element to the nearest integer value.
+pub fn round(t: Tensor) -> Tensor {
+  tensor.round(t)
+}
+
+/// Round every element to the nearest integer value, preserving failures.
+pub fn try_round(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_round(t)
+}
+
+/// Return -1, 0, or 1 for each element.
+pub fn sign(t: Tensor) -> Tensor {
+  tensor.sign(t)
+}
+
+/// Return -1, 0, or 1 for each element, preserving failures.
+pub fn try_sign(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_sign(t)
+}
+
+/// Reciprocal for every element.
+pub fn reciprocal(t: Tensor) -> Tensor {
+  tensor.reciprocal(t)
+}
+
+/// Reciprocal for every element, rejecting zeros.
+pub fn try_reciprocal(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_reciprocal(t)
+}
+
 /// Euclidean distance between two same-shaped tensors, flattened as vectors.
 pub fn euclidean_distance(a: Tensor, b: Tensor) -> Float {
   tensor.euclidean_distance(a, b)
@@ -1225,6 +1275,20 @@ pub fn try_clamp(
   tensor.try_clamp(t, min_val, max_val)
 }
 
+/// Alias for `clamp`.
+pub fn clip(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
+  tensor.clip(t, min_val, max_val)
+}
+
+/// Alias for `try_clamp`.
+pub fn try_clip(
+  t: Tensor,
+  min_val: Float,
+  max_val: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_clip(t, min_val, max_val)
+}
+
 // --- Broadcasting -----------------------------------------------------------
 
 /// Can these shapes broadcast together?
@@ -1281,6 +1345,26 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 /// Divide with broadcasting
 pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.div_broadcast(a, b)
+}
+
+/// Element-wise maximum with NumPy-style broadcasting.
+pub fn maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.maximum(a, b)
+}
+
+/// Alias for `maximum`.
+pub fn try_maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_maximum(a, b)
+}
+
+/// Element-wise minimum with NumPy-style broadcasting.
+pub fn minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.minimum(a, b)
+}
+
+/// Alias for `minimum`.
+pub fn try_minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_minimum(a, b)
 }
 
 // --- Strided (Zero-copy) ----------------------------------------------------

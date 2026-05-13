@@ -1332,7 +1332,8 @@ pub fn try_reciprocal(t: Tensor) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
   case list.any(data, fn(x) { x == 0.0 }) {
     True -> Error(InvalidShape("reciprocal requires all values != 0"))
-    False -> Ok(Tensor(data: list.map(data, fn(x) { 1.0 /. x }), shape: shape(t)))
+    False ->
+      Ok(Tensor(data: list.map(data, fn(x) { 1.0 /. x }), shape: shape(t)))
   }
 }
 

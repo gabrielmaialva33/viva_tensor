@@ -92,6 +92,16 @@ pub fn stable_fallible_unary_contract_test() {
   |> should.equal(Ok(t.from_list([1.0, 2.0])))
   t.try_square(t.from_list([2.0, 3.0]))
   |> should.equal(Ok(t.from_list([4.0, 9.0])))
+  t.try_floor(t.from_list([1.8, -1.2]))
+  |> should.equal(Ok(t.from_list([1.0, -2.0])))
+  t.try_ceil(t.from_list([1.2, -1.8]))
+  |> should.equal(Ok(t.from_list([2.0, -1.0])))
+  t.try_round(t.from_list([1.2, 1.8]))
+  |> should.equal(Ok(t.from_list([1.0, 2.0])))
+  t.try_sign(t.from_list([-2.0, 0.0, 3.0]))
+  |> should.equal(Ok(t.from_list([-1.0, 0.0, 1.0])))
+  t.try_reciprocal(t.from_list([2.0, 4.0]))
+  |> should.equal(Ok(t.from_list([0.5, 0.25])))
   t.try_mean(tensor) |> should.equal(Ok(2.0))
   t.try_product(tensor) |> should.equal(Ok(6.0))
   t.try_cumsum(tensor) |> should.equal(Ok(t.from_list([1.0, 3.0, 6.0])))
@@ -174,6 +184,19 @@ pub fn stable_broadcasting_contract_test() {
       t.shape(result) |> should.equal([2, 3])
       t.to_list(result) |> should.equal([8.0, 4.0, 2.0, 8.0, 4.0, 2.0])
     }
+    Error(_) -> should.fail()
+  }
+
+  case t.maximum(matrix, row) {
+    Ok(result) ->
+      t.to_list(result)
+      |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.minimum(matrix, row) {
+    Ok(result) ->
+      t.to_list(result) |> should.equal([1.0, 2.0, 4.0, 1.0, 2.0, 4.0])
     Error(_) -> should.fail()
   }
 }

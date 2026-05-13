@@ -199,6 +199,25 @@ pub fn try_map_test() {
   }
 }
 
+pub fn elementwise_rounding_and_sign_test() {
+  let values = t.from_list([-1.8, -0.2, 0.0, 1.2, 1.8])
+
+  t.floor(values) |> t.to_list() |> should.equal([-2.0, -1.0, 0.0, 1.0, 1.0])
+  t.ceil(values) |> t.to_list() |> should.equal([-1.0, -0.0, 0.0, 2.0, 2.0])
+  t.round(values) |> t.to_list() |> should.equal([-2.0, 0.0, 0.0, 1.0, 2.0])
+  t.sign(values) |> t.to_list() |> should.equal([-1.0, -1.0, 0.0, 1.0, 1.0])
+}
+
+pub fn reciprocal_and_clip_test() {
+  let values = t.from_list([2.0, 4.0, -0.5])
+
+  t.reciprocal(values) |> t.to_list() |> should.equal([0.5, 0.25, -2.0])
+  t.clip(values, 0.0, 3.0) |> t.to_list() |> should.equal([2.0, 3.0, 0.0])
+
+  t.try_reciprocal(t.from_list([1.0, 0.0])) |> should.be_error()
+  t.try_clip(values, 3.0, 0.0) |> should.be_error()
+}
+
 // =============================================================================
 // REDUCTIONS
 // =============================================================================
@@ -1109,6 +1128,32 @@ pub fn div_broadcast_test() {
     Ok(c) -> {
       t.shape(c) |> should.equal([2, 3])
       t.to_list(c) |> should.equal([8.0, 4.0, 2.0, 8.0, 4.0, 2.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn maximum_minimum_broadcast_test() {
+  let matrix = t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0])
+  let thresholds = t.from_list([3.0, 4.0, 5.0])
+
+  case matrix {
+    Ok(values) -> {
+      case t.maximum(values, thresholds) {
+        Ok(result) -> {
+          t.shape(result) |> should.equal([2, 3])
+          t.to_list(result) |> should.equal([3.0, 5.0, 5.0, 4.0, 4.0, 6.0])
+        }
+        Error(_) -> should.fail()
+      }
+
+      case t.minimum(values, thresholds) {
+        Ok(result) -> {
+          t.shape(result) |> should.equal([2, 3])
+          t.to_list(result) |> should.equal([1.0, 4.0, 2.0, 3.0, 3.0, 5.0])
+        }
+        Error(_) -> should.fail()
+      }
     }
     Error(_) -> should.fail()
   }
