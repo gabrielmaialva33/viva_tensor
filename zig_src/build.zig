@@ -83,6 +83,14 @@ pub fn build(b: *std.Build) void {
         .flags = &.{},
     });
 
+    // CPU scaffolding for new kernels: softmax_axis, layer_norm, gelu_exact.
+    // Currently stubbed (return not_implemented) — see nif_softmax.c for the
+    // algorithms a future implementer should drop in.
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("nif_softmax.c"),
+        .flags = &.{},
+    });
+
     // SparseTensor NIFs (FP16 + INT8 via cuSPARSELt)
     lib.root_module.addCSourceFile(.{
         .file = b.path("nif_sparse.c"),

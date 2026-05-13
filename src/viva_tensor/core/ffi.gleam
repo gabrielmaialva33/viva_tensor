@@ -852,6 +852,60 @@ pub fn nt_resonance_power(
   nt_resonance_power_ffi(data, exponent)
 }
 
+// --- Softmax / LayerNorm / GELU (CPU scaffolding) ---
+//
+// These are the public Gleam wrappers for the scaffolded CPU kernels declared
+// in zig_src/nif_softmax.c. The NIF body is currently stubbed and returns
+// Error("not_implemented") when loaded; when the NIF is absent we short-
+// circuit here with Error("nif_not_loaded") to mirror the pattern used by
+// nt_zeros and friends.
+//
+// A future implementer drops the kernel into nif_softmax.c, rebuilds the
+// shared lib, and these functions start returning real tensors with no
+// Gleam-side change.
+
+/// Native softmax along `axis`: exp(x - max) / sum(exp(x - max)) along the
+/// given axis. Uses the log-sum-exp trick for numerical stability.
+///
+/// Returns Error("nif_not_loaded") when the NIF library is absent.
+pub fn nt_softmax_axis(
+  ref: NativeTensorRef,
+  axis: Int,
+) -> Result(NativeTensorRef, String) {
+  case zig_is_loaded() {
+    True -> nt_softmax_axis_ffi(ref, axis)
+    False -> Error("nif_not_loaded")
+  }
+}
+
+/// Native LayerNorm along the last dimension:
+/// y = (x - mean(x)) / sqrt(var(x) + eps) * scale + bias.
+///
+/// `scale` and `bias` must be 1D tensors with size equal to the last
+/// dimension of `ref`. Returns Error("nif_not_loaded") when the NIF library
+/// is absent.
+pub fn nt_layer_norm(
+  ref: NativeTensorRef,
+  scale: NativeTensorRef,
+  bias: NativeTensorRef,
+  eps: Float,
+) -> Result(NativeTensorRef, String) {
+  case zig_is_loaded() {
+    True -> nt_layer_norm_ffi(ref, scale, bias, eps)
+    False -> Error("nif_not_loaded")
+  }
+}
+
+/// Native exact GELU: y = 0.5 * x * (1 + erf(x / sqrt(2))).
+///
+/// Returns Error("nif_not_loaded") when the NIF library is absent.
+pub fn nt_gelu_exact(ref: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  case zig_is_loaded() {
+    True -> nt_gelu_exact_ffi(ref)
+    False -> Error("nif_not_loaded")
+  }
+}
+
 @external(erlang, "viva_tensor_zig", "nt_zeros")
 fn nt_zeros_ffi(shape: List(Int)) -> Result(NativeTensorRef, String)
 
@@ -1119,6 +1173,24 @@ fn nt_resonance_power_ffi(
   data: NativeTensorRef,
   exponent: Float,
 ) -> Result(NativeTensorRef, String)
+
+// Softmax / LayerNorm / GELU scaffolding FFI
+@external(erlang, "viva_tensor_zig", "nt_softmax_axis")
+fn nt_softmax_axis_ffi(
+  ref: NativeTensorRef,
+  axis: Int,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_layer_norm")
+fn nt_layer_norm_ffi(
+  ref: NativeTensorRef,
+  scale: NativeTensorRef,
+  bias: NativeTensorRef,
+  eps: Float,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_gelu_exact")
+fn nt_gelu_exact_ffi(ref: NativeTensorRef) -> Result(NativeTensorRef, String)
 
 // Zig NIF FFI bindings
 @external(erlang, "viva_tensor_zig", "is_loaded")

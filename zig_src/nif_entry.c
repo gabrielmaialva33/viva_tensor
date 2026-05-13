@@ -234,6 +234,11 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_resonance_mul", 2, nt_resonance_mul, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_resonance_power", 2, nt_resonance_power, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
+    /* CPU scaffolding — softmax_axis / layer_norm / gelu_exact */
+    {"nt_softmax_axis", 2, nt_softmax_axis, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_layer_norm", 4, nt_layer_norm, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_gelu_exact", 1, nt_gelu_exact, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+
     /* LNS (True Log-Number System) — f32 via IADD, 8x throughput */
     {"lns_from_f64", 1, lns_from_f64, 0},
     {"lns_to_f64", 1, lns_to_f64, 0},

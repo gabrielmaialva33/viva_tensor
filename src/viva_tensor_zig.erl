@@ -40,7 +40,9 @@
     %% Retro / fused kernels
     nt_saturn_blend/3, nt_fused_linear_relu/6, nt_fused_linear_relu_into/7,
     %% Resonance kernels (Log-Number System) - f64
-    nt_resonance_mul/2, nt_resonance_power/2
+    nt_resonance_mul/2, nt_resonance_power/2,
+    %% CPU scaffolding — softmax_axis / layer_norm / gelu_exact
+    nt_softmax_axis/2, nt_layer_norm/4, nt_gelu_exact/1
 ]).
 
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput
@@ -429,6 +431,11 @@ nt_fused_linear_relu_into(_Out, _A, _B, _Bias, _M, _N, _K) -> {error, <<"nif_not
 %% Resonance kernels (Log-Number System) - f64
 nt_resonance_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_resonance_power(_Ref, _Exponent) -> erlang:nif_error(nif_not_loaded).
+
+%% CPU scaffolding — softmax_axis / layer_norm / gelu_exact
+nt_softmax_axis(_Ref, _Axis) -> erlang:nif_error(nif_not_loaded).
+nt_layer_norm(_Ref, _Scale, _Bias, _Eps) -> erlang:nif_error(nif_not_loaded).
+nt_gelu_exact(_Ref) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput

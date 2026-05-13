@@ -653,6 +653,11 @@ NIF_FUNC_DECL(nt_scale_into);
 NIF_FUNC_DECL(nt_fused_linear_relu_into);
 NIF_FUNC_DECL(nt_saturn_blend);
 NIF_FUNC_DECL(nt_fused_linear_relu_nif);
+
+/* nif_softmax.c — scaffolded CPU kernels (softmax/layer_norm/gelu_exact) */
+NIF_FUNC_DECL(nt_softmax_axis);
+NIF_FUNC_DECL(nt_layer_norm);
+NIF_FUNC_DECL(nt_gelu_exact);
 #ifndef _WIN32
 NIF_FUNC_DECL(nt_matmul_cuda_fp32);
 NIF_FUNC_DECL(nt_matmul_int8_tc);
