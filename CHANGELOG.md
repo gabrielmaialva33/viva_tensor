@@ -31,11 +31,19 @@ All notable changes to this project will be documented in this file.
 - Added a small `make bench-regression` benchmark for stable public API hot
   paths.
 - Added stable backend capability records and `plan_backend()` so callers can
-- Added structured backend rejection reasons to `TensorBackendPlan` and exposed
   inspect BEAM CPU, native CPU, CUDA FP32/FP16/INT8, and sparse backend
-- Added `matmul_planned()` to execute matrix multiplication through the stable backend planner with automatic fallback to pure Gleam.
   availability without touching experimental modules.
+- Added structured backend rejection reasons to `TensorBackendPlan`.
+- Added `matmul_planned()` to execute matrix multiplication through the stable
+  backend planner with automatic fallback to pure Gleam.
 - Added `device()`/`dtype()` helpers for basic tensor placement metadata.
+- Added an English stability policy and a public API contract test for the
+  stable root facade.
+- Added third-party notice tracking for future permissively licensed ports from
+  mature tensor libraries.
+- Added public `broadcast_shape()`, `broadcast_shapes()`, and `broadcast_pair()`
+  helpers inspired by mature NumPy/PyTorch shape contracts, with shared
+  zero-stride view planning for broadcast element-wise operations.
 
 ### Highlights
 

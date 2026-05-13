@@ -194,6 +194,18 @@ Lower-level backend, quantization, sparse, neural-network, telemetry, benchmark,
 and example modules remain experimental until their contracts are documented and
 covered by stable compatibility tests.
 
+The detailed stability boundary is documented in
+[docs/en/stability.md](docs/en/stability.md). Root-module additions should be
+covered by `test/public_api_contract_test.gleam` so accidental public API drift
+is caught by `gleam test`.
+
+## Third-Party Code
+
+The project may learn from or closely port permissively licensed tensor-library
+work when that materially improves correctness or performance. Any copied or
+closely derived code must retain the original notices and be tracked in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+
 ## GPU Benchmark Suite
 
 ```bash
