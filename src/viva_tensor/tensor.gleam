@@ -21,6 +21,7 @@ import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
 import viva_tensor/core/tensor_axis
 import viva_tensor/core/tensor_broadcast
+import viva_tensor/core/tensor_linalg
 import viva_tensor/layout
 
 // --- Types ---
@@ -1740,8 +1741,7 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 fn dot_dense(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
   use a_data <- result.try(try_to_list(a))
   use b_data <- result.try(try_to_list(b))
-  let products = list.map2(a_data, b_data, fn(x, y) { x *. y })
-  Ok(list.fold(products, 0.0, fn(acc, x) { acc +. x }))
+  Ok(tensor_linalg.dot_values(a_data, b_data))
 }
 
 /// Matrix-vector multiplication: [m, n] @ [n] -> [m]
@@ -1752,16 +1752,7 @@ pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
       use mat_data <- result.try(try_to_list(mat))
       use vec_data <- result.try(try_to_list(vec))
       let result_data =
-        list.range(0, m - 1)
-        |> list.map(fn(row_idx) {
-          let start = row_idx * n
-          let row =
-            mat_data
-            |> list.drop(start)
-            |> list.take(n)
-          list.map2(row, vec_data, fn(a, b) { a *. b })
-          |> list.fold(0.0, fn(acc, x) { acc +. x })
-        })
+        tensor_linalg.matmul_vec_values(mat_data, vec_data, m, n)
       Ok(Tensor(data: result_data, shape: [m]))
     }
     [_m, n], [vec_n] -> Error(ShapeMismatch(expected: [n], got: [vec_n]))
@@ -1800,22 +1791,7 @@ fn matmul_dense(
 ) -> Result(Tensor, TensorError) {
   use a_data <- result.try(try_to_list(a))
   use b_data <- result.try(try_to_list(b))
-  let a_array = ffi.list_to_array(a_data)
-  let b_array = ffi.list_to_array(b_data)
-
-  let result_data =
-    list.range(0, m - 1)
-    |> list.flat_map(fn(i) {
-      list.range(0, p - 1)
-      |> list.map(fn(j) {
-        list.range(0, n - 1)
-        |> list.fold(0.0, fn(acc, k) {
-          let a_ik = ffi.array_get(a_array, i * n + k)
-          let b_kj = ffi.array_get(b_array, k * p + j)
-          acc +. a_ik *. b_kj
-        })
-      })
-    })
+  let result_data = tensor_linalg.matmul_values(a_data, b_data, m, n, p)
   Ok(Tensor(data: result_data, shape: [m, p]))
 }
 
@@ -1838,12 +1814,8 @@ pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
 }
 
 fn transpose_dense(t: Tensor, m: Int, n: Int) -> Result(Tensor, TensorError) {
-  let result_data =
-    list.range(0, n - 1)
-    |> list.flat_map(fn(j) {
-      list.range(0, m - 1)
-      |> list.filter_map(fn(i) { get2d(t, i, j) })
-    })
+  use data <- result.try(try_to_list(t))
+  use result_data <- result.try(tensor_linalg.transpose_values(data, m, n))
   Ok(Tensor(data: result_data, shape: [n, m]))
 }
 
@@ -1856,8 +1828,7 @@ pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
       let n = size(b)
       use a_data <- result.try(try_to_list(a))
       use b_data <- result.try(try_to_list(b))
-      let result_data =
-        list.flat_map(a_data, fn(ai) { list.map(b_data, fn(bj) { ai *. bj }) })
+      let result_data = tensor_linalg.outer_values(a_data, b_data)
       Ok(Tensor(data: result_data, shape: [m, n]))
     }
     False -> Error(DimensionError("Outer product requires two vectors"))

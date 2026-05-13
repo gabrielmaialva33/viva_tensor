@@ -53,6 +53,9 @@ All notable changes to this project will be documented in this file.
 - Split axis reduction, softmax-axis, boolean-axis reducers, and pure
   broadcasting helpers out of the large internal `viva_tensor/tensor` module
   into focused `core/tensor_axis` and `core/tensor_broadcast` modules.
+- Split dense linear-algebra kernels for dot, matrix-vector multiplication,
+  matrix multiplication, transpose, and outer product into
+  `core/tensor_linalg`.
 - Added `try_to_list()` and routed fallible dense fallback paths through it so
   native materialization failures are not silently converted into empty tensors.
 - Extended error hygiene into internal core tensor, shape, broadcast, and
