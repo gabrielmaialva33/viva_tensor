@@ -1021,6 +1021,56 @@ pub fn all_close(
   tensor.all_close(a, b, rtol, atol)
 }
 
+/// Absolute value for every element.
+pub fn abs(t: Tensor) -> Tensor {
+  tensor.abs(t)
+}
+
+/// Absolute value for every element, preserving materialization failures.
+pub fn try_abs(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_abs(t)
+}
+
+/// Square every element.
+pub fn square(t: Tensor) -> Tensor {
+  tensor.square(t)
+}
+
+/// Square every element, preserving materialization failures.
+pub fn try_square(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_square(t)
+}
+
+/// Square root every element.
+pub fn sqrt(t: Tensor) -> Tensor {
+  tensor.sqrt(t)
+}
+
+/// Square root every element, rejecting negative values.
+pub fn try_sqrt(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_sqrt(t)
+}
+
+/// Exponential for every element.
+pub fn exp(t: Tensor) -> Tensor {
+  tensor.exp(t)
+}
+
+/// Exponential for every element, preserving materialization failures.
+pub fn try_exp(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_exp(t)
+}
+
+/// Natural logarithm for every element.
+pub fn log(t: Tensor) -> Tensor {
+  tensor.log(t)
+}
+
+/// Natural logarithm for every element, rejecting non-positive values.
+pub fn try_log(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_log(t)
+}
+
 /// Euclidean distance between two same-shaped tensors, flattened as vectors.
 pub fn euclidean_distance(a: Tensor, b: Tensor) -> Float {
   tensor.euclidean_distance(a, b)

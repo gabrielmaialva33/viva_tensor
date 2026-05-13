@@ -871,6 +871,32 @@ pub fn all_close_shape_mismatch_test() {
   |> should.be_error()
 }
 
+pub fn elementwise_math_helpers_test() {
+  let values = t.from_list([-1.0, 0.0, 4.0])
+
+  t.abs(values) |> t.to_list() |> should.equal([1.0, 0.0, 4.0])
+  t.square(values) |> t.to_list() |> should.equal([1.0, 0.0, 16.0])
+
+  case t.try_sqrt(t.from_list([1.0, 4.0, 9.0])) {
+    Ok(result) -> t.to_list(result) |> should.equal([1.0, 2.0, 3.0])
+    Error(_) -> should.fail()
+  }
+
+  t.try_sqrt(values) |> should.be_error()
+  t.try_log(t.from_list([1.0, 0.0])) |> should.be_error()
+}
+
+pub fn exp_log_roundtrip_test() {
+  let values = t.from_list([1.0, 2.0, 4.0])
+
+  case t.try_exp(t.log(values)) {
+    Ok(result) ->
+      t.all_close(result, values, 0.00001, 0.00001)
+      |> should.equal(Ok(True))
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn tensor_distance_similarity_test() {
   let a = t.from_list([1.0, 2.0, 3.0])
   let b = t.from_list([4.0, 6.0, 3.0])
