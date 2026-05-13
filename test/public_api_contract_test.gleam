@@ -35,6 +35,29 @@ pub fn stable_fallible_unary_contract_test() {
   }
 }
 
+pub fn stable_axis_reduction_contract_test() {
+  case t.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) {
+    Ok(matrix) -> {
+      case t.try_sum_axis(matrix, 0) {
+        Ok(reduced) -> {
+          t.shape(reduced) |> should.equal([3])
+          t.to_list(reduced) |> should.equal([5.0, 7.0, 9.0])
+        }
+        Error(_) -> should.fail()
+      }
+
+      case t.try_mean_axis_keepdims(matrix, 1) {
+        Ok(reduced) -> {
+          t.shape(reduced) |> should.equal([2, 1])
+          t.to_list(reduced) |> should.equal([2.0, 5.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn stable_broadcasting_contract_test() {
   let matrix = t.fill([2, 3], 10.0)
   let row = t.from_list([1.0, 2.0, 4.0])

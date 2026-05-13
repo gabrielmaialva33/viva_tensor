@@ -315,6 +315,56 @@ pub fn sum_axis_1_test() {
   }
 }
 
+pub fn sum_axis_keepdims_test() {
+  let t = tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape: [2, 3])
+  case tensor.sum_axis_keepdims(t, 1) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([2, 1])
+      tensor.to_list(r) |> should.equal([6.0, 15.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn sum_axis_3d_test() {
+  let t =
+    tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], shape: [
+      2,
+      2,
+      2,
+    ])
+
+  case tensor.try_sum_axis(t, 1) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([2, 2])
+      tensor.to_list(r) |> should.equal([4.0, 6.0, 12.0, 14.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn sum_axis_1d_returns_scalar_shape_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  case tensor.try_sum_axis(t, 0) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([])
+      tensor.to_list(r) |> should.equal([6.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn sum_axis_1d_keepdims_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  case tensor.try_sum_axis_keepdims(t, 0) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([1])
+      tensor.to_list(r) |> should.equal([6.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn sum_axis_invalid_test() {
   let t = tensor.Tensor(data: [1.0, 2.0, 3.0], shape: [1, 3])
   tensor.sum_axis(t, 5) |> should.be_error()
@@ -326,6 +376,17 @@ pub fn mean_axis_test() {
   case tensor.mean_axis(t, 0) {
     Ok(r) -> {
       tensor.shape(r) |> should.equal([2])
+      tensor.to_list(r) |> should.equal([4.0, 6.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn mean_axis_keepdims_test() {
+  let t = tensor.Tensor(data: [2.0, 4.0, 6.0, 8.0], shape: [2, 2])
+  case tensor.try_mean_axis_keepdims(t, 0) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([1, 2])
       tensor.to_list(r) |> should.equal([4.0, 6.0])
     }
     Error(_) -> should.fail()
