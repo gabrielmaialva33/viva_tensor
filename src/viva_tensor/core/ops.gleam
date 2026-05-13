@@ -430,15 +430,18 @@ fn dot_list_fallback(
   a: Tensor,
   b: Tensor,
 ) -> #(Result(Float, TensorError), String) {
-  let a_list = tensor.to_list(a)
-  let b_list = tensor.to_list(b)
-  case ffi.is_nif_loaded() {
-    True ->
-      case ffi.nif_dot(a_list, b_list) {
-        Ok(r) -> #(Ok(r), "accelerate")
-        Error(_) -> dot_with_zig_fallback(a_list, b_list, a, b)
+  case tensor.try_to_list(a), tensor.try_to_list(b) {
+    Ok(a_list), Ok(b_list) ->
+      case ffi.is_nif_loaded() {
+        True ->
+          case ffi.nif_dot(a_list, b_list) {
+            Ok(r) -> #(Ok(r), "accelerate")
+            Error(_) -> dot_with_zig_fallback(a_list, b_list, a, b)
+          }
+        False -> dot_with_zig_fallback(a_list, b_list, a, b)
       }
-    False -> dot_with_zig_fallback(a_list, b_list, a, b)
+    Error(e), _ -> #(Error(e), "materialize")
+    _, Error(e) -> #(Error(e), "materialize")
   }
 }
 
@@ -490,15 +493,18 @@ fn matmul_list_fallback(
   n: Int,
   k: Int,
 ) -> #(Result(Tensor, TensorError), String) {
-  let a_list = tensor.to_list(a)
-  let b_list = tensor.to_list(b)
-  case ffi.is_nif_loaded() {
-    True ->
-      case ffi.nif_matmul(a_list, b_list, m, n, k) {
-        Ok(result_list) -> #(tensor.new(result_list, [m, n]), "accelerate")
-        Error(_) -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+  case tensor.try_to_list(a), tensor.try_to_list(b) {
+    Ok(a_list), Ok(b_list) ->
+      case ffi.is_nif_loaded() {
+        True ->
+          case ffi.nif_matmul(a_list, b_list, m, n, k) {
+            Ok(result_list) -> #(tensor.new(result_list, [m, n]), "accelerate")
+            Error(_) -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+          }
+        False -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
       }
-    False -> matmul_with_zig_fallback(a_list, b_list, m, n, k, a, b)
+    Error(e), _ -> #(Error(e), "materialize")
+    _, Error(e) -> #(Error(e), "materialize")
   }
 }
 
@@ -612,8 +618,8 @@ pub fn add_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 }
 
 fn add_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  let a_data = tensor.to_list(a)
-  let b_data = tensor.to_list(b)
+  use a_data <- result.try(tensor.try_to_list(a))
+  use b_data <- result.try(tensor.try_to_list(b))
   let result_data = case ffi.zig_is_loaded() {
     True ->
       case ffi.zig_add(a_data, b_data) {
@@ -642,8 +648,8 @@ pub fn sub_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 }
 
 fn sub_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  let a_data = tensor.to_list(a)
-  let b_data = tensor.to_list(b)
+  use a_data <- result.try(tensor.try_to_list(a))
+  use b_data <- result.try(tensor.try_to_list(b))
   let result_data = case ffi.zig_is_loaded() {
     True ->
       case ffi.zig_scale(b_data, -1.0) {
@@ -676,8 +682,8 @@ pub fn mul_auto(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 }
 
 fn mul_list_fallback(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  let a_data = tensor.to_list(a)
-  let b_data = tensor.to_list(b)
+  use a_data <- result.try(tensor.try_to_list(a))
+  use b_data <- result.try(tensor.try_to_list(b))
   let result_data = case ffi.zig_is_loaded() {
     True ->
       case ffi.zig_mul(a_data, b_data) {

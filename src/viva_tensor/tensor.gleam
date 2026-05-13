@@ -14,7 +14,7 @@ import gleam/int
 import gleam/list
 import gleam/result
 import viva_tensor/core/error.{
-  BroadcastError, DimensionError, InvalidShape, ShapeMismatch,
+  BroadcastError, DimensionError, IndexOutOfBounds, InvalidShape, ShapeMismatch,
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
@@ -1784,7 +1784,7 @@ pub fn broadcast_to(
                 Ok(view_ref) ->
                   Ok(NativeTensor(ref: view_ref, shape: target_shape))
                 Error(_) -> {
-                  let data = broadcast_data(t, target_shape)
+                  use data <- result.try(broadcast_data(t, target_shape))
                   Ok(Tensor(data: data, shape: target_shape))
                 }
               }
@@ -2090,18 +2090,22 @@ fn broadcast_strides(
   layout_math.broadcast_strides(src_shape, src_strides, target_shape)
 }
 
-fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
+fn broadcast_data(
+  t: Tensor,
+  target_shape: List(Int),
+) -> Result(List(Float), TensorError) {
   let target_size = list.fold(target_shape, 1, fn(acc, dim) { acc * dim })
   let src_shape = t.shape
   let src_rank = list.length(src_shape)
   let target_rank = list.length(target_shape)
-  let data = get_data(t)
+  use data <- result.try(try_to_list(t))
 
   let diff = target_rank - src_rank
   let padded_shape = list.append(list.repeat(1, diff), src_shape)
 
   list.range(0, target_size - 1)
-  |> list.map(fn(flat_idx) {
+  |> list.fold(Ok([]), fn(acc, flat_idx) {
+    use values <- result.try(acc)
     let target_indices = flat_to_multi(flat_idx, target_shape)
 
     let src_indices =
@@ -2116,11 +2120,15 @@ fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
       |> list.drop(diff)
 
     let src_flat = multi_to_flat(src_indices, src_shape)
-    case list_at_float(data, src_flat) {
-      Ok(v) -> v
-      Error(_) -> 0.0
-    }
+    use value <- result.try(
+      list_at_float(data, src_flat)
+      |> result.map_error(fn(_) {
+        IndexOutOfBounds(src_flat, list.length(data))
+      }),
+    )
+    Ok([value, ..values])
   })
+  |> result.map(list.reverse)
 }
 
 fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {

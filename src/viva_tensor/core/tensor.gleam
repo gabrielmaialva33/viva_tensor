@@ -413,7 +413,10 @@ pub fn broadcast_to(
             Native(ref, _) ->
               case ffi.nt_broadcast_to(ref, target_shape) {
                 Ok(view_ref) -> Ok(Native(ref: view_ref, shape: target_shape))
-                Error(_) -> new(broadcast_data(t, target_shape), target_shape)
+                Error(_) -> {
+                  use data <- result.try(broadcast_data(t, target_shape))
+                  new(data, target_shape)
+                }
               }
           }
       }
@@ -614,18 +617,22 @@ fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
   list_at(lst, index)
 }
 
-fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
+fn broadcast_data(
+  t: Tensor,
+  target_shape: List(Int),
+) -> Result(List(Float), TensorError) {
   let target_size = compute_size(target_shape)
   let src_shape = shape(t)
   let src_rank = list.length(src_shape)
   let target_rank = list.length(target_shape)
-  let data = to_list(t)
+  use data <- result.try(try_to_list(t))
 
   let diff = target_rank - src_rank
   let padded_shape = list.append(list.repeat(1, diff), src_shape)
 
   layout_math.indices(target_size)
-  |> list.map(fn(flat_idx) {
+  |> list.fold(Ok([]), fn(acc, flat_idx) {
+    use values <- result.try(acc)
     let target_indices = flat_to_multi(flat_idx, target_shape)
 
     let src_indices =
@@ -640,8 +647,15 @@ fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
       |> list.drop(diff)
 
     let src_flat = layout_math.multi_to_flat(src_indices, src_shape)
-    layout_math.value_at(data, src_flat)
+    use value <- result.try(
+      list_at_float(data, src_flat)
+      |> result.map_error(fn(_) {
+        error.IndexOutOfBounds(src_flat, list.length(data))
+      }),
+    )
+    Ok([value, ..values])
   })
+  |> result.map(list.reverse)
 }
 
 // --- Native Tensor API -------------------------------------------------------
