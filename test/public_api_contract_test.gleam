@@ -19,6 +19,23 @@ pub fn stable_creation_and_layout_contract_test() {
   t.try_sum(tensor) |> should.equal(Ok(6.0))
   t.device(tensor) |> should.equal(layout.BeamCpu)
   t.dtype(tensor) |> should.equal(layout.Float64)
+
+  case t.try_unsqueeze(tensor, 0) {
+    Ok(batch) -> t.shape(batch) |> should.equal([1, 2, 3])
+    Error(_) -> should.fail()
+  }
+
+  case t.try_to_strided(tensor) {
+    Ok(strided) -> {
+      t.is_contiguous(strided) |> should.be_true()
+      case t.try_to_contiguous(strided) {
+        Ok(contiguous) ->
+          t.to_list(contiguous) |> should.equal(t.to_list(tensor))
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn stable_fallible_unary_contract_test() {

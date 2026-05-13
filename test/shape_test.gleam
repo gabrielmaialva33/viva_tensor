@@ -223,6 +223,42 @@ pub fn concat_axis_invalid_test() {
   tensor.concat_axis([a, b], 5) |> should.be_error()
 }
 
+pub fn try_unsqueeze_accepts_negative_axis_test() {
+  let t = tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0], shape: [2, 2])
+
+  case tensor.try_unsqueeze(t, -1) {
+    Ok(r) -> tensor.shape(r) |> should.equal([2, 2, 1])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn try_unsqueeze_rejects_out_of_bounds_axis_test() {
+  let t = tensor.from_list([1.0, 2.0])
+
+  tensor.try_unsqueeze(t, 3) |> should.be_error()
+  tensor.try_unsqueeze(t, -3) |> should.be_error()
+}
+
+pub fn try_to_contiguous_materializes_transposed_view_test() {
+  let t = tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0, 5.0, 6.0], shape: [2, 3])
+
+  case tensor.transpose_strided(t) {
+    Ok(transposed) -> {
+      tensor.is_contiguous(transposed) |> should.be_false()
+      case tensor.try_to_contiguous(transposed) {
+        Ok(contiguous) -> {
+          tensor.is_contiguous(contiguous) |> should.be_true()
+          tensor.shape(contiguous) |> should.equal([3, 2])
+          tensor.to_list(contiguous)
+          |> should.equal([1.0, 4.0, 2.0, 5.0, 3.0, 6.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn concat_axis_shape_mismatch_test() {
   let a = tensor.Tensor(data: [1.0, 2.0, 3.0], shape: [1, 3])
   let b = tensor.Tensor(data: [1.0, 2.0], shape: [1, 2])
