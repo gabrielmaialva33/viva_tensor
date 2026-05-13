@@ -224,6 +224,46 @@ pub fn try_logspace(
   tensor.try_logspace(start, stop, steps, base)
 }
 
+/// Create a tensor with the same shape as another tensor, filled with zeros.
+pub fn zeros_like(t: Tensor) -> Tensor {
+  tensor.zeros_like(t)
+}
+
+/// Create a tensor with the same shape as another tensor, filled with ones.
+pub fn ones_like(t: Tensor) -> Tensor {
+  tensor.ones_like(t)
+}
+
+/// Create a tensor with the same shape as another tensor, filled with a value.
+pub fn full_like(t: Tensor, value: Float) -> Tensor {
+  tensor.full_like(t, value)
+}
+
+/// Create a square identity matrix.
+pub fn eye(n: Int) -> Tensor {
+  tensor.eye(n)
+}
+
+/// Create a square identity matrix.
+pub fn try_eye(n: Int) -> Result(Tensor, TensorError) {
+  tensor.try_eye(n)
+}
+
+/// Alias for `eye`.
+pub fn identity(n: Int) -> Tensor {
+  tensor.identity(n)
+}
+
+/// Create a square diagonal matrix from a 1D tensor.
+pub fn diag(t: Tensor) -> Tensor {
+  tensor.diag(t)
+}
+
+/// Create a square diagonal matrix from a 1D tensor.
+pub fn try_diag(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_diag(t)
+}
+
 /// Create matrix (2D tensor)
 pub fn matrix(
   rows: Int,
@@ -556,6 +596,52 @@ pub fn try_mean_axis_keepdims(
   axis: Int,
 ) -> Result(Tensor, TensorError) {
   tensor.try_mean_axis_keepdims(t, axis)
+}
+
+/// Maximum along one axis.
+pub fn max_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.max_axis(t, axis)
+}
+
+/// Maximum along one axis, preserving the reduced dimension as size 1.
+pub fn max_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.max_axis_keepdims(t, axis)
+}
+
+/// Maximum along one axis, preserving materialization failures.
+pub fn try_max_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_max_axis(t, axis)
+}
+
+/// Maximum along one axis with keepdims, preserving materialization failures.
+pub fn try_max_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_max_axis_keepdims(t, axis)
+}
+
+/// Minimum along one axis.
+pub fn min_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.min_axis(t, axis)
+}
+
+/// Minimum along one axis, preserving the reduced dimension as size 1.
+pub fn min_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.min_axis_keepdims(t, axis)
+}
+
+/// Minimum along one axis, preserving materialization failures.
+pub fn try_min_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_min_axis(t, axis)
+}
+
+/// Minimum along one axis with keepdims, preserving materialization failures.
+pub fn try_min_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_min_axis_keepdims(t, axis)
 }
 
 /// Maximum value
@@ -933,6 +1019,106 @@ pub fn all_close(
   atol: Float,
 ) -> Result(Bool, TensorError) {
   tensor.all_close(a, b, rtol, atol)
+}
+
+/// Euclidean distance between two same-shaped tensors, flattened as vectors.
+pub fn euclidean_distance(a: Tensor, b: Tensor) -> Float {
+  tensor.euclidean_distance(a, b)
+}
+
+/// Euclidean distance between two same-shaped tensors, preserving errors.
+pub fn try_euclidean_distance(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  tensor.try_euclidean_distance(a, b)
+}
+
+/// Manhattan distance between two same-shaped tensors, flattened as vectors.
+pub fn manhattan_distance(a: Tensor, b: Tensor) -> Float {
+  tensor.manhattan_distance(a, b)
+}
+
+/// Manhattan distance between two same-shaped tensors, preserving errors.
+pub fn try_manhattan_distance(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  tensor.try_manhattan_distance(a, b)
+}
+
+/// Cosine similarity between two same-shaped tensors, flattened as vectors.
+pub fn cosine_similarity(a: Tensor, b: Tensor) -> Float {
+  tensor.cosine_similarity(a, b)
+}
+
+/// Cosine similarity between two same-shaped tensors, preserving errors.
+pub fn try_cosine_similarity(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  tensor.try_cosine_similarity(a, b)
+}
+
+/// Dot similarity between two same-shaped tensors, flattened as vectors.
+pub fn dot_similarity(a: Tensor, b: Tensor) -> Float {
+  tensor.dot_similarity(a, b)
+}
+
+/// Dot similarity between two same-shaped tensors, preserving errors.
+pub fn try_dot_similarity(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
+  tensor.try_dot_similarity(a, b)
+}
+
+/// Z-score standardization over all elements, preserving shape.
+pub fn zscore(t: Tensor) -> Tensor {
+  tensor.zscore(t)
+}
+
+/// Z-score standardization over all elements, preserving errors.
+pub fn try_zscore(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_zscore(t)
+}
+
+/// Alias for `zscore`.
+pub fn standardize(t: Tensor) -> Tensor {
+  tensor.standardize(t)
+}
+
+/// Alias for `try_zscore`.
+pub fn try_standardize(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_standardize(t)
+}
+
+/// Scale all values into a target interval.
+pub fn minmax_scale(
+  t: Tensor,
+  feature_min: Float,
+  feature_max: Float,
+) -> Tensor {
+  tensor.minmax_scale(t, feature_min, feature_max)
+}
+
+/// Scale all values into a target interval, preserving errors.
+pub fn try_minmax_scale(
+  t: Tensor,
+  feature_min: Float,
+  feature_max: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_minmax_scale(t, feature_min, feature_max)
+}
+
+/// Clip tensor L2 norm to at most `max_norm`.
+pub fn clip_by_norm(t: Tensor, max_norm: Float) -> Tensor {
+  tensor.clip_by_norm(t, max_norm)
+}
+
+/// Clip tensor L2 norm to at most `max_norm`, preserving errors.
+pub fn try_clip_by_norm(
+  t: Tensor,
+  max_norm: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_clip_by_norm(t, max_norm)
 }
 
 /// Add a scalar to every element.

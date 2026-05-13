@@ -144,6 +144,98 @@ pub fn logspace(start: Float, stop: Float, steps: Int, base: Float) -> Tensor {
   |> result.unwrap(from_list([]))
 }
 
+/// Create a tensor with the same shape as another tensor, filled with zeros.
+pub fn zeros_like(t: Tensor) -> Tensor {
+  zeros(shape(t))
+}
+
+/// Create a tensor with the same shape as another tensor, filled with ones.
+pub fn ones_like(t: Tensor) -> Tensor {
+  ones(shape(t))
+}
+
+/// Create a tensor with the same shape as another tensor, filled with a value.
+pub fn full_like(t: Tensor, value: Float) -> Tensor {
+  fill(shape(t), value)
+}
+
+/// Create a square identity matrix.
+pub fn try_eye(n: Int) -> Result(Tensor, TensorError) {
+  case n <= 0 {
+    True -> Error(InvalidShape("eye requires n > 0"))
+    False -> {
+      let data =
+        list.range(0, n * n - 1)
+        |> list.map(fn(index) {
+          case index / n == index % n {
+            True -> 1.0
+            False -> 0.0
+          }
+        })
+
+      Ok(Tensor(data: data, shape: [n, n]))
+    }
+  }
+}
+
+/// Create a square identity matrix.
+pub fn eye(n: Int) -> Tensor {
+  try_eye(n)
+  |> result.unwrap(from_list([]))
+}
+
+/// Alias for `eye`.
+pub fn identity(n: Int) -> Tensor {
+  eye(n)
+}
+
+/// Create a square diagonal matrix from a 1D tensor.
+pub fn try_diag(t: Tensor) -> Result(Tensor, TensorError) {
+  case rank(t) == 1 {
+    False -> Error(DimensionError("diag requires a 1D tensor"))
+    True -> {
+      use data <- result.try(try_to_list(t))
+      let n = list.length(data)
+
+      case n <= 0 {
+        True -> Error(DimensionError("diag requires a non-empty tensor"))
+        False -> {
+          use matrix_data <- result.try(
+            list.range(0, n * n - 1)
+            |> list.fold(Ok([]), fn(acc, index) {
+              use values <- result.try(acc)
+              let row = index / n
+              let col = index % n
+
+              case row == col {
+                True -> {
+                  use value <- result.try(
+                    list_at_float(data, row)
+                    |> result.map_error(fn(_) {
+                      IndexOutOfBounds(row, list.length(data))
+                    }),
+                  )
+                  Ok([value, ..values])
+                }
+                False -> Ok([0.0, ..values])
+              }
+            })
+            |> result.map(list.reverse),
+          )
+
+          Ok(Tensor(data: matrix_data, shape: [n, n]))
+        }
+      }
+    }
+  }
+}
+
+/// Create a square diagonal matrix from a 1D tensor.
+pub fn diag(t: Tensor) -> Tensor {
+  try_diag(t)
+  |> result.unwrap(from_list([]))
+}
+
 /// Create matrix (2D tensor) with explicit dimensions
 pub fn matrix(
   rows: Int,
@@ -899,6 +991,26 @@ pub fn cumprod(t: Tensor) -> Tensor {
   |> result.unwrap(from_list([]))
 }
 
+/// Cumulative sum along one axis, preserving the original shape.
+pub fn try_cumsum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  cumulative_axis(t, axis_idx, maths.cumulative_sum)
+}
+
+/// Cumulative sum along one axis, preserving the original shape.
+pub fn cumsum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_cumsum_axis(t, axis_idx)
+}
+
+/// Cumulative product along one axis, preserving the original shape.
+pub fn try_cumprod_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  cumulative_axis(t, axis_idx, maths.cumulative_product)
+}
+
+/// Cumulative product along one axis, preserving the original shape.
+pub fn cumprod_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_cumprod_axis(t, axis_idx)
+}
+
 /// Mean: E[X] = (1/n) * sum(x_i), preserving empty-tensor and materialization errors.
 pub fn try_mean(t: Tensor) -> Result(Float, TensorError) {
   use total <- result.try(try_sum(t))
@@ -1203,6 +1315,58 @@ fn mean_axis_with_keepdims(
   }
 }
 
+/// Maximum along a specific axis, preserving materialization failures.
+pub fn try_max_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, max_list)
+}
+
+/// Maximum along a specific axis.
+pub fn max_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_max_axis(t, axis_idx)
+}
+
+/// Maximum along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_max_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, max_list)
+}
+
+/// Maximum along a specific axis while keeping the reduced dimension as size 1.
+pub fn max_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_max_axis_keepdims(t, axis_idx)
+}
+
+/// Minimum along a specific axis, preserving materialization failures.
+pub fn try_min_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, min_list)
+}
+
+/// Minimum along a specific axis.
+pub fn min_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_min_axis(t, axis_idx)
+}
+
+/// Minimum along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_min_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, min_list)
+}
+
+/// Minimum along a specific axis while keeping the reduced dimension as size 1.
+pub fn min_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_min_axis_keepdims(t, axis_idx)
+}
+
 /// Softmax along one axis, preserving the input shape and materialization failures.
 pub fn try_softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   let shp = t.shape
@@ -1435,6 +1599,103 @@ fn sum_axis_output(
     )
     Ok(total +. value)
   })
+}
+
+fn reduce_axis_with_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+  keepdims: Bool,
+  reducer: fn(List(Float)) -> Result(Float, TensorError),
+) -> Result(Tensor, TensorError) {
+  let r = rank(t)
+  case axis_idx >= 0 && axis_idx < r {
+    False -> Error(DimensionError("Invalid axis index"))
+    True -> {
+      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      case axis_size <= 0 {
+        True -> Error(DimensionError("Cannot reduce along empty axis"))
+        False -> {
+          use data <- result.try(try_to_list(t))
+          let output_shape = reduced_shape(t.shape, axis_idx, keepdims)
+          let output_size = list.fold(output_shape, 1, fn(acc, d) { acc * d })
+
+          list.range(0, output_size - 1)
+          |> list.fold(Ok([]), fn(acc, out_idx) {
+            use values <- result.try(acc)
+            use value <- result.try(reduce_axis_output(
+              data,
+              t.shape,
+              output_shape,
+              out_idx,
+              axis_idx,
+              axis_size,
+              reducer,
+            ))
+            Ok([value, ..values])
+          })
+          |> result.map(fn(values) {
+            Tensor(data: list.reverse(values), shape: output_shape)
+          })
+        }
+      }
+    }
+  }
+}
+
+fn reduce_axis_output(
+  data: List(Float),
+  input_shape: List(Int),
+  output_shape: List(Int),
+  out_idx: Int,
+  axis_idx: Int,
+  axis_size: Int,
+  reducer: fn(List(Float)) -> Result(Float, TensorError),
+) -> Result(Float, TensorError) {
+  let output_coords = flat_to_multi(out_idx, output_shape)
+
+  let values_result =
+    list.range(0, axis_size - 1)
+    |> list.fold(Ok([]), fn(acc, axis_pos) {
+      use values <- result.try(acc)
+      let input_coords =
+        insert_reduced_axis(
+          output_coords,
+          axis_idx,
+          axis_pos,
+          output_shape,
+          input_shape,
+        )
+
+      let input_idx = multi_to_flat(input_coords, input_shape)
+      use value <- result.try(
+        list_at_float(data, input_idx)
+        |> result.map_error(fn(_) {
+          IndexOutOfBounds(input_idx, list.length(data))
+        }),
+      )
+      Ok([value, ..values])
+    })
+
+  case values_result {
+    Ok(values) -> reducer(list.reverse(values))
+    Error(error) -> Error(error)
+  }
+}
+
+fn max_list(values: List(Float)) -> Result(Float, TensorError) {
+  case values {
+    [] -> Error(DimensionError("Cannot compute max of an empty tensor"))
+    [first, ..rest] ->
+      Ok(list.fold(rest, first, fn(acc, x) { float.max(acc, x) }))
+  }
+}
+
+fn min_list(values: List(Float)) -> Result(Float, TensorError) {
+  case values {
+    [] -> Error(DimensionError("Cannot compute min of an empty tensor"))
+    [first, ..rest] ->
+      Ok(list.fold(rest, first, fn(acc, x) { float.min(acc, x) }))
+  }
 }
 
 fn insert_reduced_axis(
@@ -2087,6 +2348,187 @@ pub fn all_close(
       |> Ok
     }
   }
+}
+
+/// Euclidean distance between two same-shaped tensors, flattened as vectors.
+pub fn try_euclidean_distance(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  use pairs <- result.try(paired_tensor_data(a, b, "euclidean_distance"))
+  case maths.euclidean_distance(pairs) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(DimensionError("euclidean_distance requires non-empty tensors"))
+  }
+}
+
+/// Euclidean distance between two same-shaped tensors, flattened as vectors.
+pub fn euclidean_distance(a: Tensor, b: Tensor) -> Float {
+  try_euclidean_distance(a, b)
+  |> result.unwrap(0.0)
+}
+
+/// Manhattan distance between two same-shaped tensors, flattened as vectors.
+pub fn try_manhattan_distance(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  use pairs <- result.try(paired_tensor_data(a, b, "manhattan_distance"))
+  case maths.manhattan_distance(pairs) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(DimensionError("manhattan_distance requires non-empty tensors"))
+  }
+}
+
+/// Manhattan distance between two same-shaped tensors, flattened as vectors.
+pub fn manhattan_distance(a: Tensor, b: Tensor) -> Float {
+  try_manhattan_distance(a, b)
+  |> result.unwrap(0.0)
+}
+
+/// Cosine similarity between two same-shaped tensors, flattened as vectors.
+pub fn try_cosine_similarity(
+  a: Tensor,
+  b: Tensor,
+) -> Result(Float, TensorError) {
+  use pairs <- result.try(paired_tensor_data(a, b, "cosine_similarity"))
+  use a_norm <- result.try(try_norm(a))
+  use b_norm <- result.try(try_norm(b))
+
+  case a_norm <=. 0.0 || b_norm <=. 0.0 {
+    True -> Error(DimensionError("cosine_similarity requires non-zero tensors"))
+    False ->
+      case maths.cosine_similarity(pairs) {
+        Ok(value) -> Ok(value)
+        Error(_) ->
+          Error(DimensionError("cosine_similarity requires non-empty tensors"))
+      }
+  }
+}
+
+/// Cosine similarity between two same-shaped tensors, flattened as vectors.
+pub fn cosine_similarity(a: Tensor, b: Tensor) -> Float {
+  try_cosine_similarity(a, b)
+  |> result.unwrap(0.0)
+}
+
+/// Dot similarity between two same-shaped tensors, flattened as vectors.
+pub fn try_dot_similarity(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
+  use pairs <- result.try(paired_tensor_data(a, b, "dot_similarity"))
+  Ok(list.fold(pairs, 0.0, fn(acc, pair) { acc +. pair.0 *. pair.1 }))
+}
+
+/// Dot similarity between two same-shaped tensors, flattened as vectors.
+pub fn dot_similarity(a: Tensor, b: Tensor) -> Float {
+  try_dot_similarity(a, b)
+  |> result.unwrap(0.0)
+}
+
+fn paired_tensor_data(
+  a: Tensor,
+  b: Tensor,
+  operation: String,
+) -> Result(List(#(Float, Float)), TensorError) {
+  case a.shape == b.shape {
+    False -> Error(ShapeMismatch(a.shape, b.shape))
+    True -> {
+      use a_data <- result.try(try_to_list(a))
+      use b_data <- result.try(try_to_list(b))
+      case a_data {
+        [] -> Error(DimensionError(operation <> " requires non-empty tensors"))
+        _ -> Ok(list.zip(a_data, b_data))
+      }
+    }
+  }
+}
+
+/// Z-score standardization over all elements, preserving shape.
+pub fn try_zscore(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  case maths.zscore(data, 0) {
+    Ok(values) -> Ok(Tensor(data: values, shape: shape(t)))
+    Error(_) ->
+      Error(DimensionError("zscore requires non-empty non-constant tensor"))
+  }
+}
+
+/// Z-score standardization over all elements, preserving shape.
+pub fn zscore(t: Tensor) -> Tensor {
+  try_zscore(t)
+  |> result.unwrap(t)
+}
+
+/// Alias for `zscore`.
+pub fn try_standardize(t: Tensor) -> Result(Tensor, TensorError) {
+  try_zscore(t)
+}
+
+/// Alias for `zscore`.
+pub fn standardize(t: Tensor) -> Tensor {
+  zscore(t)
+}
+
+/// Scale all values into a target interval.
+pub fn try_minmax_scale(
+  t: Tensor,
+  feature_min: Float,
+  feature_max: Float,
+) -> Result(Tensor, TensorError) {
+  case feature_max <=. feature_min {
+    True ->
+      Error(InvalidShape("minmax_scale requires feature_max > feature_min"))
+    False -> {
+      use min_value <- result.try(try_min(t))
+      use max_value <- result.try(try_max(t))
+      let range = max_value -. min_value
+
+      case range <=. 0.0 {
+        True ->
+          Error(DimensionError("minmax_scale requires a non-constant tensor"))
+        False -> {
+          let target_range = feature_max -. feature_min
+          try_map(t, fn(x) {
+            { { x -. min_value } /. range } *. target_range +. feature_min
+          })
+        }
+      }
+    }
+  }
+}
+
+/// Scale all values into a target interval.
+pub fn minmax_scale(
+  t: Tensor,
+  feature_min: Float,
+  feature_max: Float,
+) -> Tensor {
+  try_minmax_scale(t, feature_min, feature_max)
+  |> result.unwrap(t)
+}
+
+/// Clip tensor L2 norm to at most `max_norm`.
+pub fn try_clip_by_norm(
+  t: Tensor,
+  max_norm: Float,
+) -> Result(Tensor, TensorError) {
+  case max_norm <. 0.0 {
+    True -> Error(InvalidShape("clip_by_norm requires max_norm >= 0"))
+    False -> {
+      use n <- result.try(try_norm(t))
+      case n >. max_norm && n >. 0.0 {
+        True -> try_scale(t, max_norm /. n)
+        False -> Ok(t)
+      }
+    }
+  }
+}
+
+/// Clip tensor L2 norm to at most `max_norm`.
+pub fn clip_by_norm(t: Tensor, max_norm: Float) -> Tensor {
+  try_clip_by_norm(t, max_norm)
+  |> result.unwrap(t)
 }
 
 /// Clamp values to [min, max], preserving materialization failures.
