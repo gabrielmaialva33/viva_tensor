@@ -1367,6 +1367,84 @@ pub fn try_minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_minimum(a, b)
 }
 
+/// Element-wise equality mask with NumPy-style broadcasting.
+pub fn equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.equal(a, b)
+}
+
+/// Alias for `equal`.
+pub fn try_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_equal(a, b)
+}
+
+/// Element-wise inequality mask with NumPy-style broadcasting.
+pub fn not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.not_equal(a, b)
+}
+
+/// Alias for `not_equal`.
+pub fn try_not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_not_equal(a, b)
+}
+
+/// Element-wise greater-than mask with NumPy-style broadcasting.
+pub fn greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.greater(a, b)
+}
+
+/// Alias for `greater`.
+pub fn try_greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_greater(a, b)
+}
+
+/// Element-wise greater-than-or-equal mask with NumPy-style broadcasting.
+pub fn greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.greater_equal(a, b)
+}
+
+/// Alias for `greater_equal`.
+pub fn try_greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_greater_equal(a, b)
+}
+
+/// Element-wise less-than mask with NumPy-style broadcasting.
+pub fn less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.less(a, b)
+}
+
+/// Alias for `less`.
+pub fn try_less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_less(a, b)
+}
+
+/// Element-wise less-than-or-equal mask with NumPy-style broadcasting.
+pub fn less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.less_equal(a, b)
+}
+
+/// Alias for `less_equal`.
+pub fn try_less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_less_equal(a, b)
+}
+
+/// Select values from two tensors using a non-zero condition mask.
+pub fn where(
+  condition: Tensor,
+  when_true: Tensor,
+  when_false: Tensor,
+) -> Result(Tensor, TensorError) {
+  tensor.where(condition, when_true, when_false)
+}
+
+/// Alias for `where`.
+pub fn try_where(
+  condition: Tensor,
+  when_true: Tensor,
+  when_false: Tensor,
+) -> Result(Tensor, TensorError) {
+  tensor.try_where(condition, when_true, when_false)
+}
+
 // --- Strided (Zero-copy) ----------------------------------------------------
 
 /// Convert to strided representation for O(1) element access

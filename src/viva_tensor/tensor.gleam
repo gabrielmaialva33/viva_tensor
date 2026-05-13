@@ -3233,6 +3233,120 @@ pub fn try_minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   minimum(a, b)
 }
 
+/// Element-wise equality mask with broadcasting.
+pub fn equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x == y })
+}
+
+/// Alias for `equal`.
+pub fn try_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  equal(a, b)
+}
+
+/// Element-wise inequality mask with broadcasting.
+pub fn not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x != y })
+}
+
+/// Alias for `not_equal`.
+pub fn try_not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  not_equal(a, b)
+}
+
+/// Element-wise greater-than mask with broadcasting.
+pub fn greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x >. y })
+}
+
+/// Alias for `greater`.
+pub fn try_greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  greater(a, b)
+}
+
+/// Element-wise greater-than-or-equal mask with broadcasting.
+pub fn greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x >=. y })
+}
+
+/// Alias for `greater_equal`.
+pub fn try_greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  greater_equal(a, b)
+}
+
+/// Element-wise less-than mask with broadcasting.
+pub fn less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x <. y })
+}
+
+/// Alias for `less`.
+pub fn try_less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  less(a, b)
+}
+
+/// Element-wise less-than-or-equal mask with broadcasting.
+pub fn less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  compare_broadcast(a, b, fn(x, y) { x <=. y })
+}
+
+/// Alias for `less_equal`.
+pub fn try_less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  less_equal(a, b)
+}
+
+fn compare_broadcast(
+  a: Tensor,
+  b: Tensor,
+  predicate: fn(Float, Float) -> Bool,
+) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(a, b))
+  let #(a_bc, b_bc) = pair
+  map2(a_bc, b_bc, fn(x, y) {
+    case predicate(x, y) {
+      True -> 1.0
+      False -> 0.0
+    }
+  })
+}
+
+/// Select values from two tensors using a non-zero condition mask.
+pub fn where(
+  condition: Tensor,
+  when_true: Tensor,
+  when_false: Tensor,
+) -> Result(Tensor, TensorError) {
+  use target_shape <- result.try(broadcast_shapes([
+    shape(condition),
+    shape(when_true),
+    shape(when_false),
+  ]))
+  use condition_bc <- result.try(broadcast_to(condition, target_shape))
+  use true_bc <- result.try(broadcast_to(when_true, target_shape))
+  use false_bc <- result.try(broadcast_to(when_false, target_shape))
+  use condition_data <- result.try(try_to_list(condition_bc))
+  use true_data <- result.try(try_to_list(true_bc))
+  use false_data <- result.try(try_to_list(false_bc))
+
+  let data =
+    list.map2(list.zip(condition_data, true_data), false_data, fn(pair, f) {
+      let #(c, t) = pair
+      case c != 0.0 {
+        True -> t
+        False -> f
+      }
+    })
+
+  Ok(Tensor(data: data, shape: target_shape))
+}
+
+/// Alias for `where`.
+pub fn try_where(
+  condition: Tensor,
+  when_true: Tensor,
+  when_false: Tensor,
+) -> Result(Tensor, TensorError) {
+  where(condition, when_true, when_false)
+}
+
 // --- Shape Manipulation ---
 
 /// Remove dimensions of size 1 (squeeze operation)
