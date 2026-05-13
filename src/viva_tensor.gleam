@@ -403,6 +403,11 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   tensor.softmax_axis(t, axis)
 }
 
+/// Softmax along one axis, preserving materialization failures.
+pub fn try_softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_softmax_axis(t, axis)
+}
+
 // --- Reductions -------------------------------------------------------------
 
 /// Sum everything

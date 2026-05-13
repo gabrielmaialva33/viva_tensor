@@ -1029,22 +1029,27 @@ fn mean_axis_with_keepdims(
   }
 }
 
-/// Softmax along one axis, preserving the input shape.
-pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+/// Softmax along one axis, preserving the input shape and materialization failures.
+pub fn try_softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   let shp = t.shape
   let rnk = list.length(shp)
 
   case axis >= 0 && axis < rnk {
     False -> Error(DimensionError("Invalid axis for softmax"))
     True -> {
-      let axis_size = list_at_int(shp, axis) |> result.unwrap(0)
+      use axis_size <- result.try(axis_size(shp, axis))
       let inner_size = layout_math.size(list.drop(shp, axis + 1))
 
       case axis_size <= 0 {
         True -> Ok(Tensor(data: [], shape: shp))
         False -> {
-          let data =
-            softmax_axis_data(get_data(t), size(t), axis_size, inner_size)
+          use input <- result.try(try_to_list(t))
+          use data <- result.try(softmax_axis_data(
+            input,
+            size(t),
+            axis_size,
+            inner_size,
+          ))
           Ok(Tensor(data: data, shape: shp))
         }
       }
@@ -1052,19 +1057,36 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   }
 }
 
+/// Softmax along one axis, preserving the input shape.
+pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  try_softmax_axis(t, axis)
+}
+
 fn softmax_axis_data(
   data: List(Float),
   total_size: Int,
   axis_size: Int,
   inner_size: Int,
-) -> List(Float) {
+) -> Result(List(Float), TensorError) {
   let group_width = axis_size * inner_size
-  let outer_size = total_size / group_width
 
-  list.range(0, outer_size - 1)
-  |> list.flat_map(fn(outer) {
-    softmax_axis_outer(data, outer, axis_size, inner_size)
-  })
+  case group_width <= 0 {
+    True -> Ok([])
+    False -> {
+      let outer_size = total_size / group_width
+      list.range(0, outer_size - 1)
+      |> list.fold(Ok([]), fn(acc, outer) {
+        use values <- result.try(acc)
+        use chunk <- result.try(softmax_axis_outer(
+          data,
+          outer,
+          axis_size,
+          inner_size,
+        ))
+        Ok(list.append(values, chunk))
+      })
+    }
+  }
 }
 
 fn softmax_axis_outer(
@@ -1072,39 +1094,81 @@ fn softmax_axis_outer(
   outer: Int,
   axis_size: Int,
   inner_size: Int,
-) -> List(Float) {
-  let groups =
+) -> Result(List(Float), TensorError) {
+  use groups <- result.try(
     list.range(0, inner_size - 1)
-    |> list.map(fn(inner) {
-      let values =
-        list.range(0, axis_size - 1)
-        |> list.map(fn(axis_pos) {
-          let index =
-            outer * axis_size * inner_size + inner + axis_pos * inner_size
-          list_at_float(data, index) |> result.unwrap(0.0)
-        })
-      softmax_values(values)
+    |> list.fold(Ok([]), fn(acc, inner) {
+      use values <- result.try(acc)
+      use normalized <- result.try(softmax_axis_values(
+        data,
+        outer,
+        inner,
+        axis_size,
+        inner_size,
+      ))
+      Ok([normalized, ..values])
     })
+    |> result.map(list.reverse),
+  )
 
   list.range(0, axis_size - 1)
-  |> list.flat_map(fn(axis_pos) {
-    list.map(groups, fn(group) {
-      list_at_float(group, axis_pos) |> result.unwrap(0.0)
-    })
+  |> list.fold(Ok([]), fn(acc, axis_pos) {
+    use values <- result.try(acc)
+    use axis_values <- result.try(
+      groups
+      |> list.fold(Ok([]), fn(group_acc, group) {
+        use group_values <- result.try(group_acc)
+        use value <- result.try(
+          list_at_float(group, axis_pos)
+          |> result.map_error(fn(_) {
+            IndexOutOfBounds(axis_pos, list.length(group))
+          }),
+        )
+        Ok([value, ..group_values])
+      })
+      |> result.map(list.reverse),
+    )
+    Ok(list.append(values, axis_values))
   })
 }
 
-fn softmax_values(values: List(Float)) -> List(Float) {
-  let max_value =
-    list.fold(
-      values,
-      list_at_float(values, 0) |> result.unwrap(0.0),
-      fn(acc, value) { float.max(acc, value) },
-    )
-  let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
-  let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
+fn softmax_axis_values(
+  data: List(Float),
+  outer: Int,
+  inner: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> Result(List(Float), TensorError) {
+  case
+    list.range(0, axis_size - 1)
+    |> list.fold(Ok([]), fn(acc, axis_pos) {
+      use values <- result.try(acc)
+      let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
+      use value <- result.try(
+        list_at_float(data, index)
+        |> result.map_error(fn(_) { IndexOutOfBounds(index, list.length(data)) }),
+      )
+      Ok([value, ..values])
+    })
+    |> result.map(list.reverse)
+  {
+    Ok(values) -> softmax_values(values)
+    Error(error) -> Error(error)
+  }
+}
 
-  list.map(shifted, fn(value) { value /. total })
+fn softmax_values(values: List(Float)) -> Result(List(Float), TensorError) {
+  case values {
+    [] -> Error(DimensionError("Cannot compute softmax over an empty slice"))
+    [first, ..rest] -> {
+      let max_value =
+        list.fold(rest, first, fn(acc, value) { float.max(acc, value) })
+      let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
+      let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
+
+      Ok(list.map(shifted, fn(value) { value /. total }))
+    }
+  }
 }
 
 fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
