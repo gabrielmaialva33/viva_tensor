@@ -19,6 +19,8 @@ internal_modules = [
   "viva_tensor/core/*",
   "viva_tensor/experimental",
   "viva_tensor/experimental/*",
+  "viva_tensor/io",
+  "viva_tensor/io/*",
   "viva_tensor/native",
   "viva_tensor/native/*",
   "viva_tensor/nn/autograd",
@@ -37,6 +39,8 @@ internal_modules = [
 gleam_stdlib = ">= 0.44.0 and < 2.0.0"
 viva_telemetry = ">= 1.0.0 and < 2.0.0"
 gleam_community_maths = ">= 2.0.1 and < 3.0.0"
+gleam_json = ">= 3.0.0 and < 4.0.0"
+simplifile = ">= 2.0.0 and < 3.0.0"
 
 [dev-dependencies]
 gleeunit = ">= 1.0.0 and < 2.0.0"

@@ -21,6 +21,7 @@
 //// c
 //// ```
 
+import gleam/dict.{type Dict}
 import gleam/list
 import gleam/result
 import viva_tensor/backend/capability as backend_capability
@@ -28,6 +29,7 @@ import viva_tensor/backend/dispatch as backend_dispatch
 import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/format as tensor_format
+import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
@@ -1133,6 +1135,45 @@ pub fn accelerated_to_string_with(
   opts: PrintOptions,
 ) -> String {
   tensor_format.accelerated_to_string_with(t, opts)
+}
+
+// --- SafeTensors I/O --------------------------------------------------------
+
+/// Read a SafeTensors file into a `Dict(String, Tensor)`.
+///
+/// Supports `F32` and `F64` payloads. See `viva_tensor/io/safetensors.read`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import gleam/dict
+/// import viva_tensor as t
+///
+/// let assert Ok(weights) = t.safetensors_read("./model.safetensors")
+/// let _ = dict.get(weights, "encoder.weight")
+/// ```
+pub fn safetensors_read(
+  path: String,
+) -> Result(Dict(String, Tensor), TensorError) {
+  safetensors_io.read(path)
+}
+
+/// Write a `Dict(String, Tensor)` to disk in SafeTensors format (F64 payload).
+///
+/// ## Example
+///
+/// ```gleam
+/// import gleam/dict
+/// import viva_tensor as t
+///
+/// let weights = dict.from_list([#("w", t.ones([2, 2]))])
+/// let assert Ok(Nil) = t.safetensors_write("./out.safetensors", weights)
+/// ```
+pub fn safetensors_write(
+  path: String,
+  tensors: Dict(String, Tensor),
+) -> Result(Nil, TensorError) {
+  safetensors_io.write(path, tensors)
 }
 
 // --- Utils ------------------------------------------------------------------
