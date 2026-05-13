@@ -93,6 +93,7 @@ Use broadcasting-specific functions when shapes differ.
 |:-----------------------------|:------------------------------|
 | `dot(a, b)`                  | Dot product for vectors.      |
 | `matmul(a, b)`               | Matrix multiplication.        |
+| `matmul_planned(a, b)`       | Matrix multiplication using the stable backend planner with fallback. |
 | `matmul_vec(matrix, vector)` | Matrix-vector multiplication. |
 | `transpose(tensor)`          | Matrix transpose.             |
 | `outer(a, b)`                | Outer product.                |

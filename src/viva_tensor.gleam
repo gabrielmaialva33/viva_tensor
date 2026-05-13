@@ -13,6 +13,7 @@
 ////
 //// ```gleam
 //// import gleam/result
+import viva_tensor/core/error.{DimensionError}
 //// import viva_tensor as t
 ////
 //// let a = t.zeros([2, 3])
@@ -23,6 +24,7 @@
 
 import gleam/list
 import gleam/result
+import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/cuda
 import viva_tensor/layout as tensor_layout
@@ -441,6 +443,23 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 /// Matrix-matrix multiplication
 pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul(a, b)
+}
+
+pub fn matmul_planned(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  case tensor.shape(a), tensor.shape(b) {
+    [m, k], [k2, n] if k == k2 -> {
+      let plan = plan_backend(OperationMatmul(m: m, n: n, k: k))
+      let caps = capabilities()
+      let runnable =
+        plan.fallbacks
+        |> list.filter(fn(backend) {
+          backend_is_available(backend, caps.backend_capabilities)
+        })
+
+      run_matmul_backends(a, b, m, n, k, runnable)
+    }
+    _, _ -> tensor.matmul(a, b)
+  }
 }
 
 /// Matrix multiplication with priority: RTX 4090 first, then MKL/native CPU.
@@ -1152,4 +1171,83 @@ fn all_tensor_backends() -> List(TensorBackend) {
     BackendZigSimd,
     BackendPureGleam,
   ]
+}
+
+fn backend_is_available(
+  backend: TensorBackend,
+  capabilities: List(BackendCapability),
+) -> Bool {
+  capabilities
+  |> list.any(fn(capability) {
+    capability.backend == backend && capability.available
+  })
+}
+
+fn run_matmul_backends(
+  a: Tensor,
+  b: Tensor,
+  m: Int,
+  n: Int,
+  k: Int,
+  backends: List(TensorBackend),
+) -> Result(Tensor, TensorError) {
+  case backends {
+    [] -> tensor.matmul(a, b)
+    [backend, ..rest] ->
+      case matmul_with_backend(backend, a, b, m, n, k) {
+        Ok(result) -> Ok(result)
+        Error(_) -> run_matmul_backends(a, b, m, n, k, rest)
+      }
+  }
+}
+
+fn matmul_with_backend(
+  backend: TensorBackend,
+  a: Tensor,
+  b: Tensor,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Tensor, TensorError) {
+  case backend {
+    BackendCudaSparse ->
+      Error(DimensionError(
+        "Sparse Tensor Core dispatch requires an explicit sparse tensor.",
+      ))
+    BackendCudaInt8 ->
+      Error(DimensionError(
+        "INT8 Tensor Core dispatch requires explicit quantized tensors.",
+      ))
+    BackendCudaFp16 -> matmul_cuda_fp16(a, b)
+    BackendCudaFp32 -> matmul_cuda_fp32(a, b)
+    BackendMkl -> matmul_native_cpu(a, b, m, n, k)
+    BackendZigSimd -> matmul_native_cpu(a, b, m, n, k)
+    BackendPureGleam -> tensor.matmul(a, b)
+  }
+}
+
+fn matmul_cuda_fp16(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use a_gpu <- result.try(cuda.to_rtx4090_fp16(a))
+  use b_gpu <- result.try(cuda.to_rtx4090_fp16(b))
+  use out <- result.try(cuda.matmul_accelerated(a_gpu, b_gpu))
+  cuda.to_cpu_tensor(out)
+}
+
+fn matmul_cuda_fp32(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use a_gpu <- result.try(cuda.to_rtx4090_fp32(a))
+  use b_gpu <- result.try(cuda.to_rtx4090_fp32(b))
+  use out <- result.try(cuda.matmul_accelerated(a_gpu, b_gpu))
+  cuda.to_cpu_tensor(out)
+}
+
+fn matmul_native_cpu(
+  a: Tensor,
+  b: Tensor,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(Tensor, TensorError) {
+  use a_native <- result.try(tensor.native_from_list(tensor.to_list(a), [m, k]))
+  use b_native <- result.try(tensor.native_from_list(tensor.to_list(b), [k, n]))
+  tensor.matmul(a_native, b_native)
 }

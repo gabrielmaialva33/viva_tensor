@@ -170,6 +170,27 @@ pub fn dot_test() {
 }
 
 pub fn matmul_test() {
+}
+
+pub fn matmul_planned_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(a) -> {
+      case t.matrix(2, 2, [5.0, 6.0, 7.0, 8.0]) {
+        Ok(b) -> {
+          case t.matmul_planned(a, b) {
+            Ok(c) -> {
+              t.shape(c) |> should.equal([2, 2])
+              t.to_list(c) |> should.equal([19.0, 22.0, 43.0, 50.0])
+            }
+            Error(_) -> should.fail()
+          }
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+
   // [1, 2]   [5, 6]   [1*5+2*7, 1*6+2*8]   [19, 22]
   // [3, 4] x [7, 8] = [3*5+4*7, 3*6+4*8] = [43, 50]
   case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {

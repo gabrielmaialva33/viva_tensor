@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Added stable backend capability records and `plan_backend()` so callers can
 - Added structured backend rejection reasons to `TensorBackendPlan` and exposed
   inspect BEAM CPU, native CPU, CUDA FP32/FP16/INT8, and sparse backend
+- Added `matmul_planned()` to execute matrix multiplication through the stable backend planner with automatic fallback to pure Gleam.
   availability without touching experimental modules.
 - Added `device()`/`dtype()` helpers for basic tensor placement metadata.
 

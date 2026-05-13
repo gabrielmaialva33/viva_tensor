@@ -9,7 +9,7 @@ pub fn main() -> Nil {
   io.println("viva_tensor regression benchmark")
   time("broadcast_to [3] -> [4096,3]", benchmark_broadcast)
   time("softmax_axis [128,64] axis 1", benchmark_softmax_axis)
-  time("matmul [32,32] @ [32,32]", benchmark_matmul)
+  time("matmul_planned [32,32] @ [32,32]", benchmark_matmul)
 }
 
 fn time(label: String, work: fn() -> Nil) -> Nil {
@@ -44,7 +44,7 @@ fn benchmark_softmax_axis() -> Nil {
 fn benchmark_matmul() -> Nil {
   let a = tensor.fill([32, 32], 1.0)
   let b = tensor.fill([32, 32], 2.0)
-  case tensor.matmul(a, b) {
+  case tensor.matmul_planned(a, b) {
     Ok(output) -> {
       let _ = tensor.sum(output)
       Nil
