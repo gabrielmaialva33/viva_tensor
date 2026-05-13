@@ -48,6 +48,7 @@ import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
+import viva_tensor/text/tokenizer as text_tokenizer
 
 // --- Types ------------------------------------------------------------------
 
@@ -3042,4 +3043,291 @@ pub fn apply_to_optimizer(
   opt: nn_optim.Optimizer,
 ) -> #(Scheduler, nn_optim.Optimizer) {
   nn_scheduler.apply_to_optimizer(s, opt)
+}
+
+// --- Text tokenizers (re-export) --------------------------------------------
+
+/// Whitespace tokenizer (encoding against a pre-trained vocabulary).
+pub type WhitespaceTokenizer =
+  text_tokenizer.WhitespaceTokenizer
+
+/// Character-level tokenizer over Unicode graphemes.
+pub type CharTokenizer =
+  text_tokenizer.CharTokenizer
+
+/// BERT-style WordPiece tokenizer (encoding-only).
+pub type WordPieceTokenizer =
+  text_tokenizer.WordPieceTokenizer
+
+/// Byte-pair encoding tokenizer driven by a pre-trained merge table.
+pub type BpeTokenizer =
+  text_tokenizer.BpeTokenizer
+
+/// Build a `WhitespaceTokenizer` from an ordered vocabulary list.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.whitespace_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "hello"],
+///   "[UNK]",
+///   "[PAD]",
+/// )
+/// ```
+pub fn whitespace_tokenizer_from_vocab(
+  vocab: List(String),
+  unk_token: String,
+  pad_token: String,
+) -> WhitespaceTokenizer {
+  text_tokenizer.whitespace_tokenizer_from_vocab(vocab, unk_token, pad_token)
+}
+
+/// Encode text with a `WhitespaceTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.whitespace_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "hello"],
+///   "[UNK]",
+///   "[PAD]",
+/// )
+/// let _ = t.whitespace_encode(tok, "hello")
+/// ```
+pub fn whitespace_encode(
+  tokenizer: WhitespaceTokenizer,
+  text: String,
+) -> List(Int) {
+  text_tokenizer.whitespace_encode(tokenizer, text)
+}
+
+/// Decode ids with a `WhitespaceTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.whitespace_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "hello"],
+///   "[UNK]",
+///   "[PAD]",
+/// )
+/// let _ = t.whitespace_decode(tok, [2])
+/// ```
+pub fn whitespace_decode(
+  tokenizer: WhitespaceTokenizer,
+  ids: List(Int),
+) -> String {
+  text_tokenizer.whitespace_decode(tokenizer, ids)
+}
+
+/// Build a `CharTokenizer` from an alphabet.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.char_tokenizer_from_alphabet(["?", "a", "b"], "?")
+/// ```
+pub fn char_tokenizer_from_alphabet(
+  alphabet: List(String),
+  unk_token: String,
+) -> CharTokenizer {
+  text_tokenizer.char_tokenizer_from_alphabet(alphabet, unk_token)
+}
+
+/// Encode text with a `CharTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.char_tokenizer_from_alphabet(["?", "a", "b"], "?")
+/// let _ = t.char_encode(tok, "ab")
+/// ```
+pub fn char_encode(tokenizer: CharTokenizer, text: String) -> List(Int) {
+  text_tokenizer.char_encode(tokenizer, text)
+}
+
+/// Decode ids with a `CharTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.char_tokenizer_from_alphabet(["?", "a", "b"], "?")
+/// let _ = t.char_decode(tok, [1, 2])
+/// ```
+pub fn char_decode(tokenizer: CharTokenizer, ids: List(Int)) -> String {
+  text_tokenizer.char_decode(tokenizer, ids)
+}
+
+/// Build a `WordPieceTokenizer` from an ordered vocabulary list.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.word_piece_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello"],
+///   "[UNK]",
+///   "[CLS]",
+///   "[SEP]",
+///   "[PAD]",
+/// )
+/// ```
+pub fn word_piece_tokenizer_from_vocab(
+  vocab: List(String),
+  unk_token: String,
+  cls_token: String,
+  sep_token: String,
+  pad_token: String,
+) -> WordPieceTokenizer {
+  text_tokenizer.word_piece_tokenizer_from_vocab(
+    vocab,
+    unk_token,
+    cls_token,
+    sep_token,
+    pad_token,
+  )
+}
+
+/// Encode text with a `WordPieceTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.word_piece_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello"],
+///   "[UNK]",
+///   "[CLS]",
+///   "[SEP]",
+///   "[PAD]",
+/// )
+/// let _ = t.word_piece_encode(tok, "hello")
+/// ```
+pub fn word_piece_encode(
+  tokenizer: WordPieceTokenizer,
+  text: String,
+) -> List(Int) {
+  text_tokenizer.word_piece_encode(tokenizer, text)
+}
+
+/// Decode ids with a `WordPieceTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.word_piece_tokenizer_from_vocab(
+///   ["[PAD]", "[UNK]", "[CLS]", "[SEP]", "hello"],
+///   "[UNK]",
+///   "[CLS]",
+///   "[SEP]",
+///   "[PAD]",
+/// )
+/// let _ = t.word_piece_decode(tok, [2, 4, 3])
+/// ```
+pub fn word_piece_decode(
+  tokenizer: WordPieceTokenizer,
+  ids: List(Int),
+) -> String {
+  text_tokenizer.word_piece_decode(tokenizer, ids)
+}
+
+/// Build a `BpeTokenizer` from a vocab and pre-trained merges.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.bpe_tokenizer_from_vocab_and_merges(
+///   ["?", "l", "o", "lo"],
+///   [#("l", "o")],
+///   "?",
+/// )
+/// ```
+pub fn bpe_tokenizer_from_vocab_and_merges(
+  vocab: List(String),
+  merges: List(#(String, String)),
+  unk_token: String,
+) -> BpeTokenizer {
+  text_tokenizer.bpe_tokenizer_from_vocab_and_merges(vocab, merges, unk_token)
+}
+
+/// Encode text with a `BpeTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.bpe_tokenizer_from_vocab_and_merges(
+///   ["?", "l", "o", "lo"],
+///   [#("l", "o")],
+///   "?",
+/// )
+/// let _ = t.bpe_encode(tok, "lo")
+/// ```
+pub fn bpe_encode(tokenizer: BpeTokenizer, text: String) -> List(Int) {
+  text_tokenizer.bpe_encode(tokenizer, text)
+}
+
+/// Decode ids with a `BpeTokenizer`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let tok = t.bpe_tokenizer_from_vocab_and_merges(
+///   ["?", "l", "o", "lo"],
+///   [#("l", "o")],
+///   "?",
+/// )
+/// let _ = t.bpe_decode(tok, [3])
+/// ```
+pub fn bpe_decode(tokenizer: BpeTokenizer, ids: List(Int)) -> String {
+  text_tokenizer.bpe_decode(tokenizer, ids)
+}
+
+/// Convert a list of ids into a `[seq_len]` tensor of integer-valued floats.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.ids_to_tensor([1, 2, 3])
+/// ```
+pub fn ids_to_tensor(ids: List(Int)) -> Tensor {
+  text_tokenizer.ids_to_tensor(ids)
+}
+
+/// Convert a `[seq_len]` integer-valued tensor back to a `List(Int)`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.tensor_to_ids(t.ids_to_tensor([1, 2, 3]))
+/// ```
+pub fn tensor_to_ids(tensor: Tensor) -> List(Int) {
+  text_tokenizer.tensor_to_ids(tensor)
+}
+
+/// Pad or truncate a list of ids to `max_length` using `pad_id`.
+///
+/// ## Example
+///
+/// ```gleam
+/// import viva_tensor as t
+/// let _ = t.pad_or_truncate([1, 2], 4, 0)
+/// ```
+pub fn pad_or_truncate(
+  ids: List(Int),
+  max_length: Int,
+  pad_id: Int,
+) -> List(Int) {
+  text_tokenizer.pad_or_truncate(ids, max_length, pad_id)
 }
