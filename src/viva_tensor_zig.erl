@@ -22,7 +22,12 @@
     nt_zeros/1, nt_ones/1, nt_fill/2, nt_from_list/2,
     nt_to_list/1, nt_shape/1, nt_size/1, nt_broadcast_to/2,
     nt_add/2, nt_sub/2, nt_mul/2, nt_scale/2, nt_negate/1,
-    nt_dot/2, nt_sum/1, nt_max/1, nt_min/1,
+    nt_maximum/2, nt_minimum/2,
+    nt_equal/2, nt_not_equal/2, nt_greater/2, nt_greater_equal/2,
+    nt_less/2, nt_less_equal/2,
+    nt_logical_not/1, nt_logical_and/2, nt_logical_or/2, nt_logical_xor/2,
+    nt_where/3,
+    nt_dot/2, nt_sum/1, nt_max/1, nt_min/1, nt_count_nonzero/1,
     nt_matmul/5, nt_matmul_inplace/6, nt_matmul_blas/5, nt_matmul_cuda/5, nt_matmul_cuda_fp32/5,
     nt_matmul_int8_tc/5, nt_int8_tc_available/0, %% INT8 Tensor Cores (old DP4A)
     nt_matmul_fp16_tc/5, nt_fp16_tc_available/0, %% FP16 Tensor Cores - 330 TFLOPS!
@@ -365,12 +370,26 @@ nt_sub(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_mul(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_scale(_Ref, _Scalar) -> erlang:nif_error(nif_not_loaded).
 nt_negate(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_maximum(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_minimum(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_equal(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_not_equal(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_greater(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_greater_equal(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_less(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_less_equal(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_logical_not(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_logical_and(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_logical_or(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_logical_xor(_A, _B) -> erlang:nif_error(nif_not_loaded).
+nt_where(_Condition, _WhenTrue, _WhenFalse) -> erlang:nif_error(nif_not_loaded).
 
 %% Reductions
 nt_dot(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_sum(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_max(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_min(_Ref) -> erlang:nif_error(nif_not_loaded).
+nt_count_nonzero(_Ref) -> erlang:nif_error(nif_not_loaded).
 
 %% Matrix ops
 nt_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).

@@ -553,6 +553,108 @@ pub fn nt_negate(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
   nt_negate_ffi(a)
 }
 
+/// Native element-wise maximum.
+pub fn nt_maximum(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_maximum_ffi(a, b)
+}
+
+/// Native element-wise minimum.
+pub fn nt_minimum(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_minimum_ffi(a, b)
+}
+
+/// Native element-wise equality mask.
+pub fn nt_equal(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_equal_ffi(a, b)
+}
+
+/// Native element-wise inequality mask.
+pub fn nt_not_equal(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_not_equal_ffi(a, b)
+}
+
+/// Native element-wise greater-than mask.
+pub fn nt_greater(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_greater_ffi(a, b)
+}
+
+/// Native element-wise greater-than-or-equal mask.
+pub fn nt_greater_equal(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_greater_equal_ffi(a, b)
+}
+
+/// Native element-wise less-than mask.
+pub fn nt_less(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_less_ffi(a, b)
+}
+
+/// Native element-wise less-than-or-equal mask.
+pub fn nt_less_equal(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_less_equal_ffi(a, b)
+}
+
+/// Native logical NOT mask.
+pub fn nt_logical_not(a: NativeTensorRef) -> Result(NativeTensorRef, String) {
+  nt_logical_not_ffi(a)
+}
+
+/// Native logical AND mask.
+pub fn nt_logical_and(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_logical_and_ffi(a, b)
+}
+
+/// Native logical OR mask.
+pub fn nt_logical_or(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_logical_or_ffi(a, b)
+}
+
+/// Native logical XOR mask.
+pub fn nt_logical_xor(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_logical_xor_ffi(a, b)
+}
+
+/// Native three-way select: condition != 0 ? when_true : when_false.
+pub fn nt_where(
+  condition: NativeTensorRef,
+  when_true: NativeTensorRef,
+  when_false: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_where_ffi(condition, when_true, when_false)
+}
+
 /// Native dot product: ref · ref → scalar
 pub fn nt_dot(a: NativeTensorRef, b: NativeTensorRef) -> Result(Float, String) {
   nt_dot_ffi(a, b)
@@ -571,6 +673,11 @@ pub fn nt_max(a: NativeTensorRef) -> Result(Float, String) {
 /// Native min → scalar
 pub fn nt_min(a: NativeTensorRef) -> Result(Float, String) {
   nt_min_ffi(a)
+}
+
+/// Native count of non-zero values.
+pub fn nt_count_nonzero(a: NativeTensorRef) -> Result(Int, String) {
+  nt_count_nonzero_ffi(a)
 }
 
 /// Native matmul: [m,k] @ [k,n] → [m,n] in native memory
@@ -805,6 +912,82 @@ fn nt_scale_ffi(
 @external(erlang, "viva_tensor_zig", "nt_negate")
 fn nt_negate_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
 
+@external(erlang, "viva_tensor_zig", "nt_maximum")
+fn nt_maximum_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_minimum")
+fn nt_minimum_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_equal")
+fn nt_equal_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_not_equal")
+fn nt_not_equal_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_greater")
+fn nt_greater_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_greater_equal")
+fn nt_greater_equal_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_less")
+fn nt_less_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_less_equal")
+fn nt_less_equal_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_logical_not")
+fn nt_logical_not_ffi(a: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_logical_and")
+fn nt_logical_and_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_logical_or")
+fn nt_logical_or_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_logical_xor")
+fn nt_logical_xor_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_where")
+fn nt_where_ffi(
+  condition: NativeTensorRef,
+  when_true: NativeTensorRef,
+  when_false: NativeTensorRef,
+) -> Result(NativeTensorRef, String)
+
 @external(erlang, "viva_tensor_zig", "nt_dot")
 fn nt_dot_ffi(a: NativeTensorRef, b: NativeTensorRef) -> Result(Float, String)
 
@@ -816,6 +999,9 @@ fn nt_max_ffi(a: NativeTensorRef) -> Result(Float, String)
 
 @external(erlang, "viva_tensor_zig", "nt_min")
 fn nt_min_ffi(a: NativeTensorRef) -> Result(Float, String)
+
+@external(erlang, "viva_tensor_zig", "nt_count_nonzero")
+fn nt_count_nonzero_ffi(a: NativeTensorRef) -> Result(Int, String)
 
 @external(erlang, "viva_tensor_zig", "nt_matmul")
 fn nt_matmul_ffi(
