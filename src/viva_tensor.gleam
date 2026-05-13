@@ -42,6 +42,7 @@ import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
+import viva_tensor/nn/rnn as nn_rnn
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
@@ -2760,4 +2761,90 @@ pub fn multi_head_attention_forward(
 /// Lower-triangular `[seq_len, seq_len]` mask of `1.0`s used by causal SDPA.
 pub fn causal_mask(seq_len: Int) -> Tensor {
   nn_attention.causal_mask(seq_len)
+}
+
+// --- Recurrent cells (re-exports from viva_tensor/nn/rnn) ------------------
+
+/// Vanilla Elman RNN cell parameters.
+pub type RnnCell =
+  nn_rnn.RnnCell
+
+/// GRU cell parameters (reset/update/new gates stacked in weight rows).
+pub type GruCell =
+  nn_rnn.GruCell
+
+/// LSTM cell parameters (input/forget/cell/output gates stacked).
+pub type LstmCell =
+  nn_rnn.LstmCell
+
+/// Build an Elman RNN cell with Xavier-initialized weights and zero biases.
+pub fn rnn_cell_init(input_size: Int, hidden_size: Int) -> RnnCell {
+  nn_rnn.rnn_cell_init(input_size, hidden_size)
+}
+
+/// Build a GRU cell with Xavier-initialized stacked weights and zero biases.
+pub fn gru_cell_init(input_size: Int, hidden_size: Int) -> GruCell {
+  nn_rnn.gru_cell_init(input_size, hidden_size)
+}
+
+/// Build an LSTM cell with Xavier-initialized stacked weights and zero biases.
+pub fn lstm_cell_init(input_size: Int, hidden_size: Int) -> LstmCell {
+  nn_rnn.lstm_cell_init(input_size, hidden_size)
+}
+
+/// One Elman RNN time step: `h' = tanh(W_ih @ x + b_ih + W_hh @ h + b_hh)`.
+pub fn rnn_cell_step(
+  cell: RnnCell,
+  input: Tensor,
+  hidden: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_rnn.rnn_cell_step(cell, input, hidden)
+}
+
+/// One GRU time step (PyTorch `nn.GRUCell` convention).
+pub fn gru_cell_step(
+  cell: GruCell,
+  input: Tensor,
+  hidden: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_rnn.gru_cell_step(cell, input, hidden)
+}
+
+/// One LSTM time step. Returns `(new_hidden, new_cell_state)`.
+pub fn lstm_cell_step(
+  cell: LstmCell,
+  input: Tensor,
+  hidden: Tensor,
+  cell_state: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_rnn.lstm_cell_step(cell, input, hidden, cell_state)
+}
+
+/// Run an Elman RNN cell over a list of time steps.
+pub fn rnn_sequence(
+  cell: RnnCell,
+  inputs: List(Tensor),
+  initial_hidden: Tensor,
+) -> Result(#(List(Tensor), Tensor), TensorError) {
+  nn_rnn.rnn_sequence(cell, inputs, initial_hidden)
+}
+
+/// Run a GRU cell over a list of time steps.
+pub fn gru_sequence(
+  cell: GruCell,
+  inputs: List(Tensor),
+  initial_hidden: Tensor,
+) -> Result(#(List(Tensor), Tensor), TensorError) {
+  nn_rnn.gru_sequence(cell, inputs, initial_hidden)
+}
+
+/// Run an LSTM cell over a list of time steps. Returns
+/// `(all_hidden_states, final_hidden, final_cell_state)`.
+pub fn lstm_sequence(
+  cell: LstmCell,
+  inputs: List(Tensor),
+  initial_hidden: Tensor,
+  initial_cell: Tensor,
+) -> Result(#(List(Tensor), Tensor, Tensor), TensorError) {
+  nn_rnn.lstm_sequence(cell, inputs, initial_hidden, initial_cell)
 }
