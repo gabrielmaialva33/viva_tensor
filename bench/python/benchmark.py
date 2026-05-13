@@ -18,9 +18,9 @@ References:
 - Hoefler & Belli (2015) "Scientific Benchmarking of Parallel Computing Systems"
 
 Usage:
-    python3 bench/benchmark.py              # Full benchmark
-    python3 bench/benchmark.py --quick      # Quick mode (smaller sizes)
-    python3 bench/benchmark.py --sizes 1000 2000  # Custom sizes
+    python3 bench/python/benchmark.py              # Full benchmark
+    python3 bench/python/benchmark.py --quick      # Quick mode
+    python3 bench/python/benchmark.py --sizes 1000 2000
 """
 
 import argparse
@@ -721,9 +721,9 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    python3 bench/benchmark.py              # Full benchmark
-    python3 bench/benchmark.py --quick      # Quick mode
-    python3 bench/benchmark.py --sizes 1000 2000 3000
+    python3 bench/python/benchmark.py              # Full benchmark
+    python3 bench/python/benchmark.py --quick      # Quick mode
+    python3 bench/python/benchmark.py --sizes 1000 2000 3000
         """
     )
     parser.add_argument(

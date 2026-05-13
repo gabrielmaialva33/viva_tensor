@@ -7,7 +7,7 @@
 %% RTX 4090: 660 TFLOPS FP16 Sparse (2x of 330T dense!)
 %%           1320 TFLOPS INT8 Sparse (2x of 660T dense!)
 %%
-%% Run: cd viva_tensor && escript bench/bench_sparse.erl
+%% Run: cd viva_tensor && escript bench/erlang/bench_sparse.erl
 %%
 
 main(_) ->

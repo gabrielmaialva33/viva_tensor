@@ -426,7 +426,7 @@ main <- function() {
     load_benchmark_data(),
     error = function(e) {
       cat("Error:", e$message, "\n")
-      cat("Run 'python3 bench/benchmark_pro.py' first.\n")
+      cat("Run 'python3 bench/python/benchmark.py' first.\n")
       quit(status = 1)
     }
   )

@@ -1,30 +1,35 @@
 # Benchmark Suite
 
-Ferramentas para benchmarking estatístico rigoroso de viva_tensor.
+External benchmark tools for `viva_tensor`.
+
+This directory is for scripts that run outside the Gleam package API. Gleam
+development-only benchmark modules live under `dev/viva_tensor/bench/`.
 
 ## Uso Rápido
 
 ```bash
 # Benchmark completo (30 runs, Bootstrap CI 95%)
-python3 bench/benchmark.py
+python3 bench/python/benchmark.py
 
 # Análise estatística (requer R)
-Rscript bench/analysis.R
+Rscript bench/r/analysis.R
 
 # Runner automatizado (CI/CD)
-./bench/run_benchmarks.sh
+./bench/scripts/run_benchmarks.sh
 ```
 
-## Arquivos
+## Layout
 
-| Arquivo                | Descrição                                                         |
-|------------------------|-------------------------------------------------------------------|
-| `benchmark.py`         | Benchmark principal - Bootstrap CI, Mann-Whitney U, Cliff's delta |
-| `analysis.R`           | Análise estatística avançada com ggplot2                          |
-| `benchmark_compare.py` | Comparativo simples entre bibliotecas                             |
-| `run_benchmarks.sh`    | Runner para CI/CD                                                 |
-| `bench_*.erl`          | Benchmarks Erlang específicos                                     |
-| `bench_*.bat`          | Scripts Windows                                                   |
+| Path | Purpose |
+|:-----|:--------|
+| `python/` | Statistical and comparison benchmarks. |
+| `r/` | Statistical analysis and plots. |
+| `erlang/` | Low-level BEAM/NIF escript benchmarks. |
+| `cuda/` | CUDA benchmark probes and native fixtures. |
+| `scripts/` | Cross-runtime benchmark runners. |
+| `windows/` | Windows helper scripts. |
+| `data/` | Generated raw benchmark data, ignored by git. |
+| `reports/` | Generated reports and plots, ignored by git. |
 
 ## Output
 

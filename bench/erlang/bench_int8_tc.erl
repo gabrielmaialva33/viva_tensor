@@ -6,7 +6,7 @@
 %% INT8 Tensor Core Benchmark
 %% RTX 4090: 660 TFLOPS INT8 vs 82 TFLOPS FP32 (8x faster!)
 %%
-%% Run: escript bench/bench_int8_tc.erl
+%% Run: escript bench/erlang/bench_int8_tc.erl
 %%
 
 main(_) ->

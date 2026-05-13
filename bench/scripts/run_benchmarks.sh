@@ -4,14 +4,14 @@
 # ============================
 #
 # Usage:
-#   ./bench/run_benchmarks.sh          # Run all benchmarks
-#   ./bench/run_benchmarks.sh --quick  # Quick run (smaller sizes)
-#   ./bench/run_benchmarks.sh --ci     # CI mode (save to artifacts)
+#   ./bench/scripts/run_benchmarks.sh          # Run all benchmarks
+#   ./bench/scripts/run_benchmarks.sh --quick  # Quick run (smaller sizes)
+#   ./bench/scripts/run_benchmarks.sh --ci     # CI mode (save to artifacts)
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_DIR="$(dirname "$(dirname "$SCRIPT_DIR")")"
 
 cd "$PROJECT_DIR"
 
@@ -58,13 +58,13 @@ echo ""
 
 # Run Python benchmarks
 echo "Running benchmarks..."
-python3 bench/benchmark.py
+python3 bench/python/benchmark.py
 
 # Run R analysis if available
 if command -v Rscript &> /dev/null; then
     echo ""
     echo "Running statistical analysis..."
-    Rscript bench/analysis.R 2>/dev/null || echo "R analysis skipped (missing packages)"
+    Rscript bench/r/analysis.R 2>/dev/null || echo "R analysis skipped (missing packages)"
 fi
 
 echo ""

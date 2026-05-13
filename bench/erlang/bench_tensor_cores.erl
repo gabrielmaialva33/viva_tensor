@@ -6,7 +6,7 @@
 %% TENSOR CORE BENCHMARK - FP16 + INT8 IMMA
 %% RTX 4090 Theoretical: FP32=82T, FP16=330T, INT8=660T
 %%
-%% Run: cd viva_tensor && escript bench/bench_tensor_cores.erl
+%% Run: cd viva_tensor && escript bench/erlang/bench_tensor_cores.erl
 %%
 
 main(_) ->

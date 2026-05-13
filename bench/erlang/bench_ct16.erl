@@ -7,7 +7,7 @@
 %% RTX 4090: 330 TFLOPS theoretical (FP16 Tensor Cores)
 %% This benchmark measures pure Tensor Core compute - NO PCIe overhead!
 %%
-%% Run: cd viva_tensor && escript bench/bench_ct16.erl
+%% Run: cd viva_tensor && escript bench/erlang/bench_ct16.erl
 %%
 
 main(_) ->
