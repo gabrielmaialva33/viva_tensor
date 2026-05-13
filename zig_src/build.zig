@@ -36,82 +36,82 @@ pub fn build(b: *std.Build) void {
     }
 
     // Compile the C NIF entry point (uses erl_nif.h for NIF boilerplate)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_entry.c"),
         .flags = &.{},
     });
 
     // Platform detection: BLAS backend + CPU topology (extracted from nif_entry.c)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_platform.c"),
         .flags = &.{},
     });
 
     // CudaTensor (FP32) NIFs: persistent GPU memory, SGEMM
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_cuda_fp32.c"),
         .flags = &.{},
     });
 
     // CudaTensor16 (FP16) NIFs: Tensor Core HGEMM, fused ops, benchmarks
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_cuda_fp16.c"),
         .flags = &.{},
     });
 
     // CudaInt8Tensor NIFs: INT8 IMMA Tensor Cores via cublasLt
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_cuda_int8.c"),
         .flags = &.{},
     });
 
     // CPU NIF ops: element-wise, reductions, matmul, activations, in-place, fused
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_cpu_ops.c"),
         .flags = &.{},
     });
 
     // Tensor resource types, lifecycle, helpers, constructors, accessors (extracted from nif_entry.c)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_tensor_core.c"),
         .flags = &.{},
     });
 
     // Specialized backends: Resonance/LNS, Horde physics, HDC (extracted from nif_entry.c)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_specialized.c"),
         .flags = &.{},
     });
 
     // SparseTensor NIFs (FP16 + INT8 via cuSPARSELt)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_sparse.c"),
         .flags = &.{},
     });
 
     // Quantization NIFs (INT8 + NF4 fused matmul)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_quant.c"),
         .flags = &.{},
     });
 
     // SageAttention NIFs (CPU + GPU paths)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_sage_nif.c"),
         .flags = &.{},
     });
 
     // Legacy list-based CPU NIFs (backward compatibility)
-    lib.addCSourceFile(.{
+    lib.root_module.addCSourceFile(.{
         .file = b.path("nif_legacy.c"),
         .flags = &.{},
     });
 
     // Add Erlang NIF headers (for nif_entry.c)
-    lib.addIncludePath(.{ .cwd_relative = erl_include });
+    lib.root_module.addIncludePath(.{ .cwd_relative = erl_include });
 
     // Link with libc (needed by nif_entry.c)
-    lib.linkLibC();
+    lib.root_module.link_libc = true;
 
     // BLAS backend: MKL (Windows/Linux), Accelerate (macOS)
     if (target.result.os.tag == .windows) {
@@ -121,31 +121,31 @@ pub fn build(b: *std.Build) void {
         const mkl_root = mkl_root_opt orelse "C:/PROGRA~2/Intel/oneAPI/mkl/latest";
         const mkl_inc = b.fmt("{s}/include", .{mkl_root});
         const mkl_lib = b.fmt("{s}/lib", .{mkl_root});
-        lib.addIncludePath(.{ .cwd_relative = mkl_inc });
-        lib.addLibraryPath(.{ .cwd_relative = mkl_lib });
-        lib.linkSystemLibrary("mkl_rt");
+        lib.root_module.addIncludePath(.{ .cwd_relative = mkl_inc });
+        lib.root_module.addLibraryPath(.{ .cwd_relative = mkl_lib });
+        lib.root_module.linkSystemLibrary("mkl_rt", .{});
     } else if (target.result.os.tag == .macos) {
         // macOS: Apple Accelerate framework (vDSP + BLAS)
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("accelerate.c"),
             .flags = &.{},
         });
-        lib.linkFramework("Accelerate");
+        lib.root_module.linkFramework("Accelerate", .{});
     } else {
         // Linux: Intel MKL (apt install intel-mkl)
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("cuda_gemm.c"),
             .flags = &.{"-DUSE_MKL_DIRECT"},
         });
 
         // cuSPARSELt for 2:4 structured sparsity
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("cuda_sparselt.c"),
             .flags = &.{},
         });
 
         // SageAttention CUDA kernels
-        lib.addCSourceFile(.{
+        lib.root_module.addCSourceFile(.{
             .file = b.path("cuda_sage.c"),
             .flags = &.{},
         });
@@ -156,19 +156,19 @@ pub fn build(b: *std.Build) void {
         const mkl_root = mkl_root_opt orelse "/opt/intel/oneapi/mkl/latest";
         const mkl_inc = b.fmt("{s}/include", .{mkl_root});
         const mkl_lib = b.fmt("{s}/lib", .{mkl_root});
-        lib.addIncludePath(.{ .cwd_relative = mkl_inc });
-        lib.addLibraryPath(.{ .cwd_relative = mkl_lib });
-        lib.addRPath(.{ .cwd_relative = mkl_lib });
-        lib.linkSystemLibrary("mkl_rt");
+        lib.root_module.addIncludePath(.{ .cwd_relative = mkl_inc });
+        lib.root_module.addLibraryPath(.{ .cwd_relative = mkl_lib });
+        lib.root_module.addRPath(.{ .cwd_relative = mkl_lib });
+        lib.root_module.linkSystemLibrary("mkl_rt", .{});
 
         // CUTLASS FP8 sparse GEMM (pre-compiled with nvcc)
-        lib.addObjectFile(.{ .cwd_relative = "libcutlass_fp8.a" });
+        lib.root_module.addObjectFile(.{ .cwd_relative = "libcutlass_fp8.a" });
 
         // cuSPARSELt INT8 2:4 sparse GEMM (needs libcusparseLt at runtime)
-        lib.addObjectFile(.{ .cwd_relative = "libcusparselt_int8.a" });
+        lib.root_module.addObjectFile(.{ .cwd_relative = "libcusparselt_int8.a" });
 
         // CUTLASS INT4 2:4 sparse GEMM
-        lib.addObjectFile(.{ .cwd_relative = "libcutlass_int4_sparse.a" });
+        lib.root_module.addObjectFile(.{ .cwd_relative = "libcutlass_int4_sparse.a" });
 
         // CUDA libraries: use standard system paths
         // cuSPARSELt: install via `pip install nvidia-cusparselt` then symlink to CUDA lib dir
@@ -183,17 +183,17 @@ pub fn build(b: *std.Build) void {
             "cusparselt_path",
             "Path to cuSPARSELt library directory",
         ) orelse "/opt/cusparselt/lib";
-        lib.addLibraryPath(.{ .cwd_relative = cuda_path });
-        lib.addRPath(.{ .cwd_relative = cuda_path });
-        lib.addLibraryPath(.{ .cwd_relative = cusparselt_path });
-        lib.addRPath(.{ .cwd_relative = cusparselt_path });
-        lib.linkSystemLibrary("cusparseLt");
-        lib.linkSystemLibrary("cudart");
-        lib.linkSystemLibrary("stdc++");
+        lib.root_module.addLibraryPath(.{ .cwd_relative = cuda_path });
+        lib.root_module.addRPath(.{ .cwd_relative = cuda_path });
+        lib.root_module.addLibraryPath(.{ .cwd_relative = cusparselt_path });
+        lib.root_module.addRPath(.{ .cwd_relative = cusparselt_path });
+        lib.root_module.linkSystemLibrary("cusparseLt", .{});
+        lib.root_module.linkSystemLibrary("cudart", .{});
+        lib.root_module.linkSystemLibrary("stdc++", .{});
 
         // dlopen for CUDA and cuSPARSELt
-        lib.linkSystemLibrary("dl");
-        lib.linkSystemLibrary("pthread");
+        lib.root_module.linkSystemLibrary("dl", .{});
+        lib.root_module.linkSystemLibrary("pthread", .{});
     }
 
     // Install the library
