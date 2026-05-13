@@ -19,6 +19,12 @@ pub fn stable_creation_and_layout_contract_test() {
   t.try_sum(tensor) |> should.equal(Ok(6.0))
   t.device(tensor) |> should.equal(layout.BeamCpu)
   t.dtype(tensor) |> should.equal(layout.Float64)
+  t.linspace(0.0, 1.0, 3) |> t.to_list() |> should.equal([0.0, 0.5, 1.0])
+
+  case t.try_logspace(1.0, 3.0, 3, 10.0) {
+    Ok(logs) -> t.to_list(logs) |> should.equal([10.0, 100.0, 1000.0])
+    Error(_) -> should.fail()
+  }
 
   case t.try_unsqueeze(tensor, 0) {
     Ok(batch) -> t.shape(batch) |> should.equal([1, 2, 3])
@@ -65,6 +71,11 @@ pub fn stable_fallible_unary_contract_test() {
     Ok(clamped) -> t.to_list(clamped) |> should.equal([0.0, 0.5, 1.0])
     Error(_) -> should.fail()
   }
+
+  t.is_close(1.0, 1.000001, 0.00001, 0.00001)
+  |> should.be_true()
+  t.all_close(tensor, tensor, 0.00001, 0.00001)
+  |> should.equal(Ok(True))
 
   t.try_max(tensor) |> should.equal(Ok(3.0))
   t.try_min(tensor) |> should.equal(Ok(1.0))

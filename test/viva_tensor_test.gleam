@@ -43,6 +43,26 @@ pub fn from_list_test() {
   t.to_list(v) |> should.equal([1.0, 2.0, 3.0])
 }
 
+pub fn linspace_test() {
+  let values = t.linspace(0.0, 1.0, 5) |> t.to_list()
+
+  values |> should.equal([0.0, 0.25, 0.5, 0.75, 1.0])
+}
+
+pub fn try_linspace_rejects_invalid_steps_test() {
+  t.try_linspace(0.0, 1.0, 0) |> should.be_error()
+}
+
+pub fn logspace_test() {
+  let values = t.logspace(1.0, 3.0, 3, 10.0) |> t.to_list()
+
+  values |> should.equal([10.0, 100.0, 1000.0])
+}
+
+pub fn try_logspace_rejects_invalid_base_test() {
+  t.try_logspace(1.0, 3.0, 3, 0.0) |> should.be_error()
+}
+
 pub fn try_to_list_test() {
   let v = t.from_list([1.0, 2.0, 3.0])
   t.try_to_list(v) |> should.equal(Ok([1.0, 2.0, 3.0]))
@@ -699,6 +719,27 @@ pub fn try_normalize_test() {
     }
     Error(_) -> should.fail()
   }
+}
+
+pub fn is_close_test() {
+  t.is_close(1.0, 1.000001, 0.00001, 0.00001)
+  |> should.be_true()
+}
+
+pub fn all_close_test() {
+  let a = t.from_list([1.0, 2.0, 3.0])
+  let b = t.from_list([1.0, 2.000001, 3.0])
+
+  t.all_close(a, b, 0.00001, 0.00001)
+  |> should.equal(Ok(True))
+}
+
+pub fn all_close_shape_mismatch_test() {
+  let a = t.from_list([1.0, 2.0])
+  let b = t.zeros([1, 2])
+
+  t.all_close(a, b, 0.00001, 0.00001)
+  |> should.be_error()
 }
 
 pub fn squeeze_test() {
