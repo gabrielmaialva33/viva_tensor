@@ -40,6 +40,10 @@ import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/metrics/classification as metrics_classification
 import viva_tensor/metrics/regression as metrics_regression
+import viva_tensor/models/bert as models_bert
+import viva_tensor/models/gpt as models_gpt
+import viva_tensor/models/llama as models_llama
+import viva_tensor/models/t5 as models_t5
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
@@ -4807,4 +4811,266 @@ pub fn expert_distribution(
   num_experts: Int,
 ) -> Result(#(Tensor, Tensor), TensorError) {
   nn_moe.expert_distribution(router_probs, expert_assignments, num_experts)
+}
+
+// --- Pre-baked transformer architectures (re-export) ------------------------
+
+/// Single block of a Llama-2 / Llama-3 decoder stack
+/// (RMSNorm + RoPE + causal MHA + SwiGLU FFN).
+pub type LlamaBlock =
+  models_llama.LlamaBlock
+
+/// Full Llama model (HF: `meta-llama/Llama-2-7b-hf`,
+/// `meta-llama/Meta-Llama-3-8B`).
+pub type LlamaModel =
+  models_llama.LlamaModel
+
+/// Build a zero-weight `LlamaBlock`.
+pub fn llama_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(LlamaBlock, TensorError) {
+  models_llama.llama_block_init(embed_dim, num_heads, ffn_hidden_dim)
+}
+
+/// Run a `LlamaBlock` on `[seq_len, embed_dim]` input.
+pub fn llama_block_forward(
+  block: LlamaBlock,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_llama.llama_block_forward(block, input)
+}
+
+/// Build a zero-weight `LlamaModel` with `num_layers` blocks.
+pub fn llama_model_init(
+  num_layers: Int,
+  vocab_size: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(LlamaModel, TensorError) {
+  models_llama.llama_model_init(
+    num_layers,
+    vocab_size,
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+  )
+}
+
+/// End-to-end Llama forward: 1D `token_ids` -> logits `[seq, vocab]`.
+pub fn llama_model_forward(
+  model: LlamaModel,
+  token_ids: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_llama.llama_model_forward(model, token_ids)
+}
+
+/// BERT input embedding (word + position + token_type + LayerNorm).
+pub type BertEmbedding =
+  models_bert.BertEmbedding
+
+/// Single BERT encoder block (LayerNorm + GELU FFN + bidirectional MHA).
+pub type BertBlock =
+  models_bert.BertBlock
+
+/// Full BERT model (HF: `bert-base-uncased`, `bert-base-cased`,
+/// `bert-large-uncased`).
+pub type BertModel =
+  models_bert.BertModel
+
+/// Build a zero-weight `BertEmbedding`.
+pub fn bert_embedding_init(
+  vocab_size: Int,
+  embed_dim: Int,
+  max_position: Int,
+  num_token_types: Int,
+) -> BertEmbedding {
+  models_bert.bert_embedding_init(
+    vocab_size,
+    embed_dim,
+    max_position,
+    num_token_types,
+  )
+}
+
+/// Run the BERT embedding layer.
+pub fn bert_embedding_forward(
+  layer: BertEmbedding,
+  token_ids: Tensor,
+  token_type_ids: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_bert.bert_embedding_forward(layer, token_ids, token_type_ids)
+}
+
+/// Build a zero-weight `BertBlock`.
+pub fn bert_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(BertBlock, TensorError) {
+  models_bert.bert_block_init(embed_dim, num_heads, ffn_hidden_dim)
+}
+
+/// Run a `BertBlock` on `[seq_len, embed_dim]` input.
+pub fn bert_block_forward(
+  block: BertBlock,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_bert.bert_block_forward(block, input)
+}
+
+/// Build a zero-weight `BertModel` with `num_layers` blocks.
+pub fn bert_model_init(
+  num_layers: Int,
+  vocab_size: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+  max_position: Int,
+) -> Result(BertModel, TensorError) {
+  models_bert.bert_model_init(
+    num_layers,
+    vocab_size,
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+    max_position,
+  )
+}
+
+/// End-to-end BERT forward: `token_ids`, `token_type_ids` -> hidden states.
+pub fn bert_model_forward(
+  model: BertModel,
+  token_ids: Tensor,
+  token_type_ids: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_bert.bert_model_forward(model, token_ids, token_type_ids)
+}
+
+/// Single GPT-2/3 block (pre-norm LayerNorm + GELU FFN + causal MHA).
+pub type GptBlock =
+  models_gpt.GptBlock
+
+/// Full GPT model (HF: `openai-community/gpt2`,
+/// `openai-community/gpt2-medium`).
+pub type GptModel =
+  models_gpt.GptModel
+
+/// Build a zero-weight `GptBlock`.
+pub fn gpt_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(GptBlock, TensorError) {
+  models_gpt.gpt_block_init(embed_dim, num_heads, ffn_hidden_dim)
+}
+
+/// Run a `GptBlock` on `[seq_len, embed_dim]` input.
+pub fn gpt_block_forward(
+  block: GptBlock,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_gpt.gpt_block_forward(block, input)
+}
+
+/// Build a zero-weight `GptModel`.
+pub fn gpt_model_init(
+  num_layers: Int,
+  vocab_size: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+  max_position: Int,
+) -> Result(GptModel, TensorError) {
+  models_gpt.gpt_model_init(
+    num_layers,
+    vocab_size,
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+    max_position,
+  )
+}
+
+/// End-to-end GPT forward: 1D `token_ids` -> logits `[seq, vocab]`.
+pub fn gpt_model_forward(
+  model: GptModel,
+  token_ids: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_gpt.gpt_model_forward(model, token_ids)
+}
+
+/// Single T5 block (RMSNorm + GeGLU FFN; encoder=non-causal,
+/// decoder=causal+cross-attn).
+pub type T5Block =
+  models_t5.T5Block
+
+/// Full T5 model (HF: `google-t5/t5-base`, `google/flan-t5-base`).
+pub type T5Model =
+  models_t5.T5Model
+
+/// Build a zero-weight T5 encoder block.
+pub fn t5_encoder_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(T5Block, TensorError) {
+  models_t5.t5_encoder_block_init(embed_dim, num_heads, ffn_hidden_dim)
+}
+
+/// Build a zero-weight T5 decoder block (causal self-attn + cross-attn).
+pub fn t5_decoder_block_init(
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(T5Block, TensorError) {
+  models_t5.t5_decoder_block_init(embed_dim, num_heads, ffn_hidden_dim)
+}
+
+/// Run a T5 encoder block on `[seq_len, embed_dim]` input.
+pub fn t5_encoder_block_forward(
+  block: T5Block,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_t5.t5_encoder_block_forward(block, input)
+}
+
+/// Run a T5 decoder block on `[seq_len, embed_dim]` input attending to
+/// `memory` (encoder output).
+pub fn t5_decoder_block_forward(
+  block: T5Block,
+  input: Tensor,
+  memory: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_t5.t5_decoder_block_forward(block, input, memory)
+}
+
+/// Build a zero-weight T5 model with `num_encoder_layers` + `num_decoder_layers`.
+pub fn t5_model_init(
+  num_encoder_layers: Int,
+  num_decoder_layers: Int,
+  vocab_size: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  ffn_hidden_dim: Int,
+) -> Result(T5Model, TensorError) {
+  models_t5.t5_model_init(
+    num_encoder_layers,
+    num_decoder_layers,
+    vocab_size,
+    embed_dim,
+    num_heads,
+    ffn_hidden_dim,
+  )
+}
+
+/// End-to-end T5 forward: `src_token_ids` + `tgt_token_ids` -> logits.
+pub fn t5_model_forward(
+  model: T5Model,
+  src_token_ids: Tensor,
+  tgt_token_ids: Tensor,
+) -> Result(Tensor, TensorError) {
+  models_t5.t5_model_forward(model, src_token_ids, tgt_token_ids)
 }

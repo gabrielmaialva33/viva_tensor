@@ -27,6 +27,8 @@ internal_modules = [
   "viva_tensor/io/*",
   "viva_tensor/metrics",
   "viva_tensor/metrics/*",
+  "viva_tensor/models",
+  "viva_tensor/models/*",
   "viva_tensor/native",
   "viva_tensor/native/*",
   "viva_tensor/nn/activations",
