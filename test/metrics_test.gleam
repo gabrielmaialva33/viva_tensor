@@ -51,8 +51,10 @@ pub fn try_error_percentile_test() {
   let original = tensor.from_list([1.0, 2.0, 3.0, 4.0])
   let quantized = tensor.from_list([1.0, 3.0, 5.0, 7.0])
 
-  metrics.try_error_percentile(original, quantized, 50.0)
-  |> should.equal(Ok(2.0))
+  case metrics.try_error_percentile(original, quantized, 50.0) {
+    Ok(value) -> assert_close(value, 1.5, 0.0000001)
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn try_outlier_percentage_test() {

@@ -11,6 +11,7 @@ import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
+import gleam_community/maths
 import viva_tensor/core/error.{DimensionError, InvalidShape, ShapeMismatch}
 import viva_tensor/tensor.{type Tensor, Tensor}
 
@@ -127,16 +128,9 @@ pub fn try_cosine_similarity(
   use pair <- result.try(metric_data(original, quantized))
   let #(orig, quant) = pair
 
-  let dot =
-    list.map2(orig, quant, fn(o, q) { o *. q })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-
-  use norm_orig <- result.try(vector_norm(orig))
-  use norm_quant <- result.try(vector_norm(quant))
-
-  case norm_orig >. 0.0 && norm_quant >. 0.0 {
-    True -> Ok(dot /. { norm_orig *. norm_quant })
-    False ->
+  case maths.cosine_similarity(list.zip(orig, quant)) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
       Error(DimensionError("Cosine similarity requires non-zero norm tensors"))
   }
 }
@@ -234,12 +228,8 @@ pub fn try_error_percentile(
     list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
     |> list.sort(float.compare)
 
-  let n = list.length(errors)
-  let idx = float.round(int.to_float(n) *. percentile /. 100.0)
-  let safe_idx = int.min(idx, n - 1) |> int.max(0)
-
-  case list.drop(errors, safe_idx) |> list.first {
-    Ok(v) -> Ok(v)
+  case maths.percentile(errors, float.round(percentile)) {
+    Ok(value) -> Ok(value)
     Error(_) ->
       Error(InvalidShape("Cannot compute percentile for empty tensors"))
   }
@@ -533,24 +523,9 @@ fn metric_data(
 }
 
 fn mean(values: List(Float)) -> Result(Float, tensor.TensorError) {
-  case values {
-    [] -> Error(InvalidShape("Cannot compute mean of an empty list"))
-    _ -> {
-      let total = list.fold(values, 0.0, fn(acc, value) { acc +. value })
-      Ok(total /. int.to_float(list.length(values)))
-    }
-  }
-}
-
-fn vector_norm(values: List(Float)) -> Result(Float, tensor.TensorError) {
-  let squared_sum =
-    values
-    |> list.map(fn(x) { x *. x })
-    |> list.fold(0.0, fn(acc, x) { acc +. x })
-
-  case float.square_root(squared_sum) {
-    Ok(norm) -> Ok(norm)
-    Error(_) -> Error(DimensionError("Cannot compute vector norm"))
+  case maths.mean(values) {
+    Ok(value) -> Ok(value)
+    Error(_) -> Error(InvalidShape("Cannot compute mean of an empty list"))
   }
 }
 
@@ -581,31 +556,8 @@ fn get_tensor_shape(t: Tensor) -> List(Int) {
 }
 
 fn log10(x: Float) -> Float {
-  // log10(x) = ln(x) / ln(10)
-  case x >. 0.0 {
-    True -> {
-      // Simple approximation
-      let ln_10 = 2.302585093
-      approximate_ln(x) /. ln_10
-    }
-    False -> 0.0
-  }
-}
-
-fn approximate_ln(x: Float) -> Float {
-  // ln(x) ≈ 2 * sum((y-1)/(y+1))^(2n+1) / (2n+1)
-  // where y = x
-  // Simplified for common range
-  case x {
-    v if v <. 0.001 -> -7.0
-    v if v <. 0.01 -> -4.6
-    v if v <. 0.1 -> -2.3
-    v if v <. 1.0 -> v -. 1.0
-    // Linear approximation near 1
-    v if v <. 10.0 -> { v -. 1.0 } /. v *. 2.0
-    v if v <. 100.0 -> 2.3 +. { v /. 10.0 -. 1.0 } /. { v /. 10.0 }
-    _ -> 4.6
-  }
+  maths.logarithm_10(x)
+  |> result.unwrap(0.0)
 }
 
 fn float_to_str(f: Float) -> String {
