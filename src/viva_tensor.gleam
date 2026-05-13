@@ -34,6 +34,7 @@ import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
+import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
@@ -2542,4 +2543,82 @@ pub fn step(
 /// Zero every gradient tensor, preserving shapes. See `viva_tensor/nn/optim.zero_grad`.
 pub fn zero_grad(grads: List(GradPair)) -> List(GradPair) {
   nn_optim.zero_grad(grads)
+}
+
+// --- Activations ------------------------------------------------------------
+//
+// Forward-only neural-network activations. See `viva_tensor/nn/activations`
+// for the implementations and formulas. All operate element-wise (or per
+// `axis` slice for softmax variants) and never mutate the input tensor.
+
+/// Sigmoid activation: `1 / (1 + exp(-x))`. Numerically stable for large
+/// negative inputs via `exp(x) / (1 + exp(x))`.
+pub fn sigmoid(t: Tensor) -> Tensor {
+  nn_activations.sigmoid(t)
+}
+
+/// Hyperbolic tangent activation. Output range `(-1, 1)`.
+pub fn tanh(t: Tensor) -> Tensor {
+  nn_activations.tanh(t)
+}
+
+/// Rectified Linear Unit: `max(0, x)`.
+pub fn relu(t: Tensor) -> Tensor {
+  nn_activations.relu(t)
+}
+
+/// Leaky ReLU: `x` if `x > 0` else `negative_slope * x`.
+pub fn leaky_relu(t: Tensor, negative_slope: Float) -> Tensor {
+  nn_activations.leaky_relu(t, negative_slope)
+}
+
+/// Exponential Linear Unit: `x` if `x > 0` else `alpha * (exp(x) - 1)`.
+pub fn elu(t: Tensor, alpha: Float) -> Tensor {
+  nn_activations.elu(t, alpha)
+}
+
+/// Scaled ELU with the canonical SELU constants from Klambauer et al. (2017).
+pub fn selu(t: Tensor) -> Tensor {
+  nn_activations.selu(t)
+}
+
+/// Gaussian Error Linear Unit: `0.5 * x * (1 + erf(x / sqrt(2)))`.
+/// Uses the exact `erf`-based formulation.
+pub fn gelu(t: Tensor) -> Tensor {
+  nn_activations.gelu(t)
+}
+
+/// Swish / SiLU: `x * sigmoid(x)`.
+pub fn swish(t: Tensor) -> Tensor {
+  nn_activations.swish(t)
+}
+
+/// Mish: `x * tanh(softplus(x))`.
+pub fn mish(t: Tensor) -> Tensor {
+  nn_activations.mish(t)
+}
+
+/// Softplus: `log(1 + exp(x))`, numerically stable.
+pub fn softplus(t: Tensor) -> Tensor {
+  nn_activations.softplus(t)
+}
+
+/// Softmax along `axis`: `exp(x - max) / sum(exp(x - max))`.
+pub fn softmax(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  nn_activations.softmax(t, axis)
+}
+
+/// Log-softmax along `axis`: `x - max - log(sum(exp(x - max)))`.
+pub fn log_softmax(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  nn_activations.log_softmax(t, axis)
+}
+
+/// HardSwish: `x * relu6(x + 3) / 6`.
+pub fn hardswish(t: Tensor) -> Tensor {
+  nn_activations.hardswish(t)
+}
+
+/// HardTanh: `clamp(x, min_val, max_val)`.
+pub fn hardtanh(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
+  nn_activations.hardtanh(t, min_val, max_val)
 }
