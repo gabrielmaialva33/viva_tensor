@@ -175,7 +175,7 @@ make build-all
 
 ### Requirements
 
-- Gleam 1.14.0+
+- Gleam 1.16.0+
 - OTP 27+
 - Zig 0.14+ (for NIF build)
 - Intel MKL (CPU BLAS)

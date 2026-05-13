@@ -7,7 +7,7 @@ on:
     branches: [ main ]
 
 env:
-  GLEAM_VERSION: "1.14.0"
+  GLEAM_VERSION: "1.16.0"
   OTP_VERSION: "28"
 
 jobs:

@@ -33,7 +33,7 @@ gleam deps download
 Run the lightweight checks before opening a pull request:
 
 ```sh
-gleam format --check src test
+gleam format --check src test dev
 gleam check
 gleam test
 gleam docs build

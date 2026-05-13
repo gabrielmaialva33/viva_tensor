@@ -10,7 +10,7 @@ links = [
   { title = "Paper", href = "https://github.com/gabrielmaialva33/viva_tensor/blob/main/docs/en/paper.md" },
 ]
 
-gleam = ">= 1.14.0"
+gleam = ">= 1.16.0"
 target = "erlang"
 internal_modules = [
   "viva_tensor/backend",

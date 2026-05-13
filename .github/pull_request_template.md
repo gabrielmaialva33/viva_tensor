@@ -21,7 +21,7 @@ Describe any public API changes:
 
 ## Validation
 
-- [ ] `gleam format --check src test`
+- [ ] `gleam format --check src test dev`
 - [ ] `gleam check`
 - [ ] `gleam test`
 - [ ] `gleam docs build`
