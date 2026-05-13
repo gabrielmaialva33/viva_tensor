@@ -287,3 +287,29 @@ pub fn stable_backend_planner_contract_test() {
   list.any(plan.fallbacks, fn(backend) { backend == t.BackendPureGleam })
   |> should.be_true()
 }
+
+pub fn stable_future_hardware_contract_test() {
+  let profiles = t.hardware_profiles()
+
+  list.any(profiles, fn(profile) {
+    profile.name == "Rubin R100"
+    && profile.available == False
+    && profile.preferred_micro_block == 16
+  })
+  |> should.be_true()
+
+  let nvfp4 = t.nvfp4_block_scaled_layout([16])
+  t.quant_layout_memory_bytes(nvfp4) |> should.equal(8)
+  t.quant_layout_is_rubin_native_candidate(nvfp4) |> should.be_true()
+
+  case t.try_hadamard_preprocess(t.from_list([1.0, 2.0]), 7) {
+    Ok(preprocessed) ->
+      case t.try_inverse_hadamard_preprocess(preprocessed) {
+        Ok(restored) ->
+          t.all_close(restored, t.from_list([1.0, 2.0]), 0.000001, 0.000001)
+          |> should.equal(Ok(True))
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
