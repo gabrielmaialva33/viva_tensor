@@ -457,7 +457,7 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
 pub fn get2d(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
   case shape(t) {
     [_rows, num_cols] -> get(t, row * num_cols + col)
-    _ -> Error(error.DimensionError("Tensor is not 2D"))
+    other -> Error(error.RankMismatch("get2d", 2, other))
   }
 }
 
@@ -478,7 +478,7 @@ pub fn get_row(t: Tensor, row_idx: Int) -> Result(Tensor, TensorError) {
         False -> Error(error.IndexOutOfBounds(row_idx, num_rows))
       }
     }
-    _ -> Error(error.DimensionError("Tensor is not 2D"))
+    other -> Error(error.RankMismatch("get_row", 2, other))
   }
 }
 
@@ -496,7 +496,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
         False -> Error(error.IndexOutOfBounds(col_idx, num_cols))
       }
     }
-    _ -> Error(error.DimensionError("Tensor is not 2D"))
+    other -> Error(error.RankMismatch("get_col", 2, other))
   }
 }
 
@@ -686,6 +686,7 @@ pub fn from_native_ref(ref: NativeTensorRef, shape: List(Int)) -> Tensor {
 pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
   case ffi.nt_zeros(shape) {
     Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(error.NifNotLoaded("native_zeros"))
     Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
   }
 }
@@ -694,6 +695,7 @@ pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
 pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
   case ffi.nt_ones(shape) {
     Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(error.NifNotLoaded("native_ones"))
     Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
   }
 }
@@ -705,6 +707,7 @@ pub fn native_fill(
 ) -> Result(Tensor, TensorError) {
   case ffi.nt_fill(shape, value) {
     Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(error.NifNotLoaded("native_fill"))
     Error(_) -> Error(error.InvalidShape("NIF resource allocation failed"))
   }
 }
@@ -716,6 +719,7 @@ pub fn native_from_list(
 ) -> Result(Tensor, TensorError) {
   case ffi.nt_from_list(data, shape) {
     Ok(ref) -> Ok(Native(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(error.NifNotLoaded("native_from_list"))
     Error(_) -> {
       let expected = compute_size(shape)
       let actual = list.length(data)
