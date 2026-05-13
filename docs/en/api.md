@@ -166,6 +166,15 @@ Broadcasting, squeeze, unsqueeze, and contiguous reshape preserve strided views
 where possible. Call `to_contiguous()` before a heavy native hot path if a view
 would be slower than a dense buffer.
 
+## Utilities
+
+| Function                | Description                                         |
+|:------------------------|:----------------------------------------------------|
+| `norm(tensor)`          | L2 norm.                                            |
+| `try_norm(tensor)`      | Fallible L2 norm preserving materialization errors. |
+| `normalize(tensor)`     | Normalize to unit length.                           |
+| `try_normalize(tensor)` | Fallible normalization preserving materialization errors. |
+
 ## Public Companion Modules
 
 | Module               | Purpose                                      |

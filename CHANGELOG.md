@@ -71,6 +71,9 @@ All notable changes to this project will be documented in this file.
   and `try_concat()`, and hardened `reshape()`, `concat_axis()`, and `slice()`
   to propagate materialization and indexing failures instead of filling with
   empty or zero-like defaults.
+- Added fallible `try_take_first()`, `try_take_last()`, `try_norm()`, and
+  `try_normalize()` helpers so utility operations can preserve materialization
+  failures while keeping the existing convenience API compatible.
 
 ### Highlights
 
