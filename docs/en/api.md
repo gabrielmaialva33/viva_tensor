@@ -101,9 +101,13 @@ Use broadcasting-specific functions when shapes differ.
 | `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
 | `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
 | `max(tensor)`                    | Maximum value.                                         |
+| `try_max(tensor)`                | Fallible maximum preserving materialization and empty-tensor errors. |
 | `min(tensor)`                    | Minimum value.                                         |
+| `try_min(tensor)`                | Fallible minimum preserving materialization and empty-tensor errors. |
 | `argmax(tensor)`                 | Flat index of the maximum value.                       |
+| `try_argmax(tensor)`             | Fallible flat index of the maximum value.              |
 | `argmin(tensor)`                 | Flat index of the minimum value.                       |
+| `try_argmin(tensor)`             | Fallible flat index of the minimum value.              |
 | `variance(tensor)`               | Variance over all elements.                            |
 | `std(tensor)`                    | Standard deviation over all elements.                  |
 

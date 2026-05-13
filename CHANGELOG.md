@@ -61,6 +61,9 @@ All notable changes to this project will be documented in this file.
 - Added `try_softmax_axis()` and routed public softmax-axis execution through a
   fallible implementation that preserves native materialization and slice
   indexing failures.
+- Added fallible `try_max()`, `try_min()`, `try_argmax()`, and `try_argmin()`
+  variants so empty tensors and native materialization failures are explicit
+  instead of collapsing to zero-like defaults.
 
 ### Highlights
 
