@@ -231,8 +231,10 @@ pub fn decompress(bt: BlackwellTensor) -> Tensor {
   // Truncate to the original number of elements
   let truncated = list.take(data, bt.num_elements)
 
-  let assert Ok(result) = tensor.new(truncated, bt.shape)
-  result
+  case tensor.new(truncated, bt.shape) {
+    Ok(result) -> result
+    Error(_) -> tensor.zeros(bt.shape)
+  }
 }
 
 /// Computes compression statistics

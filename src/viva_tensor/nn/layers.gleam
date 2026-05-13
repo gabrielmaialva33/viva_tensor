@@ -1,11 +1,8 @@
-//// Neural Network Layers - The Building Blocks of Deep Learning
-////
-//// "A neural network is just a differentiable program."
-////   — Yann LeCun (paraphrased, but he'd probably agree)
+//// Neural network layers.
 ////
 //// References:
 //// - Rumelhart, Hinton & Williams (1986). "Learning representations by
-////   back-propagating errors." Nature. THE paper that started it all.
+////   back-propagating errors." Nature.
 //// - Glorot & Bengio (2010). "Understanding the difficulty of training
 ////   deep feedforward neural networks." Xavier initialization lives here.
 //// - He et al. (2015). "Delving Deep into Rectifiers." Kaiming init for ReLU.

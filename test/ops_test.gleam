@@ -185,6 +185,23 @@ pub fn softmax_axis_large_logits_stays_stable_test() {
   |> should.be_true()
 }
 
+pub fn softmax_axis_middle_dimension_3d_test() {
+  let assert Ok(t) =
+    core_tensor.new([1.0, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0], [2, 2, 2])
+  let assert Ok(r) = ops.softmax_axis(t, 1)
+  let vals = core_tensor.to_list(r)
+
+  assert_list_close(
+    vals,
+    [
+      0.119203, 0.119203, 0.880797, 0.880797, 0.000000002, 0.000000002,
+      0.999999998, 0.999999998,
+    ],
+    0.0001,
+  )
+  |> should.be_true()
+}
+
 pub fn softmax_axis_invalid_axis_test() {
   let t = core_tensor.from_list([1.0, 2.0, 3.0])
   ops.softmax_axis(t, 1) |> should.be_error()
@@ -410,7 +427,16 @@ pub fn broadcast_to_test() {
     Ok(r) -> {
       core_tensor.shape(r) |> should.equal([2, 3])
       core_tensor.to_list(r) |> should.equal([1.0, 2.0, 3.0, 1.0, 2.0, 3.0])
+      core_tensor.is_contiguous(r) |> should.be_false()
     }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn broadcast_to_same_shape_reuses_contiguous_tensor_test() {
+  let t = core_tensor.from_list([1.0, 2.0, 3.0])
+  case ops.broadcast_to(t, [3]) {
+    Ok(r) -> core_tensor.is_contiguous(r) |> should.be_true()
     Error(_) -> should.fail()
   }
 }

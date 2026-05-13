@@ -34,13 +34,13 @@ jobs:
         run: gleam deps download
 
       - name: Check format
-        run: gleam format --check src test
+        run: gleam format --check src test dev
 
       - name: Build
         run: gleam build
 
-      - name: Test
-        run: gleam test
+      - name: Test without native NIF
+        run: make test-no-nif
 
   benchmark:
     name: Benchmark

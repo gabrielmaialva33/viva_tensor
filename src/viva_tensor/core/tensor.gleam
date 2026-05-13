@@ -1,16 +1,14 @@
-//// Core Tensor module - the heart of viva_tensor.
+//// Core Tensor module.
 ////
-//// Why opaque? Learned the hard way that letting users construct
-//// Tensor(data: [1,2,3], shape: [2,2]) leads to 3am debugging sessions.
-//// Algebraic data types are great until someone violates your invariants.
+//// The tensor type is opaque so callers cannot construct invalid values where
+//// the shape and data length disagree.
 ////
-//// The strided representation comes straight from how NumPy does it internally
-//// (see: https://numpy.org/doc/stable/reference/arrays.ndarray.html#internal-memory-layout)
-//// Basically: instead of copying data for transpose, just swap the strides.
-//// O(1) vs O(n). The kind of trick that makes you feel smart.
+//// The strided representation follows the same storage model used by ndarray
+//// libraries: views can share storage and reinterpret shape, strides, and
+//// offsets without copying element data.
 ////
-//// Fun fact: Erlang's :array module uses a tree structure (not contiguous memory),
-//// so our "O(1)" access is actually O(log32 n). Close enough for jazz.
+//// Erlang's `array` module is tree-backed rather than contiguous memory, so
+//// view access has different performance characteristics than native buffers.
 ////
 //// ```gleam
 //// let a = tensor.zeros([2, 3])
@@ -24,6 +22,7 @@ import gleam/list
 import gleam/result
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
+import viva_tensor/core/layout_math
 
 // --- Tensor Type -----------------------------------------------------------
 
@@ -306,6 +305,108 @@ pub fn cols(t: Tensor) -> Int {
   }
 }
 
+// --- Broadcasting ------------------------------------------------------------
+
+/// Check if two shapes can broadcast together using NumPy-style rules.
+pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
+  let #(longer, shorter) = case list.length(a) >= list.length(b) {
+    True -> #(a, b)
+    False -> #(b, a)
+  }
+
+  let diff = list.length(longer) - list.length(shorter)
+  let padded = list.append(list.repeat(1, diff), shorter)
+
+  list.zip(longer, padded)
+  |> list.all(fn(pair) {
+    let #(dim_a, dim_b) = pair
+    dim_a == dim_b || dim_a == 1 || dim_b == 1
+  })
+}
+
+/// Compute the output shape for broadcasting two shapes.
+pub fn broadcast_shape(
+  a: List(Int),
+  b: List(Int),
+) -> Result(List(Int), TensorError) {
+  case can_broadcast(a, b) {
+    False -> Error(error.BroadcastError(a, b))
+    True -> {
+      let max_rank = int.max(list.length(a), list.length(b))
+      let diff_a = max_rank - list.length(a)
+      let diff_b = max_rank - list.length(b)
+      let padded_a = list.append(list.repeat(1, diff_a), a)
+      let padded_b = list.append(list.repeat(1, diff_b), b)
+
+      let result_shape =
+        list.zip(padded_a, padded_b)
+        |> list.map(fn(pair) {
+          let #(dim_a, dim_b) = pair
+          int.max(dim_a, dim_b)
+        })
+
+      Ok(result_shape)
+    }
+  }
+}
+
+/// Broadcast a tensor to a target shape.
+///
+/// Dense and strided tensors return zero-stride views. Native tensors use the
+/// NIF broadcast view when available and fall back to dense materialization.
+pub fn broadcast_to(
+  t: Tensor,
+  target_shape: List(Int),
+) -> Result(Tensor, TensorError) {
+  let src_shape = shape(t)
+
+  case can_broadcast(src_shape, target_shape) {
+    False -> Error(error.BroadcastError(src_shape, target_shape))
+    True -> {
+      case src_shape == target_shape {
+        True -> Ok(t)
+        False ->
+          case t {
+            Dense(data, _) -> {
+              let storage = ffi.list_to_array(data)
+              let strides =
+                layout_math.broadcast_strides(
+                  src_shape,
+                  compute_strides(src_shape),
+                  target_shape,
+                )
+
+              Ok(Strided(
+                storage: storage,
+                shape: target_shape,
+                strides: strides,
+                offset: 0,
+              ))
+            }
+
+            Strided(storage, _, strides, offset) -> {
+              let view_strides =
+                layout_math.broadcast_strides(src_shape, strides, target_shape)
+
+              Ok(Strided(
+                storage: storage,
+                shape: target_shape,
+                strides: view_strides,
+                offset: offset,
+              ))
+            }
+
+            Native(ref, _) ->
+              case ffi.nt_broadcast_to(ref, target_shape) {
+                Ok(view_ref) -> Ok(Native(ref: view_ref, shape: target_shape))
+                Error(_) -> new(broadcast_data(t, target_shape), target_shape)
+              }
+          }
+      }
+    }
+  }
+}
+
 // --- Element Access ---------------------------------------------------------
 
 /// Get element by flat index. For strided tensors, computes the real offset.
@@ -480,43 +581,53 @@ pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
 // These don't need to be pretty, just correct.
 
 fn compute_size(shape: List(Int)) -> Int {
-  list.fold(shape, 1, fn(acc, dim) { acc * dim })
+  layout_math.size(shape)
 }
 
 fn compute_strides(shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(strides, _) =
-    list.fold(reversed, #([], 1), fn(acc, dim) {
-      let #(s, running) = acc
-      #([running, ..s], running * dim)
-    })
-  strides
+  layout_math.compute_strides(shape)
 }
 
 fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(indices, _) =
-    list.fold(reversed, #([], flat), fn(acc, dim) {
-      let #(idxs, remaining) = acc
-      let idx = remaining % dim
-      let next = remaining / dim
-      #([idx, ..idxs], next)
-    })
-  indices
+  layout_math.flat_to_multi(flat, shape)
 }
 
 fn list_at(lst: List(a), index: Int) -> Result(a, Nil) {
-  case index < 0 {
-    True -> Error(Nil)
-    False ->
-      lst
-      |> list.drop(index)
-      |> list.first
-  }
+  layout_math.at(lst, index)
 }
 
 fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
   list_at(lst, index)
+}
+
+fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
+  let target_size = compute_size(target_shape)
+  let src_shape = shape(t)
+  let src_rank = list.length(src_shape)
+  let target_rank = list.length(target_shape)
+  let data = to_list(t)
+
+  let diff = target_rank - src_rank
+  let padded_shape = list.append(list.repeat(1, diff), src_shape)
+
+  layout_math.indices(target_size)
+  |> list.map(fn(flat_idx) {
+    let target_indices = flat_to_multi(flat_idx, target_shape)
+
+    let src_indices =
+      list.zip(target_indices, padded_shape)
+      |> list.map(fn(pair) {
+        let #(idx, dim) = pair
+        case dim == 1 {
+          True -> 0
+          False -> idx
+        }
+      })
+      |> list.drop(diff)
+
+    let src_flat = layout_math.multi_to_flat(src_indices, src_shape)
+    layout_math.value_at(data, src_flat)
+  })
 }
 
 // --- Native Tensor API -------------------------------------------------------

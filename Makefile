@@ -43,6 +43,7 @@ endif
 # Directories
 SRC_DIR := src
 TEST_DIR := test
+DEV_DIR := dev
 OUTPUT_DIR := bench/reports
 DOCS_DIR := docs
 BUILD_DIR := build
@@ -101,6 +102,23 @@ test:
 	gleam test
 	@$(LOG) "$(GREEN)[OK]$(NC) Tests finished!"
 
+## Run tests with native NIF library temporarily hidden
+test-no-nif:
+	@$(LOG) "$(YELLOW)[TEST]$(NC) Running tests without native NIF..."
+ifeq ($(OS),Windows_NT)
+	@$(LOG) "$(YELLOW)[SKIP]$(NC) test-no-nif is only implemented for Unix shells."
+else
+	@set -e; \
+	tmp="/tmp/viva_tensor_zig.so.$$$$"; \
+	moved=0; \
+	restore() { if [ "$$moved" = "1" ] && [ -f "$$tmp" ]; then mkdir -p priv; mv "$$tmp" priv/viva_tensor_zig.so; fi; }; \
+	trap restore EXIT; \
+	if [ -f priv/viva_tensor_zig.so ]; then mv priv/viva_tensor_zig.so "$$tmp"; moved=1; fi; \
+	rm -f build/dev/erlang/viva_tensor/priv/viva_tensor_zig.so; \
+	gleam test
+endif
+	@$(LOG) "$(GREEN)[OK]$(NC) NIF-free tests finished!"
+
 ## Run benchmarks and save to output/
 bench: build ensure-output
 	@$(LOG) "$(YELLOW)[BENCH]$(NC) Running benchmarks..."
@@ -141,13 +159,13 @@ docs:
 ## Format code
 fmt:
 	@$(LOG) "$(YELLOW)[FMT]$(NC) Formatting code..."
-	gleam format $(SRC_DIR) $(TEST_DIR)
+	gleam format $(SRC_DIR) $(TEST_DIR) $(DEV_DIR)
 	@$(LOG) "$(GREEN)[OK]$(NC) Code formatted!"
 
 ## Check code formatting
 fmt-check:
 	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking code format..."
-	gleam format --check $(SRC_DIR) $(TEST_DIR)
+	gleam format --check $(SRC_DIR) $(TEST_DIR) $(DEV_DIR)
 	@$(LOG) "$(GREEN)[OK]$(NC) Code format OK!"
 
 ## Type check without building

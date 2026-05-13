@@ -4,6 +4,8 @@
 Implementation modules for native backends, quantization, sparse kernels,
 telemetry, benchmarking, and experimental neural-network helpers are kept
 internal until their contracts are stable.
+Development-only benchmark and example entrypoints live under `dev/` so they can
+be run locally without becoming part of the packaged library surface.
 
 ## Stable Imports
 

@@ -17,6 +17,7 @@ import gleam/list
 import gleam/result
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi
+import viva_tensor/core/layout_math
 import viva_tensor/core/tensor.{type Tensor}
 import viva_tensor/telemetry
 
@@ -818,36 +819,69 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
       let data = tensor.to_list(t)
       let total_size = tensor.size(t)
       let axis_size = dim_at(shp, axis)
+      let inner_size = layout_math.size(list.drop(shp, axis + 1))
 
-      let result =
-        indices(total_size)
-        |> list.map(fn(flat_idx) {
-          let position = flat_to_multi(flat_idx, shp)
-          let group = softmax_group(data, shp, position, axis, axis_size)
-          let axis_pos = dim_at(position, axis)
-          value_at(group, axis_pos)
-        })
-
-      tensor.new(result, shp)
+      case axis_size <= 0 {
+        True -> tensor.new([], shp)
+        False -> {
+          let result =
+            softmax_axis_data(data, total_size, axis_size, inner_size)
+          tensor.new(result, shp)
+        }
+      }
     }
   }
 }
 
-fn softmax_group(
+fn softmax_axis_data(
   data: List(Float),
-  shape: List(Int),
-  position: List(Int),
-  axis: Int,
+  total_size: Int,
   axis_size: Int,
+  inner_size: Int,
 ) -> List(Float) {
-  let values =
-    indices(axis_size)
-    |> list.map(fn(axis_pos) {
-      let group_position = replace_at(position, axis, axis_pos)
-      let flat_idx = multi_to_flat(group_position, shape)
-      value_at(data, flat_idx)
+  let group_width = axis_size * inner_size
+  let outer_size = total_size / group_width
+
+  indices(outer_size)
+  |> list.flat_map(fn(outer) {
+    softmax_axis_outer(data, outer, axis_size, inner_size)
+  })
+}
+
+fn softmax_axis_outer(
+  data: List(Float),
+  outer: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> List(Float) {
+  let groups =
+    indices(inner_size)
+    |> list.map(fn(inner) {
+      let values =
+        softmax_axis_values(data, outer, inner, axis_size, inner_size)
+      softmax_values(values)
     })
 
+  indices(axis_size)
+  |> list.flat_map(fn(axis_pos) {
+    list.map(groups, fn(group) { value_at(group, axis_pos) })
+  })
+}
+
+fn softmax_axis_values(
+  data: List(Float),
+  outer: Int,
+  inner: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> List(Float) {
+  let base = outer * axis_size * inner_size + inner
+
+  indices(axis_size)
+  |> list.map(fn(axis_pos) { value_at(data, base + axis_pos * inner_size) })
+}
+
+fn softmax_values(values: List(Float)) -> List(Float) {
   let max_value =
     list.fold(values, value_at(values, 0), fn(acc, value) {
       float.max(acc, value)
@@ -872,19 +906,7 @@ fn softmax_group(
 
 /// Check if shapes can broadcast together.
 pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
-  let #(longer, shorter) = case list.length(a) >= list.length(b) {
-    True -> #(a, b)
-    False -> #(b, a)
-  }
-
-  let diff = list.length(longer) - list.length(shorter)
-  let padded = list.append(list.repeat(1, diff), shorter)
-
-  list.zip(longer, padded)
-  |> list.all(fn(pair) {
-    let #(dim_a, dim_b) = pair
-    dim_a == dim_b || dim_a == 1 || dim_b == 1
-  })
+  tensor.can_broadcast(a, b)
 }
 
 /// Compute broadcast shape
@@ -892,25 +914,7 @@ pub fn broadcast_shape(
   a: List(Int),
   b: List(Int),
 ) -> Result(List(Int), TensorError) {
-  case can_broadcast(a, b) {
-    False -> Error(error.BroadcastError(a, b))
-    True -> {
-      let max_rank = int.max(list.length(a), list.length(b))
-      let diff_a = max_rank - list.length(a)
-      let diff_b = max_rank - list.length(b)
-      let padded_a = list.append(list.repeat(1, diff_a), a)
-      let padded_b = list.append(list.repeat(1, diff_b), b)
-
-      let result_shape =
-        list.zip(padded_a, padded_b)
-        |> list.map(fn(pair) {
-          let #(dim_a, dim_b) = pair
-          int.max(dim_a, dim_b)
-        })
-
-      Ok(result_shape)
-    }
-  }
+  tensor.broadcast_shape(a, b)
 }
 
 /// Element-wise addition with broadcasting
@@ -940,122 +944,17 @@ pub fn broadcast_to(
   t: Tensor,
   target_shape: List(Int),
 ) -> Result(Tensor, TensorError) {
-  let src_shape = tensor.shape(t)
-  case can_broadcast(src_shape, target_shape) {
-    False -> Error(error.BroadcastError(src_shape, target_shape))
-    True -> {
-      case src_shape == target_shape {
-        True -> Ok(t)
-        False -> {
-          let data = broadcast_data(t, target_shape)
-          tensor.new(data, target_shape)
-        }
-      }
-    }
-  }
-}
-
-fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
-  let target_size = list.fold(target_shape, 1, fn(acc, dim) { acc * dim })
-  let src_shape = tensor.shape(t)
-  let src_rank = list.length(src_shape)
-  let target_rank = list.length(target_shape)
-  let data = tensor.to_list(t)
-
-  let diff = target_rank - src_rank
-  let padded_shape = list.append(list.repeat(1, diff), src_shape)
-
-  list.range(0, target_size - 1)
-  |> list.map(fn(flat_idx) {
-    let target_indices = flat_to_multi(flat_idx, target_shape)
-
-    let src_indices =
-      list.zip(target_indices, padded_shape)
-      |> list.map(fn(pair) {
-        let #(idx, dim) = pair
-        case dim == 1 {
-          True -> 0
-          False -> idx
-        }
-      })
-      |> list.drop(diff)
-
-    let src_flat = multi_to_flat(src_indices, src_shape)
-    case list_at_float(data, src_flat) {
-      Ok(v) -> v
-      Error(_) -> 0.0
-    }
-  })
-}
-
-fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(indices, _) =
-    list.fold(reversed, #([], flat), fn(acc, dim) {
-      let #(idxs, remaining) = acc
-      let idx = remaining % dim
-      let next = remaining / dim
-      #([idx, ..idxs], next)
-    })
-  indices
-}
-
-fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
-  let strides = compute_strides(shape)
-  list.zip(indices, strides)
-  |> list.fold(0, fn(acc, pair) {
-    let #(idx, stride) = pair
-    acc + idx * stride
-  })
+  tensor.broadcast_to(t, target_shape)
 }
 
 fn dim_at(values: List(Int), index: Int) -> Int {
-  values
-  |> list.drop(index)
-  |> list.first
-  |> result.unwrap(0)
+  layout_math.dim_at(values, index)
 }
 
 fn value_at(values: List(Float), index: Int) -> Float {
-  values
-  |> list.drop(index)
-  |> list.first
-  |> result.unwrap(0.0)
-}
-
-fn replace_at(values: List(Int), index: Int, value: Int) -> List(Int) {
-  values
-  |> list.index_map(fn(item, i) {
-    case i == index {
-      True -> value
-      False -> item
-    }
-  })
+  layout_math.value_at(values, index)
 }
 
 fn indices(size: Int) -> List(Int) {
-  case size <= 0 {
-    True -> []
-    False -> list.range(0, size - 1)
-  }
-}
-
-fn compute_strides(shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(strides, _) =
-    list.fold(reversed, #([], 1), fn(acc, dim) {
-      let #(s, running) = acc
-      #([running, ..s], running * dim)
-    })
-  strides
-}
-
-fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
-  case index < 0 {
-    True -> Error(Nil)
-    False ->
-      lst
-      |> list.drop(index)
-      |> list.first
-  }
+  layout_math.indices(size)
 }

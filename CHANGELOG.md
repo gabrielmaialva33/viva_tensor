@@ -14,6 +14,13 @@ All notable changes to this project will be documented in this file.
   generated documentation.
 - Cleaned public module documentation comments to keep the library surface
   professional and focused.
+- Moved benchmark and example Gleam entrypoints from `src/` to `dev/` so the
+  packaged library source only contains runtime modules.
+- Added a `make test-no-nif` quality gate for CI-style validation when the
+  native shared library is unavailable.
+- Centralized row-major layout/indexing helpers in an internal
+  `viva_tensor/core/layout_math` module and optimized `softmax_axis` to
+  normalize each axis slice once.
 
 ### Highlights
 

@@ -55,11 +55,11 @@ gleam add viva_tensor
 
 ```mermaid
 graph TB
-    subgraph "Gleam Layer (44 modules, 67K lines)"
+    subgraph "Gleam Layer"
         A[viva_tensor API]
-        B[core/ - tensor, ops, shape, ffi]
-        C[quant/ - INT8, NF4, AWQ]
-        D[nn/ - autograd, layers, flash_attention]
+        B[src/ - packaged runtime modules]
+        C[dev/ - benchmarks and examples]
+        D[test/ - regression and behavior tests]
     end
 
     subgraph "Erlang Layer"
@@ -159,6 +159,9 @@ mindmap
 ```bash
 # Pure Gleam (no native deps)
 make build && make test
+
+# CI-style fallback check without the native NIF
+make test-no-nif
 
 # With NIF acceleration (Intel MKL + CUDA)
 make zig && make build

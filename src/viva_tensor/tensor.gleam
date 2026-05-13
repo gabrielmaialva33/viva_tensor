@@ -17,6 +17,7 @@ import viva_tensor/core/error.{
   BroadcastError, DimensionError, InvalidShape, ShapeMismatch,
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
+import viva_tensor/core/layout_math
 import viva_tensor/layout
 
 // --- Types ---
@@ -1864,45 +1865,19 @@ pub fn get2d_fast(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
 // --- Internal Helpers ---
 
 fn list_at_int(lst: List(Int), index: Int) -> Result(Int, Nil) {
-  case index < 0 {
-    True -> Error(Nil)
-    False ->
-      lst
-      |> list.drop(index)
-      |> list.first
-  }
+  layout_math.at(lst, index)
 }
 
 fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
-  case index < 0 {
-    True -> Error(Nil)
-    False ->
-      lst
-      |> list.drop(index)
-      |> list.first
-  }
+  layout_math.at(lst, index)
 }
 
 fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(indices, _) =
-    list.fold(reversed, #([], flat), fn(acc, dim) {
-      let #(idxs, remaining) = acc
-      let idx = remaining % dim
-      let next = remaining / dim
-      #([idx, ..idxs], next)
-    })
-  indices
+  layout_math.flat_to_multi(flat, shape)
 }
 
 fn compute_strides(shape: List(Int)) -> List(Int) {
-  let reversed = list.reverse(shape)
-  let #(strides, _) =
-    list.fold(reversed, #([], 1), fn(acc, dim) {
-      let #(s, running) = acc
-      #([running, ..s], running * dim)
-    })
-  strides
+  layout_math.compute_strides(shape)
 }
 
 fn broadcast_strides(
@@ -1910,18 +1885,7 @@ fn broadcast_strides(
   src_strides: List(Int),
   target_shape: List(Int),
 ) -> List(Int) {
-  let diff = list.length(target_shape) - list.length(src_shape)
-  let padded_shape = list.append(list.repeat(1, diff), src_shape)
-  let padded_strides = list.append(list.repeat(0, diff), src_strides)
-
-  list.zip(list.zip(padded_shape, target_shape), padded_strides)
-  |> list.map(fn(item) {
-    let #(#(src_dim, target_dim), stride) = item
-    case src_dim == target_dim {
-      True -> stride
-      False -> 0
-    }
-  })
+  layout_math.broadcast_strides(src_shape, src_strides, target_shape)
 }
 
 fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
@@ -1958,13 +1922,7 @@ fn broadcast_data(t: Tensor, target_shape: List(Int)) -> List(Float) {
 }
 
 fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
-  let strides = compute_strides(shape)
-
-  list.zip(indices, strides)
-  |> list.fold(0, fn(acc, pair) {
-    let #(idx, stride) = pair
-    acc + idx * stride
-  })
+  layout_math.multi_to_flat(indices, shape)
 }
 
 // --- Convolution & Pooling ---

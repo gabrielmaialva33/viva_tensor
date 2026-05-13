@@ -1,12 +1,7 @@
-//// Data types (dtype) for tensors using phantom types
+//// Data types (dtype) for tensors using phantom types.
 ////
-//// Phantom types: Haskell had them first (1999), but we make them useful.
-//// The idea is simple - types that exist only at compile time, never at runtime.
-//// Zero overhead, infinite type safety. What's not to love?
-////
-//// This prevents accidentally mixing tensors of different dtypes, which is
-//// exactly the kind of bug that wastes three hours of your life debugging
-//// why your model outputs NaN.
+//// Phantom types exist only at compile time. They let the type checker track
+//// tensor element types without adding runtime representation or allocation.
 ////
 //// ## Historical Context
 ////
@@ -18,28 +13,23 @@
 //// - Float16: Micikevicius et al. (2018) "Mixed Precision Training" proved you can
 ////   train with half precision and lose almost nothing. NVIDIA's V100 made it fast.
 ////
-//// - BFloat16: Google's TPU team said "screw mantissa precision, give me exponent range."
-////   Turns out they were right - for ML, dynamic range beats precision.
+//// - BFloat16: a 16-bit format with Float32-like exponent range and reduced
+////   mantissa precision, commonly used for ML training and inference.
 ////
 //// - INT8: Jacob et al. (2017) "Quantization and Training of Neural Networks for
 ////   Efficient Integer-Arithmetic-Only Inference" - 4x compression, <1% accuracy loss.
-////   The paper that launched a thousand edge deployments.
 ////
 //// - NF4: Dettmers et al. (2023) "QLoRA: Efficient Finetuning of Quantized LLMs" -
 ////   the insight that weight distributions are Gaussian, so quantize accordingly.
-////   This is why you can run a 65B model on a gaming GPU.
 ////
 //// - AWQ: Lin et al. (2023) "AWQ: Activation-aware Weight Quantization" -
-////   not all weights are equal, protect the ones that matter. Clever stuff.
+////   not all weights are equally important during quantization.
 ////
 //// ## Example
 //// ```gleam
 //// import viva_tensor/core/dtype
 ////
-//// // These types are never constructed - they're just markers
-//// let _: dtype.Float32 = panic  // Would fail
-////
-//// // Instead they're used as type parameters:
+//// // These types are used as type parameters:
 //// // Tensor(Float32) can only interact with Tensor(Float32)
 //// ```
 
@@ -66,10 +56,10 @@ pub type Float32
 /// Use for inference when you've validated your model doesn't overflow.
 pub type Float16
 
-/// 16-bit brain float - Google's gift to ML practitioners.
+/// 16-bit brain floating point.
 ///
 /// Same exponent range as Float32 (8 bits), but only 7 bits mantissa.
-/// Translation: same dynamic range, potato precision. Perfect for gradients.
+/// Same dynamic range as Float32 with reduced precision.
 ///
 /// Why it works: gradient descent is remarkably noise-tolerant.
 /// The accumulated weight updates average out the quantization noise.
