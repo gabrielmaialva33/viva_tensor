@@ -697,6 +697,11 @@ pub fn to_list(t: Tensor) -> List(Float) {
   tensor.to_list(t)
 }
 
+/// Convert to list, preserving native materialization failures.
+pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
+  tensor.try_to_list(t)
+}
+
 // --- Utils ------------------------------------------------------------------
 
 /// L2 norm (Euclidean length)

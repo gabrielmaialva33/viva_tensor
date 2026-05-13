@@ -12,6 +12,7 @@
 
 import gleam/int
 import gleam/list
+import gleam/result
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/tensor.{type Tensor}
 
@@ -24,7 +25,7 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
 
   case old_size == new_size {
     True -> {
-      let data = tensor.to_list(t)
+      use data <- result.try(tensor.try_to_list(t))
       tensor.new(data, new_shape)
     }
     False ->
@@ -149,7 +150,7 @@ pub fn slice(
   start: List(Int),
   lengths: List(Int),
 ) -> Result(Tensor, TensorError) {
-  let data = tensor.to_list(t)
+  use data <- result.try(tensor.try_to_list(t))
   let shp = tensor.shape(t)
   let r = tensor.rank(t)
 
@@ -159,15 +160,18 @@ pub fn slice(
     True -> {
       case r {
         1 -> {
-          // 1D slice
-          let s = case list.first(start) {
-            Ok(v) -> v
-            Error(_) -> 0
-          }
-          let len = case list.first(lengths) {
-            Ok(v) -> v
-            Error(_) -> 0
-          }
+          use s <- result.try(
+            list_at(start, 0)
+            |> result.map_error(fn(_) {
+              error.DimensionError("Slice start is missing")
+            }),
+          )
+          use len <- result.try(
+            list_at(lengths, 0)
+            |> result.map_error(fn(_) {
+              error.DimensionError("Slice length is missing")
+            }),
+          )
           let sliced = data |> list.drop(s) |> list.take(len)
           tensor.new(sliced, [len])
         }
@@ -175,19 +179,25 @@ pub fn slice(
           // Multi-dimensional slice
           let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
 
-          let result =
+          let result_data =
             list.range(0, new_size - 1)
-            |> list.map(fn(flat_idx) {
+            |> list.fold(Ok([]), fn(acc, flat_idx) {
+              use values <- result.try(acc)
               let local_indices = flat_to_multi(flat_idx, lengths)
               let global_indices =
                 list.map2(local_indices, start, fn(l, s) { l + s })
               let global_flat = multi_to_flat(global_indices, shp)
-              case list_at_float(data, global_flat) {
-                Ok(v) -> v
-                Error(_) -> 0.0
-              }
+              use value <- result.try(
+                list_at_float(data, global_flat)
+                |> result.map_error(fn(_) {
+                  error.IndexOutOfBounds(global_flat, list.length(data))
+                }),
+              )
+              Ok([value, ..values])
             })
 
+          use result_data <- result.try(result_data)
+          let result = list.reverse(result_data)
           tensor.new(result, lengths)
         }
       }
@@ -267,7 +277,7 @@ pub fn concat_axis(
               // For axis=0, just append all data
               case axis == 0 {
                 True -> {
-                  let data = list.flat_map(tensors, fn(t) { tensor.to_list(t) })
+                  use data <- result.try(concat_data(tensors))
                   tensor.new(data, new_shape)
                 }
                 False -> {
@@ -275,9 +285,10 @@ pub fn concat_axis(
                   let total_size =
                     list.fold(new_shape, 1, fn(acc, d) { acc * d })
 
-                  let result =
+                  let result_data =
                     list.range(0, total_size - 1)
-                    |> list.map(fn(flat_idx) {
+                    |> list.fold(Ok([]), fn(acc, flat_idx) {
+                      use values <- result.try(acc)
                       let indices = flat_to_multi(flat_idx, new_shape)
                       let axis_idx = case
                         list.drop(indices, axis) |> list.first
@@ -321,23 +332,16 @@ pub fn concat_axis(
                           }
                         })
 
-                      // Get value from correct tensor
-                      case list.drop(tensors, tensor_idx) |> list.first {
-                        Ok(t) -> {
-                          let t_strides = compute_strides(tensor.shape(t))
-                          let local_flat =
-                            list.zip(local_indices, t_strides)
-                            |> list.fold(0, fn(a, p) { a + p.0 * p.1 })
-                          let t_data = tensor.to_list(t)
-                          case list.drop(t_data, local_flat) |> list.first {
-                            Ok(v) -> v
-                            Error(_) -> 0.0
-                          }
-                        }
-                        Error(_) -> 0.0
-                      }
+                      use value <- result.try(concat_axis_value(
+                        tensors,
+                        tensor_idx,
+                        local_indices,
+                      ))
+                      Ok([value, ..values])
                     })
 
+                  use result_data <- result.try(result_data)
+                  let result = list.reverse(result_data)
                   tensor.new(result, new_shape)
                 }
               }
@@ -437,4 +441,38 @@ fn list_at(lst: List(a), index: Int) -> Result(a, Nil) {
 
 fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
   list_at(lst, index)
+}
+
+fn concat_data(tensors: List(Tensor)) -> Result(List(Float), TensorError) {
+  list.fold(tensors, Ok([]), fn(acc, t) {
+    use values <- result.try(acc)
+    use data <- result.try(tensor.try_to_list(t))
+    Ok(list.append(values, data))
+  })
+}
+
+fn concat_axis_value(
+  tensors: List(Tensor),
+  tensor_idx: Int,
+  local_indices: List(Int),
+) -> Result(Float, TensorError) {
+  use t <- result.try(
+    list_at(tensors, tensor_idx)
+    |> result.map_error(fn(_) {
+      error.DimensionError("Concat index does not map to a source tensor")
+    }),
+  )
+  use data <- result.try(tensor.try_to_list(t))
+  let strides = compute_strides(tensor.shape(t))
+  let local_flat =
+    list.zip(local_indices, strides)
+    |> list.fold(0, fn(acc, pair) {
+      let #(idx, stride) = pair
+      acc + idx * stride
+    })
+
+  list_at_float(data, local_flat)
+  |> result.map_error(fn(_) {
+    error.IndexOutOfBounds(local_flat, list.length(data))
+  })
 }

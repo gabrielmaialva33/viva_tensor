@@ -15,6 +15,7 @@ pub fn stable_creation_and_layout_contract_test() {
   t.size(tensor) |> should.equal(6)
   t.rank(tensor) |> should.equal(2)
   t.to_list(tensor) |> should.equal([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+  t.try_to_list(tensor) |> should.equal(Ok([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]))
   t.device(tensor) |> should.equal(layout.BeamCpu)
   t.dtype(tensor) |> should.equal(layout.Float64)
 }

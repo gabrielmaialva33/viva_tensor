@@ -8,7 +8,9 @@ Development-only benchmark and example entrypoints live under `dev/` so they can
 be run locally without becoming part of the packaged library surface.
 
 See [Stability Policy](stability.md) for the stable/experimental boundary and
-the compatibility expectations for root-module additions.
+the compatibility expectations for root-module additions. See
+[Project Structure](project-structure.md) for the package layout and module
+boundary rules.
 
 ## Stable Imports
 
@@ -128,6 +130,7 @@ let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
 | `reshape(tensor, shape)`  | Change shape while preserving element count.                     |
 | `device(tensor)`          | Payload device class.                                            |
 | `dtype(tensor)`           | Tensor element type.                                             |
+| `try_to_list(tensor)`     | Materialize tensor data while preserving native failures.        |
 | `flatten(tensor)`         | Convert to one dimension.                                        |
 | `squeeze(tensor)`         | Remove size-one dimensions.                                      |
 | `unsqueeze(tensor, axis)` | Insert a size-one dimension.                                     |

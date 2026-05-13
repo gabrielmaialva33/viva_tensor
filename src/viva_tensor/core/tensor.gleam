@@ -244,30 +244,44 @@ pub fn shape(t: Tensor) -> List(Int) {
   }
 }
 
-/// Get tensor data as list
-pub fn to_list(t: Tensor) -> List(Float) {
+/// Materialize tensor data as a list, preserving native download failures.
+pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
   case t {
-    Dense(data, _) -> data
+    Dense(data, _) -> Ok(data)
     Native(ref, _) ->
       case ffi.nt_to_list(ref) {
-        Ok(data) -> data
-        Error(_) -> []
+        Ok(data) -> Ok(data)
+        Error(reason) ->
+          Error(error.DimensionError(
+            "Native tensor materialization failed: " <> reason,
+          ))
       }
     Strided(storage, shp, strides, offset) -> {
       let total_size = compute_size(shp)
-      list.range(0, total_size - 1)
-      |> list.map(fn(flat_idx) {
-        let indices = flat_to_multi(flat_idx, shp)
-        let idx =
-          list.zip(indices, strides)
-          |> list.fold(offset, fn(acc, pair) {
-            let #(i, s) = pair
-            acc + i * s
-          })
-        ffi.array_get(storage, idx)
-      })
+      let data =
+        list.range(0, total_size - 1)
+        |> list.map(fn(flat_idx) {
+          let indices = flat_to_multi(flat_idx, shp)
+          let idx =
+            list.zip(indices, strides)
+            |> list.fold(offset, fn(acc, pair) {
+              let #(i, s) = pair
+              acc + i * s
+            })
+          ffi.array_get(storage, idx)
+        })
+      Ok(data)
     }
   }
+}
+
+/// Get tensor data as list.
+///
+/// Prefer `try_to_list` in fallible code paths so native materialization errors
+/// are not hidden.
+pub fn to_list(t: Tensor) -> List(Float) {
+  try_to_list(t)
+  |> result.unwrap([])
 }
 
 /// Total number of elements
@@ -417,11 +431,11 @@ pub fn get(t: Tensor, index: Int) -> Result(Float, TensorError) {
       |> result.map_error(fn(_) { error.IndexOutOfBounds(index, size(t)) })
 
     Native(ref, _) ->
-      case ffi.nt_to_list(ref) {
+      case try_to_list(Native(ref: ref, shape: shape(t))) {
         Ok(data) ->
           list_at_float(data, index)
           |> result.map_error(fn(_) { error.IndexOutOfBounds(index, size(t)) })
-        Error(_) -> Error(error.IndexOutOfBounds(index, 0))
+        Error(e) -> Error(e)
       }
 
     Strided(storage, shp, strides, offset) -> {

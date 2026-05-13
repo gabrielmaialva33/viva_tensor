@@ -44,6 +44,11 @@ All notable changes to this project will be documented in this file.
 - Added public `broadcast_shape()`, `broadcast_shapes()`, and `broadcast_pair()`
   helpers inspired by mature NumPy/PyTorch shape contracts, with shared
   zero-stride view planning for broadcast element-wise operations.
+- Added a project-structure guide based on current Gleam package conventions,
+  documenting the stable facade, internal modules, development-only code,
+  native FFI boundaries, and HexDocs pages.
+- Added `try_to_list()` and routed fallible dense fallback paths through it so
+  native materialization failures are not silently converted into empty tensors.
 
 ### Highlights
 

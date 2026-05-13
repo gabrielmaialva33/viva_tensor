@@ -43,6 +43,11 @@ pub fn from_list_test() {
   t.to_list(v) |> should.equal([1.0, 2.0, 3.0])
 }
 
+pub fn try_to_list_test() {
+  let v = t.from_list([1.0, 2.0, 3.0])
+  t.try_to_list(v) |> should.equal(Ok([1.0, 2.0, 3.0]))
+}
+
 pub fn vector_test() {
   let v = t.vector([1.0, 2.0])
   t.rank(v) |> should.equal(1)

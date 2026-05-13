@@ -201,31 +201,45 @@ pub fn shape(t: Tensor) -> List(Int) {
   }
 }
 
-/// Extract data as list from any tensor variant
-pub fn get_data(t: Tensor) -> List(Float) {
+/// Extract data as a list, preserving materialization failures.
+pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
   case t {
-    Tensor(data, _) -> data
+    Tensor(data, _) -> Ok(data)
     NativeTensor(ref, _) -> {
       case ffi.nt_to_list(ref) {
-        Ok(data) -> data
-        Error(_) -> []
+        Ok(data) -> Ok(data)
+        Error(reason) ->
+          Error(DimensionError(
+            "Native tensor materialization failed: " <> reason,
+          ))
       }
     }
     StridedTensor(storage, shape, strides, offset) -> {
       let total_size = list.fold(shape, 1, fn(acc, dim) { acc * dim })
-      list.range(0, total_size - 1)
-      |> list.map(fn(flat_idx) {
-        let indices = flat_to_multi(flat_idx, shape)
-        let idx =
-          list.zip(indices, strides)
-          |> list.fold(offset, fn(acc, pair) {
-            let #(i, s) = pair
-            acc + i * s
-          })
-        ffi.array_get(storage, idx)
-      })
+      let data =
+        list.range(0, total_size - 1)
+        |> list.map(fn(flat_idx) {
+          let indices = flat_to_multi(flat_idx, shape)
+          let idx =
+            list.zip(indices, strides)
+            |> list.fold(offset, fn(acc, pair) {
+              let #(i, s) = pair
+              acc + i * s
+            })
+          ffi.array_get(storage, idx)
+        })
+      Ok(data)
     }
   }
+}
+
+/// Extract data as list from any tensor variant.
+///
+/// Prefer `try_to_list` in fallible code paths so native materialization errors
+/// are not hidden.
+pub fn get_data(t: Tensor) -> List(Float) {
+  try_to_list(t)
+  |> result.unwrap([])
 }
 
 /// Total number of elements
@@ -683,8 +697,8 @@ fn materialized_elementwise(
   b: Tensor,
   f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
-  let a_data = get_data(a)
-  let b_data = get_data(b)
+  use a_data <- result.try(try_to_list(a))
+  use b_data <- result.try(try_to_list(b))
   let data = list.map2(a_data, b_data, f)
   Ok(Tensor(data: data, shape: a.shape))
 }
@@ -1084,8 +1098,8 @@ pub fn dot(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 }
 
 fn dot_dense(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
-  let a_data = get_data(a)
-  let b_data = get_data(b)
+  use a_data <- result.try(try_to_list(a))
+  use b_data <- result.try(try_to_list(b))
   let products = list.map2(a_data, b_data, fn(x, y) { x *. y })
   Ok(list.fold(products, 0.0, fn(acc, x) { acc +. x }))
 }
@@ -1095,8 +1109,8 @@ fn dot_dense(a: Tensor, b: Tensor) -> Result(Float, TensorError) {
 pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
   case mat.shape, vec.shape {
     [m, n], [vec_n] if n == vec_n -> {
-      let mat_data = get_data(mat)
-      let vec_data = get_data(vec)
+      use mat_data <- result.try(try_to_list(mat))
+      use vec_data <- result.try(try_to_list(vec))
       let result_data =
         list.range(0, m - 1)
         |> list.map(fn(row_idx) {
@@ -1144,6 +1158,11 @@ fn matmul_dense(
   n: Int,
   p: Int,
 ) -> Result(Tensor, TensorError) {
+  use a_data <- result.try(try_to_list(a))
+  use b_data <- result.try(try_to_list(b))
+  let a_array = ffi.list_to_array(a_data)
+  let b_array = ffi.list_to_array(b_data)
+
   let result_data =
     list.range(0, m - 1)
     |> list.flat_map(fn(i) {
@@ -1151,14 +1170,8 @@ fn matmul_dense(
       |> list.map(fn(j) {
         list.range(0, n - 1)
         |> list.fold(0.0, fn(acc, k) {
-          let a_ik = case get2d(a, i, k) {
-            Ok(v) -> v
-            Error(_) -> 0.0
-          }
-          let b_kj = case get2d(b, k, j) {
-            Ok(v) -> v
-            Error(_) -> 0.0
-          }
+          let a_ik = ffi.array_get(a_array, i * n + k)
+          let b_kj = ffi.array_get(b_array, k * p + j)
           acc +. a_ik *. b_kj
         })
       })
@@ -1201,8 +1214,8 @@ pub fn outer(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
     True -> {
       let m = size(a)
       let n = size(b)
-      let a_data = get_data(a)
-      let b_data = get_data(b)
+      use a_data <- result.try(try_to_list(a))
+      use b_data <- result.try(try_to_list(b))
       let result_data =
         list.flat_map(a_data, fn(ai) { list.map(b_data, fn(bj) { ai *. bj }) })
       Ok(Tensor(data: result_data, shape: [m, n]))
@@ -1222,7 +1235,7 @@ pub fn to_list(t: Tensor) -> List(Float) {
 pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
   case t.shape {
     [num_rows, num_cols] -> {
-      let data = get_data(t)
+      use data <- result.try(try_to_list(t))
       let rows_list =
         list.range(0, num_rows - 1)
         |> list.map(fn(i) {
