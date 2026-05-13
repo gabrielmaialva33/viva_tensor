@@ -654,6 +654,64 @@ pub fn native_add_into_accepts_broadcast_views_test() {
   }
 }
 
+pub fn native_maximum_minimum_use_native_path_test() {
+  case
+    tensor.native_from_list([1.0, 5.0, -2.0], [3]),
+    tensor.native_from_list([2.0, 4.0, -3.0], [3])
+  {
+    Ok(a), Ok(b) -> {
+      let assert Ok(max_result) = tensor.maximum(a, b)
+      tensor.is_native(max_result) |> should.be_true()
+      tensor.to_list(max_result) |> should.equal([2.0, 5.0, -2.0])
+
+      let assert Ok(min_result) = tensor.minimum(a, b)
+      tensor.is_native(min_result) |> should.be_true()
+      tensor.to_list(min_result) |> should.equal([1.0, 4.0, -3.0])
+    }
+    _, _ -> should.be_true(True)
+  }
+}
+
+pub fn native_comparison_and_logical_ops_use_native_path_test() {
+  case
+    tensor.native_from_list([1.0, 2.0, 3.0], [3]),
+    tensor.native_from_list([2.0, 2.0, 1.0], [3]),
+    tensor.native_from_list([1.0], [1])
+  {
+    Ok(a), Ok(b), Ok(mask_one) -> {
+      let assert Ok(greater) = tensor.greater(a, b)
+      tensor.is_native(greater) |> should.be_true()
+      tensor.to_list(greater) |> should.equal([0.0, 0.0, 1.0])
+
+      let assert Ok(broadcast_mask) = tensor.broadcast_to(mask_one, [3])
+      let assert Ok(logical) = tensor.logical_and(greater, broadcast_mask)
+      tensor.is_native(logical) |> should.be_true()
+      tensor.to_list(logical) |> should.equal([0.0, 0.0, 1.0])
+    }
+    _, _, _ -> should.be_true(True)
+  }
+}
+
+pub fn native_where_and_count_nonzero_use_native_path_test() {
+  case
+    tensor.native_from_list([0.0, 1.0, 0.0, 1.0], [4]),
+    tensor.native_from_list([10.0], [1]),
+    tensor.native_from_list([1.0, 2.0, 3.0, 4.0], [4])
+  {
+    Ok(condition), Ok(when_true), Ok(when_false) -> {
+      let assert Ok(selected) = tensor.where(condition, when_true, when_false)
+      tensor.is_native(selected) |> should.be_true()
+      tensor.to_list(selected) |> should.equal([1.0, 10.0, 3.0, 10.0])
+
+      let assert Ok(count) = tensor.try_count_nonzero(selected)
+      count |> should.equal(4)
+      tensor.any(selected) |> should.be_true()
+      tensor.all(selected) |> should.be_true()
+    }
+    _, _, _ -> should.be_true(True)
+  }
+}
+
 pub fn native_matmul_into_test() {
   case
     tensor.native_from_list([1.0, 2.0, 3.0, 4.0], [2, 2]),
