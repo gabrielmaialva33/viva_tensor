@@ -29,6 +29,7 @@ import viva_tensor/backend/dispatch as backend_dispatch
 import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/format as tensor_format
+import viva_tensor/core/linalg
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
@@ -975,6 +976,51 @@ pub fn einsum(
   operands: List(Tensor),
 ) -> Result(Tensor, TensorError) {
   tensor.einsum(equation, operands)
+}
+
+// --- Linear Algebra ---------------------------------------------------------
+// Pure-Gleam linear algebra primitives. See `viva_tensor/core/linalg`.
+
+/// Solve `A x = b` for a square `A` using Gaussian elimination with partial
+/// pivoting. `b` may be 1D or 2D.
+pub fn solve(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  linalg.solve(a, b)
+}
+
+/// Matrix inverse via `solve(a, identity)`. Errors when `a` is singular.
+pub fn inv(a: Tensor) -> Result(Tensor, TensorError) {
+  linalg.inv(a)
+}
+
+/// Determinant via LU decomposition. Returns 0.0 for singular matrices.
+pub fn det(a: Tensor) -> Result(Float, TensorError) {
+  linalg.det(a)
+}
+
+/// LU decomposition with partial pivoting. Returns `#(L, U, perm)`.
+pub fn lu(a: Tensor) -> Result(#(Tensor, Tensor, List(Int)), TensorError) {
+  linalg.lu(a)
+}
+
+/// Cholesky decomposition for symmetric positive-definite matrices.
+/// Returns lower-triangular `L` with `A = L @ L^T`.
+pub fn cholesky(a: Tensor) -> Result(Tensor, TensorError) {
+  linalg.cholesky(a)
+}
+
+/// QR decomposition via classical Gram-Schmidt. Returns `#(Q, R)`.
+pub fn qr(a: Tensor) -> Result(#(Tensor, Tensor), TensorError) {
+  linalg.qr(a)
+}
+
+/// SVD stub (not implemented in v1).
+pub fn svd(a: Tensor) -> Result(#(Tensor, Tensor, Tensor), TensorError) {
+  linalg.svd(a)
+}
+
+/// Eigendecomposition stub (not implemented in v1).
+pub fn eig(a: Tensor) -> Result(#(Tensor, Tensor), TensorError) {
+  linalg.eig(a)
 }
 
 // --- Shape Ops --------------------------------------------------------------

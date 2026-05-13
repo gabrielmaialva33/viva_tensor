@@ -123,6 +123,36 @@ fn close(actual: Float, expected: Float, rtol: Float, atol: Float) -> Bool {
   diff <=. bound
 }
 
+/// Boolean variant: returns `True` when `actual` is close to `expected`
+/// under the same `|a - b| <= atol + rtol * |b|` rule. Cheaper than
+/// `assert_close` for tests that branch on the result.
+pub fn floats_close(
+  actual: Float,
+  expected: Float,
+  rtol: Float,
+  atol: Float,
+) -> Bool {
+  close(actual, expected, rtol, atol)
+}
+
+/// Pairwise `floats_close` over two lists. `False` if lengths differ.
+pub fn lists_close(
+  actual: List(Float),
+  expected: List(Float),
+  rtol: Float,
+  atol: Float,
+) -> Bool {
+  case list.length(actual) == list.length(expected) {
+    False -> False
+    True ->
+      list.zip(actual, expected)
+      |> list.all(fn(pair) {
+        let #(a, b) = pair
+        close(a, b, rtol, atol)
+      })
+  }
+}
+
 fn shape_to_string(shape: List(Int)) -> String {
   "[" <> string.join(list.map(shape, int.to_string), ", ") <> "]"
 }
