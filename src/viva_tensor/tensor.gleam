@@ -875,6 +875,30 @@ pub fn product(t: Tensor) -> Float {
   |> result.unwrap(1.0)
 }
 
+/// Cumulative sum over the flattened tensor, preserving the original shape.
+pub fn try_cumsum(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(Tensor(data: maths.cumulative_sum(data), shape: shape(t)))
+}
+
+/// Cumulative sum over the flattened tensor, preserving the original shape.
+pub fn cumsum(t: Tensor) -> Tensor {
+  try_cumsum(t)
+  |> result.unwrap(from_list([]))
+}
+
+/// Cumulative product over the flattened tensor, preserving the original shape.
+pub fn try_cumprod(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(Tensor(data: maths.cumulative_product(data), shape: shape(t)))
+}
+
+/// Cumulative product over the flattened tensor, preserving the original shape.
+pub fn cumprod(t: Tensor) -> Tensor {
+  try_cumprod(t)
+  |> result.unwrap(from_list([]))
+}
+
 /// Mean: E[X] = (1/n) * sum(x_i), preserving empty-tensor and materialization errors.
 pub fn try_mean(t: Tensor) -> Result(Float, TensorError) {
   use total <- result.try(try_sum(t))
@@ -891,21 +915,52 @@ pub fn mean(t: Tensor) -> Float {
   |> result.unwrap(0.0)
 }
 
+/// Median value, preserving empty-tensor and materialization errors.
+pub fn try_median(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
+  case maths.median(data) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(DimensionError("Cannot compute median of an empty tensor"))
+  }
+}
+
+/// Median value.
+pub fn median(t: Tensor) -> Float {
+  try_median(t)
+  |> result.unwrap(0.0)
+}
+
+/// Percentile using linear interpolation between closest ranks.
+pub fn try_percentile(
+  t: Tensor,
+  percentile: Int,
+) -> Result(Float, TensorError) {
+  case percentile < 0 || percentile > 100 {
+    True -> Error(InvalidShape("percentile must be between 0 and 100"))
+    False -> {
+      use data <- result.try(try_to_list(t))
+      case maths.percentile(data, percentile) {
+        Ok(value) -> Ok(value)
+        Error(_) ->
+          Error(DimensionError("Cannot compute percentile of an empty tensor"))
+      }
+    }
+  }
+}
+
+/// Percentile using linear interpolation between closest ranks.
+pub fn percentile(t: Tensor, percentile: Int) -> Float {
+  try_percentile(t, percentile)
+  |> result.unwrap(0.0)
+}
+
 fn variance_dense(t: Tensor) -> Result(Float, TensorError) {
   use data <- result.try(try_to_list(t))
-  use m <- result.try(try_mean(t))
-  let n = int.to_float(list.length(data))
-  case n >. 0.0 {
-    False -> Error(DimensionError("Cannot compute variance of an empty tensor"))
-    True -> {
-      let squared_diffs =
-        list.map(data, fn(x) {
-          let diff = x -. m
-          diff *. diff
-        })
-
-      Ok(list.fold(squared_diffs, 0.0, fn(acc, x) { acc +. x }) /. n)
-    }
+  case maths.variance(data, 0) {
+    Ok(value) -> Ok(value)
+    Error(_) ->
+      Error(DimensionError("Cannot compute variance of an empty tensor"))
   }
 }
 

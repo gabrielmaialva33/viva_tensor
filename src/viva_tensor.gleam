@@ -469,6 +469,49 @@ pub fn try_product(t: Tensor) -> Result(Float, TensorError) {
   tensor.try_product(t)
 }
 
+/// Cumulative sum over the flattened tensor, preserving the original shape.
+pub fn cumsum(t: Tensor) -> Tensor {
+  tensor.cumsum(t)
+}
+
+/// Cumulative sum over the flattened tensor, preserving materialization failures.
+pub fn try_cumsum(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_cumsum(t)
+}
+
+/// Cumulative product over the flattened tensor, preserving the original shape.
+pub fn cumprod(t: Tensor) -> Tensor {
+  tensor.cumprod(t)
+}
+
+/// Cumulative product over the flattened tensor, preserving materialization failures.
+pub fn try_cumprod(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_cumprod(t)
+}
+
+/// Median value.
+pub fn median(t: Tensor) -> Float {
+  tensor.median(t)
+}
+
+/// Median value, preserving materialization and empty-tensor errors.
+pub fn try_median(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_median(t)
+}
+
+/// Percentile using linear interpolation between closest ranks.
+pub fn percentile(t: Tensor, percentile: Int) -> Float {
+  tensor.percentile(t, percentile)
+}
+
+/// Percentile using linear interpolation between closest ranks.
+pub fn try_percentile(
+  t: Tensor,
+  percentile: Int,
+) -> Result(Float, TensorError) {
+  tensor.try_percentile(t, percentile)
+}
+
 /// Sum along one axis.
 pub fn sum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   tensor.sum_axis(t, axis)
