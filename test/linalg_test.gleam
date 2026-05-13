@@ -1,6 +1,8 @@
 import gleam/list
 import gleeunit/should
-import support/numerics.{floats_close as assert_close, lists_close as assert_lists_close}
+import support/numerics.{
+  floats_close as assert_close, lists_close as assert_lists_close,
+}
 import viva_tensor as t
 import viva_tensor/core/error
 import viva_tensor/core/linalg
@@ -33,11 +35,7 @@ pub fn solve_3x3_test() {
   // -2x +  y + 2z = -3
   // Solution: x = 2, y = 3, z = -1
   let assert Ok(a) =
-    tensor.matrix(3, 3, [
-      2.0, 1.0, -1.0,
-      -3.0, -1.0, 2.0,
-      -2.0, 1.0, 2.0,
-    ])
+    tensor.matrix(3, 3, [2.0, 1.0, -1.0, -3.0, -1.0, 2.0, -2.0, 1.0, 2.0])
   let b = tensor.from_list([8.0, -11.0, -3.0])
   let assert Ok(x) = linalg.solve(a, b)
 
@@ -87,11 +85,7 @@ pub fn inv_2x2_test() {
 
 pub fn inv_3x3_test() {
   let assert Ok(a) =
-    tensor.matrix(3, 3, [
-      1.0, 2.0, 3.0,
-      0.0, 1.0, 4.0,
-      5.0, 6.0, 0.0,
-    ])
+    tensor.matrix(3, 3, [1.0, 2.0, 3.0, 0.0, 1.0, 4.0, 5.0, 6.0, 0.0])
   let assert Ok(ai) = linalg.inv(a)
   let assert Ok(prod) = t.matmul(a, ai)
   let expected = [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0]
@@ -127,11 +121,7 @@ pub fn det_3x3_test() {
   //     = 6*(-14 - 40) - (28 - 10) + (32 + 4)
   //     = 6*(-54) - 18 + 36 = -324 - 18 + 36 = -306
   let assert Ok(a) =
-    tensor.matrix(3, 3, [
-      6.0, 1.0, 1.0,
-      4.0, -2.0, 5.0,
-      2.0, 8.0, 7.0,
-    ])
+    tensor.matrix(3, 3, [6.0, 1.0, 1.0, 4.0, -2.0, 5.0, 2.0, 8.0, 7.0])
   let assert Ok(d) = linalg.det(a)
   assert_close(d, -306.0, rtol, atol) |> should.be_true
 }
@@ -148,11 +138,7 @@ pub fn det_singular_returns_zero_test() {
 
 pub fn lu_decomposition_test() {
   let assert Ok(a) =
-    tensor.matrix(3, 3, [
-      2.0, -1.0, -2.0,
-      -4.0, 6.0, 3.0,
-      -4.0, -2.0, 8.0,
-    ])
+    tensor.matrix(3, 3, [2.0, -1.0, -2.0, -4.0, 6.0, 3.0, -4.0, -2.0, 8.0])
   let assert Ok(#(l, u, perm)) = linalg.lu(a)
 
   tensor.shape(l) |> should.equal([3, 3])
@@ -191,11 +177,7 @@ pub fn cholesky_3x3_test() {
   // Classic example: A = [[25, 15, -5], [15, 18, 0], [-5, 0, 11]]
   // L = [[5, 0, 0], [3, 3, 0], [-1, 1, 3]]
   let assert Ok(a) =
-    tensor.matrix(3, 3, [
-      25.0, 15.0, -5.0,
-      15.0, 18.0, 0.0,
-      -5.0, 0.0, 11.0,
-    ])
+    tensor.matrix(3, 3, [25.0, 15.0, -5.0, 15.0, 18.0, 0.0, -5.0, 0.0, 11.0])
   let assert Ok(l) = linalg.cholesky(a)
   let expected = [5.0, 0.0, 0.0, 3.0, 3.0, 0.0, -1.0, 1.0, 3.0]
   assert_lists_close(tensor.to_list(l), expected, rtol, atol)
@@ -241,10 +223,7 @@ pub fn qr_3x4_test() {
   // columns. To keep this stable, use a 4x3 matrix instead (m >= n).
   let assert Ok(a) =
     tensor.matrix(4, 3, [
-      1.0, -1.0, 4.0,
-      1.0, 4.0, -2.0,
-      1.0, 4.0, 2.0,
-      1.0, -1.0, 0.0,
+      1.0, -1.0, 4.0, 1.0, 4.0, -2.0, 1.0, 4.0, 2.0, 1.0, -1.0, 0.0,
     ])
   let assert Ok(#(q, r)) = linalg.qr(a)
 

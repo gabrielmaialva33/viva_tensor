@@ -54,8 +54,7 @@ pub fn solve(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use #(n, a_rows) <- result.try(square_matrix_rows(a))
   use #(b_rows, nrhs, b_is_vector) <- result.try(rhs_rows(b, n))
   case b_rows == n {
-    False ->
-      Error(ShapeMismatch(expected: [n, nrhs], got: [b_rows, nrhs]))
+    False -> Error(ShapeMismatch(expected: [n, nrhs], got: [b_rows, nrhs]))
     True -> {
       use rows <- result.try(rows_with_rhs(a_rows, b, n, nrhs))
       use solved <- result.try(gauss_eliminate(rows, n, nrhs))
@@ -773,8 +772,7 @@ fn gram_schmidt_loop(
         })
       let norm_v = sqrt_float(dot(v, v))
       case norm_v <. 1.0e-15 {
-        True ->
-          Error(InvalidShape("qr: columns are linearly dependent"))
+        True -> Error(InvalidShape("qr: columns are linearly dependent"))
         False -> {
           let q_k = list.map(v, fn(x) { x /. norm_v })
           let q_next = set_at(q, k, q_k)
@@ -866,11 +864,7 @@ fn unsafe_at_int(lst: List(Int), idx: Int) -> Int {
   v
 }
 
-fn swap_l_below_k(
-  l: List(List(Float)),
-  i: Int,
-  j: Int,
-) -> List(List(Float)) {
+fn swap_l_below_k(l: List(List(Float)), i: Int, j: Int) -> List(List(Float)) {
   // Swap the parts of rows i and j that lie strictly to the left of column k.
   // Required because partial-pivoting updates rows of L that were already
   // partially filled in earlier elimination steps.

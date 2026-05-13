@@ -64,12 +64,7 @@ pub fn relu_test() {
 pub fn leaky_relu_test() {
   let t = Tensor([-2.0, 0.0, 3.0], [3])
   let out = activations.leaky_relu(t, 0.01)
-  numerics.lists_close(
-    tensor.to_list(out),
-    [-0.02, 0.0, 3.0],
-    rtol,
-    atol,
-  )
+  numerics.lists_close(tensor.to_list(out), [-0.02, 0.0, 3.0], rtol, atol)
 }
 
 // --- elu --------------------------------------------------------------------
@@ -111,7 +106,8 @@ pub fn gelu_test() {
     [g0, g1] -> {
       numerics.floats_close(g0, 0.0, rtol, atol) |> should.be_true()
       // gelu(1) ~ 0.8413447460685429 with exact erf-based formula.
-      numerics.floats_close(g1, 0.8413447460685429, 1.0e-3, 1.0e-4) |> should.be_true()
+      numerics.floats_close(g1, 0.8413447460685429, 1.0e-3, 1.0e-4)
+      |> should.be_true()
     }
     _ -> should.fail()
   }
@@ -142,7 +138,8 @@ pub fn mish_test() {
   case tensor.to_list(out) {
     [m0, m1] -> {
       numerics.floats_close(m0, 0.0, rtol, atol) |> should.be_true()
-      numerics.floats_close(m1, 0.8650983882673103, 1.0e-4, 1.0e-5) |> should.be_true()
+      numerics.floats_close(m1, 0.8650983882673103, 1.0e-4, 1.0e-5)
+      |> should.be_true()
     }
     _ -> should.fail()
   }
@@ -156,7 +153,8 @@ pub fn softplus_test() {
   case tensor.to_list(out) {
     [neg, mid, pos] -> {
       // softplus(0) = log(2) ~ 0.6931471805599453
-      numerics.floats_close(mid, 0.6931471805599453, rtol, atol) |> should.be_true()
+      numerics.floats_close(mid, 0.6931471805599453, rtol, atol)
+      |> should.be_true()
       // softplus(-50) ~ 0 (no underflow because stable formulation)
       numerics.floats_close(neg, 0.0, rtol, 1.0e-6) |> should.be_true()
       // softplus(50) ~ 50 (large x: behaves like x)

@@ -24,9 +24,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import viva_tensor/core/error.{
-  type TensorError, DimensionError, ShapeMismatch,
-}
+import viva_tensor/core/error.{type TensorError, DimensionError, ShapeMismatch}
 import viva_tensor/tensor.{type Tensor}
 
 // --- Public Types -----------------------------------------------------------
@@ -242,7 +240,9 @@ pub fn zero_grad(grads: List(GradPair)) -> List(GradPair) {
 // --- Internals --------------------------------------------------------------
 
 fn grads_to_dict(grads: List(GradPair)) -> Dict(String, Tensor) {
-  list.fold(grads, dict.new(), fn(acc, gp) { dict.insert(acc, gp.name, gp.grad) })
+  list.fold(grads, dict.new(), fn(acc, gp) {
+    dict.insert(acc, gp.name, gp.grad)
+  })
 }
 
 fn validate_pairing(

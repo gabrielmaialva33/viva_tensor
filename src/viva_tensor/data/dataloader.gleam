@@ -12,9 +12,7 @@ import gleam/int
 import gleam/list
 import gleam/order
 import gleam/result
-import viva_tensor/core/error.{
-  type TensorError, IndexOutOfBounds, ShapeMismatch,
-}
+import viva_tensor/core/error.{type TensorError, IndexOutOfBounds, ShapeMismatch}
 import viva_tensor/tensor.{type Tensor, Tensor}
 
 // --- Types ------------------------------------------------------------------
@@ -60,12 +58,7 @@ pub type Batch {
 ///   `data_loader_batches`.
 /// - `drop_last`   – when `True`, a trailing partial batch is discarded.
 pub type DataLoader {
-  DataLoader(
-    dataset: Dataset,
-    batch_size: Int,
-    shuffle: Bool,
-    drop_last: Bool,
-  )
+  DataLoader(dataset: Dataset, batch_size: Int, shuffle: Bool, drop_last: Bool)
 }
 
 // --- Dataset constructors ---------------------------------------------------
@@ -103,15 +96,12 @@ pub fn dataset_from_lists(
   let n_inputs = list.length(inputs)
   let n_targets = list.length(targets)
   case n_inputs == n_targets {
-    False ->
-      Error(ShapeMismatch(expected: [n_inputs], got: [n_targets]))
+    False -> Error(ShapeMismatch(expected: [n_inputs], got: [n_targets]))
     True -> {
       use _ <- result.try(validate_uniform_shapes(inputs, "input"))
       use _ <- result.try(validate_uniform_shapes(targets, "target"))
       let samples =
-        list.map2(inputs, targets, fn(x, y) {
-          Sample(input: x, target: y)
-        })
+        list.map2(inputs, targets, fn(x, y) { Sample(input: x, target: y) })
       Ok(Dataset(samples: samples))
     }
   }
@@ -211,8 +201,7 @@ pub fn data_loader_batches(
   loader: DataLoader,
 ) -> Result(List(Batch), TensorError) {
   case loader.batch_size <= 0 {
-    True ->
-      Error(error.InvalidShape("batch_size must be > 0"))
+    True -> Error(error.InvalidShape("batch_size must be > 0"))
     False -> {
       let samples = loader.dataset.samples
       let ordered = case loader.shuffle {
@@ -222,9 +211,7 @@ pub fn data_loader_batches(
       let groups = chunk(ordered, loader.batch_size)
       let kept = case loader.drop_last {
         True ->
-          list.filter(groups, fn(g) {
-            list.length(g) == loader.batch_size
-          })
+          list.filter(groups, fn(g) { list.length(g) == loader.batch_size })
         False -> groups
       }
       stack_groups(kept, [])
@@ -274,10 +261,9 @@ fn validate_uniform_shapes(
     [] -> Ok(Nil)
     [first, ..rest] -> {
       let expected = tensor.shape(first)
-      case
-        list.find(rest, fn(t) { tensor.shape(t) != expected })
-      {
-        Ok(bad) -> Error(ShapeMismatch(expected: expected, got: tensor.shape(bad)))
+      case list.find(rest, fn(t) { tensor.shape(t) != expected }) {
+        Ok(bad) ->
+          Error(ShapeMismatch(expected: expected, got: tensor.shape(bad)))
         Error(_) -> Ok(Nil)
       }
     }
@@ -310,23 +296,18 @@ fn stack_groups(
 
 fn stack_samples(samples: List(Sample)) -> Result(Batch, TensorError) {
   case samples {
-    [] ->
-      Error(error.InvalidShape("cannot stack an empty batch"))
+    [] -> Error(error.InvalidShape("cannot stack an empty batch"))
     [first, ..] -> {
       let input_shape = tensor.shape(first.input)
       let target_shape = tensor.shape(first.target)
-      use inputs <- result.try(
-        stack_tensors(
-          list.map(samples, fn(s) { s.input }),
-          input_shape,
-        ),
-      )
-      use targets <- result.try(
-        stack_tensors(
-          list.map(samples, fn(s) { s.target }),
-          target_shape,
-        ),
-      )
+      use inputs <- result.try(stack_tensors(
+        list.map(samples, fn(s) { s.input }),
+        input_shape,
+      ))
+      use targets <- result.try(stack_tensors(
+        list.map(samples, fn(s) { s.target }),
+        target_shape,
+      ))
       Ok(Batch(inputs: inputs, targets: targets))
     }
   }

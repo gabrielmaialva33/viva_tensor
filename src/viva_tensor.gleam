@@ -35,10 +35,10 @@ import viva_tensor/data/dataloader
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
-import viva_tensor/nn/conv as nn_conv
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
+import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
