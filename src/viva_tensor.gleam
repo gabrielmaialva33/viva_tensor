@@ -41,6 +41,7 @@ import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
+import viva_tensor/nn/backward as nn_backward
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/init as nn_init
@@ -2837,6 +2838,169 @@ pub fn hardswish(t: Tensor) -> Tensor {
 /// HardTanh: `clamp(x, min_val, max_val)`.
 pub fn hardtanh(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   nn_activations.hardtanh(t, min_val, max_val)
+}
+
+// --- Backward (gradient) functions ------------------------------------------
+//
+// Standalone pure backwards for the v1 NN surface. They take `grad_out` plus
+// whatever forward inputs/outputs are needed to compute the local
+// Jacobian-vector product, and return gradients w.r.t. each differentiable
+// input. Several activation/softmax backwards consume the **output** of the
+// forward (sigmoid, tanh, softmax) — the future autograd `Tape` will save
+// those buffers. See `viva_tensor/nn/backward` for full math.
+
+/// Backward for `relu`. See `viva_tensor/nn/backward.relu_backward`.
+pub fn relu_backward(
+  grad_out: Tensor,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_backward.relu_backward(grad_out, input)
+}
+
+/// Backward for `sigmoid`. Takes the sigmoid **output**, not the original
+/// input. See `viva_tensor/nn/backward.sigmoid_backward`.
+pub fn sigmoid_backward(
+  grad_out: Tensor,
+  output: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_backward.sigmoid_backward(grad_out, output)
+}
+
+/// Backward for `tanh`. Takes the tanh **output**, not the original input.
+/// See `viva_tensor/nn/backward.tanh_backward`.
+pub fn tanh_backward(
+  grad_out: Tensor,
+  output: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_backward.tanh_backward(grad_out, output)
+}
+
+/// Backward for exact `gelu`. See `viva_tensor/nn/backward.gelu_backward`.
+pub fn gelu_backward(
+  grad_out: Tensor,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_backward.gelu_backward(grad_out, input)
+}
+
+/// Backward for `leaky_relu`. See `viva_tensor/nn/backward.leaky_relu_backward`.
+pub fn leaky_relu_backward(
+  grad_out: Tensor,
+  input: Tensor,
+  negative_slope: Float,
+) -> Result(Tensor, TensorError) {
+  nn_backward.leaky_relu_backward(grad_out, input, negative_slope)
+}
+
+/// Backward for `elu`. See `viva_tensor/nn/backward.elu_backward`.
+pub fn elu_backward(
+  grad_out: Tensor,
+  input: Tensor,
+  alpha: Float,
+) -> Result(Tensor, TensorError) {
+  nn_backward.elu_backward(grad_out, input, alpha)
+}
+
+/// Backward for `mse_loss`. Returns gradient w.r.t. `prediction` only.
+/// See `viva_tensor/nn/backward.mse_loss_backward`.
+pub fn mse_loss_backward(
+  grad_out: Tensor,
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_backward.mse_loss_backward(grad_out, prediction, target, reduction)
+}
+
+/// Backward for `l1_loss`. Returns gradient w.r.t. `prediction` only.
+/// See `viva_tensor/nn/backward.l1_loss_backward`.
+pub fn l1_loss_backward(
+  grad_out: Tensor,
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_backward.l1_loss_backward(grad_out, prediction, target, reduction)
+}
+
+/// Backward for `bce_loss`. Returns gradient w.r.t. `prediction` only.
+/// See `viva_tensor/nn/backward.bce_loss_backward`.
+pub fn bce_loss_backward(
+  grad_out: Tensor,
+  prediction: Tensor,
+  target: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_backward.bce_loss_backward(grad_out, prediction, target, reduction)
+}
+
+/// Backward for `cross_entropy_loss`. Returns gradient w.r.t. `logits`.
+/// See `viva_tensor/nn/backward.cross_entropy_loss_backward`.
+pub fn cross_entropy_loss_backward(
+  grad_out: Tensor,
+  logits: Tensor,
+  targets: Tensor,
+  reduction: Reduction,
+) -> Result(Tensor, TensorError) {
+  nn_backward.cross_entropy_loss_backward(grad_out, logits, targets, reduction)
+}
+
+/// Backward for a linear layer `output = input @ weight`. Returns
+/// `#(grad_input, grad_weight)`. See `viva_tensor/nn/backward.linear_backward`.
+pub fn linear_backward(
+  grad_out: Tensor,
+  input: Tensor,
+  weight: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_backward.linear_backward(grad_out, input, weight)
+}
+
+/// Backward for `matmul`. Returns `#(grad_a, grad_b)`. Same math as
+/// `linear_backward`, exposed for the user-facing matmul.
+/// See `viva_tensor/nn/backward.matmul_backward`.
+pub fn matmul_backward(
+  grad_out: Tensor,
+  a: Tensor,
+  b: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_backward.matmul_backward(grad_out, a, b)
+}
+
+/// Backward for `layer_norm` over the last dimension. Requires the `mean`
+/// and `variance` saved from the forward pass.
+/// See `viva_tensor/nn/backward.layer_norm_backward`.
+pub fn layer_norm_backward(
+  grad_out: Tensor,
+  input: Tensor,
+  scale: Tensor,
+  mean: Tensor,
+  variance: Tensor,
+  eps: Float,
+) -> Result(#(Tensor, Tensor, Tensor), TensorError) {
+  nn_backward.layer_norm_backward(grad_out, input, scale, mean, variance, eps)
+}
+
+/// Backward for `rms_norm` over the last dimension. Requires the `rms`
+/// saved from the forward pass. `eps` is retained for signature symmetry.
+/// See `viva_tensor/nn/backward.rms_norm_backward`.
+pub fn rms_norm_backward(
+  grad_out: Tensor,
+  input: Tensor,
+  scale: Tensor,
+  rms: Tensor,
+  eps: Float,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_backward.rms_norm_backward(grad_out, input, scale, rms, eps)
+}
+
+/// Backward for `softmax` along `axis`. Takes the softmax **output** of the
+/// forward pass. See `viva_tensor/nn/backward.softmax_backward`.
+pub fn softmax_backward(
+  grad_out: Tensor,
+  output: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  nn_backward.softmax_backward(grad_out, output, axis)
 }
 
 // --- Attention --------------------------------------------------------------
