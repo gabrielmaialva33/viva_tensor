@@ -199,6 +199,16 @@ pub fn stable_broadcasting_contract_test() {
       t.to_list(result) |> should.equal([1.0, 2.0, 4.0, 1.0, 2.0, 4.0])
     Error(_) -> should.fail()
   }
+
+  case t.greater(matrix, row) {
+    Ok(mask) -> t.to_list(mask) |> should.equal([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.where(row, matrix, t.zeros([1])) {
+    Ok(result) -> t.to_list(result) |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn stable_linear_algebra_contract_test() {

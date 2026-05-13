@@ -1159,6 +1159,53 @@ pub fn maximum_minimum_broadcast_test() {
   }
 }
 
+pub fn comparison_masks_broadcast_test() {
+  let matrix = t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0])
+  let thresholds = t.from_list([3.0, 4.0, 5.0])
+
+  case matrix {
+    Ok(values) -> {
+      case t.greater(values, thresholds) {
+        Ok(mask) -> {
+          t.shape(mask) |> should.equal([2, 3])
+          t.to_list(mask) |> should.equal([0.0, 1.0, 0.0, 1.0, 0.0, 1.0])
+        }
+        Error(_) -> should.fail()
+      }
+
+      case t.less_equal(values, thresholds) {
+        Ok(mask) ->
+          t.to_list(mask) |> should.equal([1.0, 0.0, 1.0, 0.0, 1.0, 0.0])
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn where_broadcast_test() {
+  let values = t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0])
+  let thresholds = t.from_list([3.0, 4.0, 5.0])
+  let replacement = t.fill([1], -1.0)
+
+  case values {
+    Ok(matrix) ->
+      case t.greater(matrix, thresholds) {
+        Ok(mask) ->
+          case t.where(mask, matrix, replacement) {
+            Ok(selected) -> {
+              t.shape(selected) |> should.equal([2, 3])
+              t.to_list(selected)
+              |> should.equal([-1.0, 5.0, -1.0, 4.0, -1.0, 6.0])
+            }
+            Error(_) -> should.fail()
+          }
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn softmax_axis_public_facade_test() {
   case t.matrix(2, 2, [0.0, 0.0, 1.0, 1.0]) {
     Ok(logits) ->
