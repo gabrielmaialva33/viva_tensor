@@ -58,6 +58,11 @@ path = "project-structure.html"
 source = "./docs/en/project-structure.md"
 
 [[documentation.pages]]
+title = "FFI Architecture"
+path = "ffi-architecture.html"
+source = "./docs/en/ffi-architecture.md"
+
+[[documentation.pages]]
 title = "Technical Paper"
 path = "paper.html"
 source = "./docs/en/paper.md"
