@@ -360,6 +360,49 @@ pub fn cumsum_preserves_matrix_shape_test() {
   }
 }
 
+pub fn cumsum_axis_test() {
+  case t.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) {
+    Ok(matrix) -> {
+      case t.cumsum_axis(matrix, 0) {
+        Ok(values) -> {
+          t.shape(values) |> should.equal([2, 3])
+          t.to_list(values) |> should.equal([1.0, 2.0, 3.0, 5.0, 7.0, 9.0])
+        }
+        Error(_) -> should.fail()
+      }
+
+      case t.cumsum_axis(matrix, 1) {
+        Ok(values) -> {
+          t.shape(values) |> should.equal([2, 3])
+          t.to_list(values) |> should.equal([1.0, 3.0, 6.0, 4.0, 9.0, 15.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn cumprod_axis_test() {
+  case t.matrix(2, 3, [1.0, 2.0, 3.0, 4.0, 5.0, 6.0]) {
+    Ok(matrix) ->
+      case t.cumprod_axis(matrix, 1) {
+        Ok(values) -> {
+          t.shape(values) |> should.equal([2, 3])
+          t.to_list(values) |> should.equal([1.0, 2.0, 6.0, 4.0, 20.0, 120.0])
+        }
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn cumsum_axis_rejects_invalid_axis_test() {
+  t.from_list([1.0, 2.0])
+  |> t.try_cumsum_axis(1)
+  |> should.be_error()
+}
+
 pub fn try_median_test() {
   let odd = t.from_list([3.0, 1.0, 2.0])
   let even = t.from_list([4.0, 1.0, 3.0, 2.0])

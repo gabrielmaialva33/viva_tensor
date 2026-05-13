@@ -529,6 +529,26 @@ pub fn try_cumprod(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_cumprod(t)
 }
 
+/// Cumulative sum along one axis, preserving the original shape.
+pub fn cumsum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.cumsum_axis(t, axis)
+}
+
+/// Cumulative sum along one axis, preserving materialization failures.
+pub fn try_cumsum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_cumsum_axis(t, axis)
+}
+
+/// Cumulative product along one axis, preserving the original shape.
+pub fn cumprod_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.cumprod_axis(t, axis)
+}
+
+/// Cumulative product along one axis, preserving materialization failures.
+pub fn try_cumprod_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_cumprod_axis(t, axis)
+}
+
 /// Median value.
 pub fn median(t: Tensor) -> Float {
   tensor.median(t)
