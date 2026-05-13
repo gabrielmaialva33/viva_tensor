@@ -34,6 +34,7 @@ import viva_tensor/core/linalg
 import viva_tensor/core/tensor as core_tensor
 import viva_tensor/data/dataloader
 import viva_tensor/diffusion/samplers as diffusion_samplers
+import viva_tensor/distributed/trainer as distributed_trainer
 import viva_tensor/io/hf_loader as hf_loader_io
 import viva_tensor/io/onnx as onnx_io
 import viva_tensor/io/safetensors as safetensors_io
@@ -5074,3 +5075,76 @@ pub fn t5_model_forward(
 ) -> Result(Tensor, TensorError) {
   models_t5.t5_model_forward(model, src_token_ids, tgt_token_ids)
 }
+
+// --- Distributed training ---------------------------------------------------
+//
+// Synchronous data-parallel SGD primitives. See
+// `viva_tensor/distributed/trainer` for the full module documentation.
+
+/// Handle for a spawned distributed worker process.
+pub type Worker =
+  distributed_trainer.Worker
+
+/// Result of a `train_synchronous` run.
+pub type TrainResult =
+  distributed_trainer.TrainResult
+
+/// Configuration for `train_synchronous`.
+pub type TrainConfig =
+  distributed_trainer.TrainConfig
+
+/// Strategy used to combine per-worker gradients in a synchronous step.
+pub type GradAggregation =
+  distributed_trainer.GradAggregation
+
+/// Aggregate per-worker gradient lists synchronously. See
+/// `viva_tensor/distributed/trainer.distribute_grads`.
+pub fn distribute_grads(
+  per_worker_grads: List(List(GradPair)),
+  aggregation: GradAggregation,
+) -> Result(List(GradPair), TensorError) {
+  distributed_trainer.distribute_grads(per_worker_grads, aggregation)
+}
+
+/// Apply one synchronous data-parallel optimizer step. See
+/// `viva_tensor/distributed/trainer.synchronous_train_step`.
+pub fn synchronous_train_step(
+  opt: Optimizer,
+  params: List(Param),
+  per_worker_grads: List(List(GradPair)),
+  aggregation: GradAggregation,
+) -> Result(#(Optimizer, List(Param)), TensorError) {
+  distributed_trainer.synchronous_train_step(
+    opt,
+    params,
+    per_worker_grads,
+    aggregation,
+  )
+}
+
+/// Run synchronous data-parallel SGD. See
+/// `viva_tensor/distributed/trainer.train_synchronous`.
+pub fn train_synchronous(
+  config: TrainConfig,
+  initial_params: List(Param),
+  initial_optimizer: Optimizer,
+  data_loader: DataLoader,
+  compute_grads: fn(Batch, List(Param)) -> Result(List(GradPair), TensorError),
+  num_steps: Int,
+) -> Result(TrainResult, TensorError) {
+  distributed_trainer.train_synchronous(
+    config,
+    initial_params,
+    initial_optimizer,
+    data_loader,
+    compute_grads,
+    num_steps,
+  )
+}
+
+/// Average per-worker gradients before applying. See
+/// `viva_tensor/distributed/trainer.GradAggregation`.
+pub const average_grads: GradAggregation = distributed_trainer.AverageGrads
+
+/// Sum per-worker gradients before applying.
+pub const sum_grads: GradAggregation = distributed_trainer.SumGrads
