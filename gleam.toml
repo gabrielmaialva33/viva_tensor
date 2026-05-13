@@ -40,6 +40,7 @@ internal_modules = [
   "viva_tensor/nn/attention",
   "viva_tensor/nn/flash_attention",
   "viva_tensor/nn/losses",
+  "viva_tensor/nn/moe",
   "viva_tensor/nn/norm",
   "viva_tensor/nn/optim",
   "viva_tensor/nn/pool",

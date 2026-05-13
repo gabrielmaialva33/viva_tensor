@@ -51,6 +51,7 @@ import viva_tensor/nn/cv as nn_cv
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/init as nn_init
 import viva_tensor/nn/losses as nn_losses
+import viva_tensor/nn/moe as nn_moe
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
 import viva_tensor/nn/pool as nn_pool
@@ -4741,4 +4742,69 @@ pub fn traced_l1_loss(
   target: core_tensor.Tensor,
 ) -> Result(autograd.Traced(autograd.Variable), TensorError) {
   autograd.traced_l1_loss(tape, pred, target)
+}
+
+// --- Mixture of Experts (re-export) -----------------------------------------
+
+/// Routing network used by `MoeBlock`. See `viva_tensor/nn/moe`.
+pub type Router =
+  nn_moe.Router
+
+/// Sparse mixture-of-experts FFN block. See `viva_tensor/nn/moe`.
+pub type MoeBlock =
+  nn_moe.MoeBlock
+
+/// Build a `Router` with a zero-filled gate `[embed_dim, num_experts]`.
+pub fn router_init(embed_dim: Int, num_experts: Int, top_k: Int) -> Router {
+  nn_moe.router_init(embed_dim, num_experts, top_k)
+}
+
+/// Route `[tokens, embed_dim]` through the gate, returning
+/// `#(expert_ids, expert_weights, aux_loss)`.
+pub fn router_route(
+  router: Router,
+  tokens: Tensor,
+) -> Result(#(Tensor, Tensor, Tensor), TensorError) {
+  nn_moe.router_route(router, tokens)
+}
+
+/// Build a `MoeBlock` with zero-weight experts and a fresh router.
+pub fn moe_block_init(
+  embed_dim: Int,
+  hidden_dim: Int,
+  num_experts: Int,
+  top_k: Int,
+) -> Result(MoeBlock, TensorError) {
+  nn_moe.moe_block_init(embed_dim, hidden_dim, num_experts, top_k)
+}
+
+/// Run the MoE block forward pass on `[tokens, embed_dim]` input.
+pub fn moe_block_forward(
+  block: MoeBlock,
+  tokens: Tensor,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_moe.moe_block_forward(block, tokens)
+}
+
+/// Switch Transformer load-balancing auxiliary loss.
+pub fn compute_load_balance_loss(
+  router_probs: Tensor,
+  expert_assignments: Tensor,
+  num_experts: Int,
+) -> Result(Tensor, TensorError) {
+  nn_moe.compute_load_balance_loss(
+    router_probs,
+    expert_assignments,
+    num_experts,
+  )
+}
+
+/// Per-expert importance (sum of router probs) and load (count of top-k
+/// assignments). See `viva_tensor/nn/moe.expert_distribution`.
+pub fn expert_distribution(
+  router_probs: Tensor,
+  expert_assignments: Tensor,
+  num_experts: Int,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_moe.expert_distribution(router_probs, expert_assignments, num_experts)
 }
