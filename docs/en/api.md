@@ -36,6 +36,13 @@ you need to inspect storage metadata, and `viva_tensor/axis` or
 | `try_linspace(start, stop, steps)` | Fallible linspace rejecting invalid step counts. |
 | `logspace(start, stop, steps, base)` | Create logarithmically spaced values.       |
 | `try_logspace(start, stop, steps, base)` | Fallible logspace rejecting invalid steps/base. |
+| `zeros_like(tensor)`       | Create a zero tensor with the same shape.        |
+| `ones_like(tensor)`        | Create a one tensor with the same shape.         |
+| `full_like(tensor, value)` | Create a filled tensor with the same shape.      |
+| `eye(n)` / `identity(n)`   | Create a square identity matrix.                 |
+| `try_eye(n)`               | Fallible identity matrix rejecting invalid size. |
+| `diag(tensor)`             | Create a diagonal matrix from a vector.          |
+| `try_diag(tensor)`         | Fallible diagonal matrix creation.               |
 | `matrix(rows, cols, data)` | Create a matrix with explicit dimensions.        |
 
 ```gleam
@@ -121,6 +128,12 @@ Use broadcasting-specific functions when shapes differ.
 | `mean_axis(tensor, axis)`        | Mean along one axis.                                   |
 | `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
 | `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
+| `max_axis(tensor, axis)`         | Maximum along one axis.                                |
+| `try_max_axis(tensor, axis)`     | Fallible maximum along one axis.                       |
+| `max_axis_keepdims(tensor, axis)`| Maximum along one axis while keeping a size-1 dimension. |
+| `min_axis(tensor, axis)`         | Minimum along one axis.                                |
+| `try_min_axis(tensor, axis)`     | Fallible minimum along one axis.                       |
+| `min_axis_keepdims(tensor, axis)`| Minimum along one axis while keeping a size-1 dimension. |
 | `max(tensor)`                    | Maximum value.                                         |
 | `try_max(tensor)`                | Fallible maximum preserving materialization and empty-tensor errors. |
 | `min(tensor)`                    | Minimum value.                                         |
@@ -199,6 +212,15 @@ would be slower than a dense buffer.
 | `try_normalize(tensor)` | Fallible normalization preserving materialization errors. |
 | `is_close(a, b, rtol, atol)` | Compare two scalars with numeric tolerances. |
 | `all_close(a, b, rtol, atol)` | Compare two tensors element-wise with numeric tolerances. |
+| `euclidean_distance(a, b)` | Euclidean distance for same-shaped tensors.     |
+| `try_euclidean_distance(a, b)` | Fallible Euclidean distance.                |
+| `manhattan_distance(a, b)` | Manhattan distance for same-shaped tensors.     |
+| `cosine_similarity(a, b)` | Cosine similarity for same-shaped tensors.      |
+| `dot_similarity(a, b)`   | Dot similarity for same-shaped tensors.         |
+| `zscore(tensor)`         | Z-score standardization over all elements.      |
+| `standardize(tensor)`    | Alias for `zscore`.                             |
+| `minmax_scale(tensor, min, max)` | Scale values into a target interval.    |
+| `clip_by_norm(tensor, max_norm)` | Clip L2 norm to a maximum value.        |
 
 ## Public Companion Modules
 

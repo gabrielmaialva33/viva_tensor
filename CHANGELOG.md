@@ -96,6 +96,10 @@ All notable changes to this project will be documented in this file.
   `gleam_community_maths`: `cumsum()`, `try_cumsum()`, `cumprod()`,
   `try_cumprod()`, `median()`, `try_median()`, `percentile()`, and
   `try_percentile()`.
+- Added NumPy-style creation helpers (`zeros_like()`, `ones_like()`,
+  `full_like()`, `eye()`, `try_eye()`, `identity()`, `diag()`, `try_diag()`),
+  vector distances/similarity, statistical normalization helpers, and
+  `max_axis()`/`min_axis()` reductions with `keepdims` variants.
 
 ### Highlights
 
