@@ -43,6 +43,7 @@ import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/pool as nn_pool
+import viva_tensor/nn/init as nn_init
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
@@ -3546,4 +3547,113 @@ pub fn mean_absolute_percentage_error(
   targets: Tensor,
 ) -> Result(Float, TensorError) {
   metrics_regression.mean_absolute_percentage_error(predictions, targets)
+}
+
+// --- Parameter initialization (re-export) -----------------------------------
+//
+// Wrappers around `viva_tensor/nn/init`. The deterministic constructors
+// (`zeros`, `ones`, `constant`, `identity`) collide with existing top-level
+// names, so we prefix the init versions with `init_`. The random
+// distributions and variance-scaled initializers keep their natural names
+// since they are unique to this module.
+
+/// `init.zeros` — all-zeros tensor. Same as `zeros`, exposed here for
+/// API symmetry with the rest of `init_*`.
+pub fn init_zeros(shape: List(Int)) -> Tensor {
+  nn_init.zeros(shape)
+}
+
+/// `init.ones` — all-ones tensor. Use case: LayerNorm scale parameters.
+pub fn init_ones(shape: List(Int)) -> Tensor {
+  nn_init.ones(shape)
+}
+
+/// `init.constant` — constant-filled tensor. Equivalent to `fill`.
+pub fn init_constant(shape: List(Int), value: Float) -> Tensor {
+  nn_init.constant(shape, value)
+}
+
+/// `init.identity` — `[n, n]` identity matrix. Same as `identity`/`eye`,
+/// exposed here for API symmetry.
+pub fn init_identity(n: Int) -> Tensor {
+  nn_init.identity(n)
+}
+
+/// Sample each element uniformly from `[low, high)`.
+/// See `viva_tensor/nn/init.uniform`.
+pub fn uniform(shape: List(Int), low: Float, high: Float) -> Tensor {
+  nn_init.uniform(shape, low, high)
+}
+
+/// Sample each element from `N(mean, std^2)` via the Box-Muller transform.
+/// See `viva_tensor/nn/init.normal`.
+pub fn normal(shape: List(Int), mean: Float, std: Float) -> Tensor {
+  nn_init.normal(shape, mean, std)
+}
+
+/// Sample each element from `N(mean, std^2)` truncated to `[a, b]`.
+/// See `viva_tensor/nn/init.truncated_normal`.
+pub fn truncated_normal(
+  shape: List(Int),
+  mean: Float,
+  std: Float,
+  a: Float,
+  b: Float,
+) -> Tensor {
+  nn_init.truncated_normal(shape, mean, std, a, b)
+}
+
+/// Glorot uniform init: `U(-a, a)` with `a = sqrt(6 / (fan_in + fan_out))`.
+pub fn xavier_uniform(fan_in: Int, fan_out: Int) -> Tensor {
+  nn_init.xavier_uniform(fan_in, fan_out)
+}
+
+/// Glorot normal init: `N(0, std^2)` with `std = sqrt(2 / (fan_in + fan_out))`.
+pub fn xavier_normal(fan_in: Int, fan_out: Int) -> Tensor {
+  nn_init.xavier_normal(fan_in, fan_out)
+}
+
+/// He uniform init: `U(-bound, bound)` with `bound = gain * sqrt(3 / fan_in)`.
+pub fn kaiming_uniform(fan_in: Int, fan_out: Int, gain: Float) -> Tensor {
+  nn_init.kaiming_uniform(fan_in, fan_out, gain)
+}
+
+/// He normal init: `N(0, std^2)` with `std = gain * sqrt(1 / fan_in)`.
+pub fn kaiming_normal(fan_in: Int, fan_out: Int, gain: Float) -> Tensor {
+  nn_init.kaiming_normal(fan_in, fan_out, gain)
+}
+
+/// Orthogonal init via QR. Returns `[rows, cols]` with orthonormal columns
+/// (or rows, when `rows < cols`). See `viva_tensor/nn/init.orthogonal`.
+pub fn orthogonal(
+  rows: Int,
+  cols: Int,
+  gain: Float,
+) -> Result(Tensor, TensorError) {
+  nn_init.orthogonal(rows, cols, gain)
+}
+
+/// `sqrt(2)` — gain for layers followed by ReLU.
+pub fn relu_gain() -> Float {
+  nn_init.relu_gain()
+}
+
+/// `sqrt(2 / (1 + slope^2))` — gain for layers followed by Leaky ReLU.
+pub fn leaky_relu_gain(negative_slope: Float) -> Float {
+  nn_init.leaky_relu_gain(negative_slope)
+}
+
+/// `5/3` — gain for layers followed by tanh.
+pub fn tanh_gain() -> Float {
+  nn_init.tanh_gain()
+}
+
+/// `1.0` — gain for layers followed by a linear activation.
+pub fn linear_gain() -> Float {
+  nn_init.linear_gain()
+}
+
+/// `1.0` — gain for layers followed by sigmoid.
+pub fn sigmoid_gain() -> Float {
+  nn_init.sigmoid_gain()
 }
