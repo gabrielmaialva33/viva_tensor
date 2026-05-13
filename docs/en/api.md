@@ -158,6 +158,11 @@ let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
 | `try_flatten(tensor)`     | Fallible flatten preserving materialization failures.            |
 | `squeeze(tensor)`         | Remove size-one dimensions.                                      |
 | `unsqueeze(tensor, axis)` | Insert a size-one dimension.                                     |
+| `try_unsqueeze(tensor, axis)` | Fallible unsqueeze preserving invalid-axis errors.            |
+| `to_strided(tensor)`      | Convert dense data to a zero-copy strided view.                  |
+| `try_to_strided(tensor)`  | Fallible strided conversion preserving native materialization errors. |
+| `to_contiguous(tensor)`   | Materialize a strided view into contiguous dense storage.         |
+| `try_to_contiguous(tensor)` | Fallible contiguous conversion preserving materialization errors. |
 | `layout(tensor)`          | Inspect storage, device, dtype, strides, offset, and contiguity. |
 
 ```gleam

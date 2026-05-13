@@ -55,6 +55,9 @@ All notable changes to this project will be documented in this file.
 - Added fallible `try_map()`, `try_scale()`, and `try_sum()` variants for code
   that must preserve native materialization failures while keeping existing
   infallible convenience functions compatible.
+- Added fallible shape/layout helpers (`try_unsqueeze()`, `try_to_strided()`,
+  `try_to_contiguous()`) so invalid axes and native materialization failures
+  are explicit in code that needs strong error contracts.
 - Hardened axis reductions with fallible `try_sum_axis()`/`try_mean_axis()`,
   root-facade exports, and `keepdims` variants that avoid silent indexing
   defaults during dense fallback.
