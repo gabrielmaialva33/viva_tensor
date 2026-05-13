@@ -219,6 +219,33 @@ pub fn argmin_list(values: List(Float)) -> Result(Float, TensorError) {
   }
 }
 
+pub fn any_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(case list.any(values, fn(x) { x != 0.0 }) {
+    True -> 1.0
+    False -> 0.0
+  })
+}
+
+pub fn all_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(case list.all(values, fn(x) { x != 0.0 }) {
+    True -> 1.0
+    False -> 0.0
+  })
+}
+
+pub fn count_nonzero_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(
+    values
+    |> list.fold(0, fn(count, x) {
+      case x != 0.0 {
+        True -> count + 1
+        False -> count
+      }
+    })
+    |> int.to_float,
+  )
+}
+
 pub fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
   lst
   |> list.index_map(fn(item, i) { #(item, i) })

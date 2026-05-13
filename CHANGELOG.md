@@ -50,6 +50,9 @@ All notable changes to this project will be documented in this file.
 - Reorganized internal implementation modules into `native/`, `observability/`,
   and `experimental/` namespaces, and removed the generated
   `bench/test_int8_imma` executable from source control.
+- Split axis reduction, softmax-axis, boolean-axis reducers, and pure
+  broadcasting helpers out of the large internal `viva_tensor/tensor` module
+  into focused `core/tensor_axis` and `core/tensor_broadcast` modules.
 - Added `try_to_list()` and routed fallible dense fallback paths through it so
   native materialization failures are not silently converted into empty tensors.
 - Extended error hygiene into internal core tensor, shape, broadcast, and

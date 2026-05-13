@@ -20,6 +20,7 @@ import viva_tensor/core/error.{
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
 import viva_tensor/core/tensor_axis
+import viva_tensor/core/tensor_broadcast
 import viva_tensor/layout
 
 // --- Types ---
@@ -2706,19 +2707,7 @@ pub fn he_init(fan_in: Int, fan_out: Int) -> Tensor {
 
 /// Check if two shapes can be broadcast together
 pub fn can_broadcast(a: List(Int), b: List(Int)) -> Bool {
-  let #(longer, shorter) = case list.length(a) >= list.length(b) {
-    True -> #(a, b)
-    False -> #(b, a)
-  }
-
-  let diff = list.length(longer) - list.length(shorter)
-  let padded = list.append(list.repeat(1, diff), shorter)
-
-  list.zip(longer, padded)
-  |> list.all(fn(pair) {
-    let #(dim_a, dim_b) = pair
-    dim_a == dim_b || dim_a == 1 || dim_b == 1
-  })
+  tensor_broadcast.can_broadcast(a, b)
 }
 
 /// Compute broadcast shape
@@ -2726,48 +2715,14 @@ pub fn broadcast_shape(
   a: List(Int),
   b: List(Int),
 ) -> Result(List(Int), TensorError) {
-  case can_broadcast(a, b) {
-    False -> Error(BroadcastError(shape_a: a, shape_b: b))
-    True -> {
-      let max_rank = int.max(list.length(a), list.length(b))
-      let diff_a = max_rank - list.length(a)
-      let diff_b = max_rank - list.length(b)
-      let padded_a = list.append(list.repeat(1, diff_a), a)
-      let padded_b = list.append(list.repeat(1, diff_b), b)
-
-      let result_shape =
-        list.zip(padded_a, padded_b)
-        |> list.map(fn(pair) {
-          let #(dim_a, dim_b) = pair
-          int.max(dim_a, dim_b)
-        })
-
-      Ok(result_shape)
-    }
-  }
+  tensor_broadcast.broadcast_shape(a, b)
 }
 
 /// Compute the common shape for any number of broadcastable shapes.
 pub fn broadcast_shapes(
   shapes: List(List(Int)),
 ) -> Result(List(Int), TensorError) {
-  case shapes {
-    [] -> Ok([])
-    [first, ..rest] -> broadcast_shapes_loop(rest, first)
-  }
-}
-
-fn broadcast_shapes_loop(
-  shapes: List(List(Int)),
-  current: List(Int),
-) -> Result(List(Int), TensorError) {
-  case shapes {
-    [] -> Ok(current)
-    [next, ..rest] -> {
-      use result_shape <- result.try(broadcast_shape(current, next))
-      broadcast_shapes_loop(rest, result_shape)
-    }
-  }
+  tensor_broadcast.broadcast_shapes(shapes)
 }
 
 /// Broadcast tensor to target shape.
@@ -2777,7 +2732,7 @@ pub fn broadcast_to(
   t: Tensor,
   target_shape: List(Int),
 ) -> Result(Tensor, TensorError) {
-  case can_broadcast(t.shape, target_shape) {
+  case tensor_broadcast.can_broadcast(t.shape, target_shape) {
     False -> Error(BroadcastError(shape_a: t.shape, shape_b: target_shape))
     True -> {
       case t.shape == target_shape {
@@ -2787,7 +2742,11 @@ pub fn broadcast_to(
             Tensor(data, shape) -> {
               let storage = ffi.list_to_array(data)
               let strides =
-                broadcast_strides(shape, compute_strides(shape), target_shape)
+                tensor_broadcast.broadcast_strides(
+                  shape,
+                  compute_strides(shape),
+                  target_shape,
+                )
               Ok(StridedTensor(
                 storage: storage,
                 shape: target_shape,
@@ -2796,7 +2755,8 @@ pub fn broadcast_to(
               ))
             }
             StridedTensor(storage, shape, strides, offset) -> {
-              let view_strides = broadcast_strides(shape, strides, target_shape)
+              let view_strides =
+                tensor_broadcast.broadcast_strides(shape, strides, target_shape)
               Ok(StridedTensor(
                 storage: storage,
                 shape: target_shape,
@@ -2825,7 +2785,10 @@ pub fn broadcast_pair(
   a: Tensor,
   b: Tensor,
 ) -> Result(#(Tensor, Tensor), TensorError) {
-  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
+  use result_shape <- result.try(tensor_broadcast.broadcast_shape(
+    a.shape,
+    b.shape,
+  ))
   use a_bc <- result.try(broadcast_to(a, result_shape))
   use b_bc <- result.try(broadcast_to(b, result_shape))
   Ok(#(a_bc, b_bc))
@@ -3212,7 +3175,7 @@ pub fn count_nonzero(t: Tensor) -> Int {
 
 /// Does each axis slice contain any non-zero value?
 pub fn try_any_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, any_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.any_list)
 }
 
 /// Does each axis slice contain any non-zero value?
@@ -3225,7 +3188,7 @@ pub fn try_any_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, any_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.any_list)
 }
 
 /// Does each axis slice contain any non-zero value, preserving the reduced dimension.
@@ -3238,7 +3201,7 @@ pub fn any_axis_keepdims(
 
 /// Are all values in each axis slice non-zero?
 pub fn try_all_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, all_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.all_list)
 }
 
 /// Are all values in each axis slice non-zero?
@@ -3251,7 +3214,7 @@ pub fn try_all_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, all_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.all_list)
 }
 
 /// Are all values in each axis slice non-zero, preserving the reduced dimension.
@@ -3267,7 +3230,7 @@ pub fn try_count_nonzero_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, count_nonzero_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.count_nonzero_list)
 }
 
 /// Count non-zero values along one axis.
@@ -3283,7 +3246,7 @@ pub fn try_count_nonzero_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, count_nonzero_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.count_nonzero_list)
 }
 
 /// Count non-zero values along one axis, preserving the reduced dimension.
@@ -3292,33 +3255,6 @@ pub fn count_nonzero_axis_keepdims(
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
   try_count_nonzero_axis_keepdims(t, axis_idx)
-}
-
-fn any_list(values: List(Float)) -> Result(Float, TensorError) {
-  Ok(case list.any(values, fn(x) { x != 0.0 }) {
-    True -> 1.0
-    False -> 0.0
-  })
-}
-
-fn all_list(values: List(Float)) -> Result(Float, TensorError) {
-  Ok(case list.all(values, fn(x) { x != 0.0 }) {
-    True -> 1.0
-    False -> 0.0
-  })
-}
-
-fn count_nonzero_list(values: List(Float)) -> Result(Float, TensorError) {
-  Ok(
-    values
-    |> list.fold(0, fn(count, x) {
-      case x != 0.0 {
-        True -> count + 1
-        False -> count
-      }
-    })
-    |> int.to_float,
-  )
 }
 
 // --- Shape Manipulation ---
@@ -3638,53 +3574,12 @@ fn compute_strides(shape: List(Int)) -> List(Int) {
   layout_math.compute_strides(shape)
 }
 
-fn broadcast_strides(
-  src_shape: List(Int),
-  src_strides: List(Int),
-  target_shape: List(Int),
-) -> List(Int) {
-  layout_math.broadcast_strides(src_shape, src_strides, target_shape)
-}
-
 fn broadcast_data(
   t: Tensor,
   target_shape: List(Int),
 ) -> Result(List(Float), TensorError) {
-  let target_size = list.fold(target_shape, 1, fn(acc, dim) { acc * dim })
-  let src_shape = t.shape
-  let src_rank = list.length(src_shape)
-  let target_rank = list.length(target_shape)
   use data <- result.try(try_to_list(t))
-
-  let diff = target_rank - src_rank
-  let padded_shape = list.append(list.repeat(1, diff), src_shape)
-
-  list.range(0, target_size - 1)
-  |> list.fold(Ok([]), fn(acc, flat_idx) {
-    use values <- result.try(acc)
-    let target_indices = flat_to_multi(flat_idx, target_shape)
-
-    let src_indices =
-      list.zip(target_indices, padded_shape)
-      |> list.map(fn(pair) {
-        let #(idx, dim) = pair
-        case dim == 1 {
-          True -> 0
-          False -> idx
-        }
-      })
-      |> list.drop(diff)
-
-    let src_flat = multi_to_flat(src_indices, src_shape)
-    use value <- result.try(
-      list_at_float(data, src_flat)
-      |> result.map_error(fn(_) {
-        IndexOutOfBounds(src_flat, list.length(data))
-      }),
-    )
-    Ok([value, ..values])
-  })
-  |> result.map(list.reverse)
+  tensor_broadcast.broadcast_data_values(data, t.shape, target_shape)
 }
 
 fn multi_to_flat(indices: List(Int), shape: List(Int)) -> Int {
