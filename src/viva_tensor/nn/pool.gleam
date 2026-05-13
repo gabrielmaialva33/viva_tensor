@@ -169,7 +169,13 @@ pub fn max_pool_1d_forward(
   config: MaxPool1dConfig,
   input: Tensor,
 ) -> Result(Tensor, TensorError) {
-  pool_1d_forward(input, config.kernel_size, config.stride, config.padding, True)
+  pool_1d_forward(
+    input,
+    config.kernel_size,
+    config.stride,
+    config.padding,
+    True,
+  )
 }
 
 // ---------------------------------------------------------------------------
@@ -256,7 +262,11 @@ fn pool_1d_forward(
                     })
                   })
                 })
-              tensor.reshape(tensor.from_list(out), [batch, channels, out_length])
+              tensor.reshape(tensor.from_list(out), [
+                batch,
+                channels,
+                out_length,
+              ])
             }
           }
         }
@@ -447,16 +457,7 @@ fn sum_2d_rows(
     True -> acc
     False -> {
       let row_sum = sum_2d_cols(arr, base, w_in, h, w_start, w_end, 0.0)
-      sum_2d_rows(
-        arr,
-        base,
-        w_in,
-        h + 1,
-        h_end,
-        w_start,
-        w_end,
-        acc +. row_sum,
-      )
+      sum_2d_rows(arr, base, w_in, h + 1, h_end, w_start, w_end, acc +. row_sum)
     }
   }
 }

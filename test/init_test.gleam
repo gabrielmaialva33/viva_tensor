@@ -88,8 +88,7 @@ pub fn xavier_normal_test() {
     float.square_root(2.0 /. int.to_float(fan_in + fan_out))
   let xs = tensor.to_list(w)
   let n = list.length(xs)
-  let mean =
-    list.fold(xs, 0.0, fn(acc, x) { acc +. x }) /. int.to_float(n)
+  let mean = list.fold(xs, 0.0, fn(acc, x) { acc +. x }) /. int.to_float(n)
   let var =
     list.fold(xs, 0.0, fn(acc, x) {
       let d = x -. mean
@@ -133,8 +132,7 @@ pub fn kaiming_normal_test() {
 
   let xs = tensor.to_list(w)
   let n = list.length(xs)
-  let mean =
-    list.fold(xs, 0.0, fn(acc, x) { acc +. x }) /. int.to_float(n)
+  let mean = list.fold(xs, 0.0, fn(acc, x) { acc +. x }) /. int.to_float(n)
   let var =
     list.fold(xs, 0.0, fn(acc, x) {
       let d = x -. mean

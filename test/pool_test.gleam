@@ -27,7 +27,12 @@ pub fn dropout_eval_test() {
   let x = tensor_with_shape([1.0, 2.0, 3.0, 4.0], [1, 1, 4])
   let out = pool.dropout_forward(layer, x, False)
   tensor.shape(out) |> should.equal([1, 1, 4])
-  numerics.lists_close(tensor.to_list(out), [1.0, 2.0, 3.0, 4.0], 1.0e-9, 1.0e-9)
+  numerics.lists_close(
+    tensor.to_list(out),
+    [1.0, 2.0, 3.0, 4.0],
+    1.0e-9,
+    1.0e-9,
+  )
   |> should.be_true
 }
 
@@ -37,7 +42,12 @@ pub fn dropout_p_zero_train_test() {
   let x = tensor_with_shape([1.0, 2.0, 3.0, 4.0], [1, 1, 4])
   let out = pool.dropout_forward(layer, x, True)
   tensor.shape(out) |> should.equal([1, 1, 4])
-  numerics.lists_close(tensor.to_list(out), [1.0, 2.0, 3.0, 4.0], 1.0e-9, 1.0e-9)
+  numerics.lists_close(
+    tensor.to_list(out),
+    [1.0, 2.0, 3.0, 4.0],
+    1.0e-9,
+    1.0e-9,
+  )
   |> should.be_true
 }
 
@@ -49,7 +59,12 @@ pub fn dropout_p_one_train_test() {
   let x = tensor_with_shape([1.0, 2.0, 3.0, 4.0], [1, 1, 4])
   let out = pool.dropout_forward(layer, x, True)
   tensor.shape(out) |> should.equal([1, 1, 4])
-  numerics.lists_close(tensor.to_list(out), [0.0, 0.0, 0.0, 0.0], 1.0e-9, 1.0e-9)
+  numerics.lists_close(
+    tensor.to_list(out),
+    [0.0, 0.0, 0.0, 0.0],
+    1.0e-9,
+    1.0e-9,
+  )
   |> should.be_true
 }
 
@@ -154,9 +169,7 @@ pub fn adaptive_avg_pool_2d_identity_test() {
   // output_h == input_h and output_w == input_w: each cell is its own window
   // (size 1) so the output equals the input.
   let cfg = pool.AdaptiveAvgPool2dConfig(output_h: 3, output_w: 3)
-  let data = [
-    1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0,
-  ]
+  let data = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
   let x = tensor_with_shape(data, [1, 1, 3, 3])
   let assert Ok(out) = pool.adaptive_avg_pool_2d_forward(cfg, x)
   tensor.shape(out) |> should.equal([1, 1, 3, 3])
@@ -183,10 +196,8 @@ pub fn upsample_nearest_test() {
   numerics.lists_close(
     tensor.to_list(out),
     [
-      1.0, 1.0, 2.0, 2.0,
-      1.0, 1.0, 2.0, 2.0,
-      3.0, 3.0, 4.0, 4.0,
-      3.0, 3.0, 4.0, 4.0,
+      1.0, 1.0, 2.0, 2.0, 1.0, 1.0, 2.0, 2.0, 3.0, 3.0, 4.0, 4.0, 3.0, 3.0, 4.0,
+      4.0,
     ],
     1.0e-9,
     1.0e-9,

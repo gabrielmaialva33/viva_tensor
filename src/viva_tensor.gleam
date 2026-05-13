@@ -42,11 +42,11 @@ import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/embedding as nn_embedding
-import viva_tensor/nn/pool as nn_pool
 import viva_tensor/nn/init as nn_init
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
+import viva_tensor/nn/pool as nn_pool
 import viva_tensor/nn/rnn as nn_rnn
 import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/nn/transformer as nn_transformer

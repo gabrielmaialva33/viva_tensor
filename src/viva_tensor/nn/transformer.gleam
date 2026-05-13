@@ -143,9 +143,7 @@ fn add_bias_row(t: Tensor, bias: Tensor) -> Result(Tensor, TensorError) {
       use b_data <- result.try(tensor.try_to_list(bias))
       let new_data =
         list.sized_chunk(t_data, out)
-        |> list.flat_map(fn(row) {
-          list.map2(row, b_data, fn(x, b) { x +. b })
-        })
+        |> list.flat_map(fn(row) { list.map2(row, b_data, fn(x, b) { x +. b }) })
       Ok(Tensor(data: new_data, shape: t.shape))
     }
     _, _ -> Error(ShapeMismatch(expected: t.shape, got: bias.shape))
