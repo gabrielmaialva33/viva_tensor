@@ -32,6 +32,7 @@ import viva_tensor/core/ffi
 import viva_tensor/core/format as tensor_format
 import viva_tensor/core/linalg
 import viva_tensor/data/dataloader
+import viva_tensor/io/hf_loader as hf_loader_io
 import viva_tensor/io/safetensors as safetensors_io
 import viva_tensor/layout as tensor_layout
 import viva_tensor/metrics/classification as metrics_classification
@@ -3932,4 +3933,124 @@ pub fn vision_compose(
   image: Tensor,
 ) -> Result(Tensor, TensorError) {
   vision_transforms.compose(transforms, image)
+}
+
+// --- HuggingFace SafeTensors loader (re-export) -----------------------------
+
+/// Loader-local error type. See `viva_tensor/io/hf_loader.HfLoadError`.
+pub type HfLoadError =
+  hf_loader_io.HfLoadError
+
+/// Structural config for `from_safetensors_file`. See
+/// `viva_tensor/io/hf_loader.TransformerConfig`.
+pub type TransformerConfig =
+  hf_loader_io.TransformerConfig
+
+/// Read a `.safetensors` file into a `Dict(String, Tensor)`, mapping I/O
+/// failures into `HfLoadError.IoError`.
+pub fn load_safetensors_dict(
+  path: String,
+) -> Result(Dict(String, Tensor), HfLoadError) {
+  hf_loader_io.load_safetensors_dict(path)
+}
+
+/// Load an `Embedding` from `prefix <> ".weight"` (`[vocab_size,
+/// embedding_dim]`).
+pub fn load_embedding(
+  weights: Dict(String, Tensor),
+  prefix: String,
+  vocab_size: Int,
+  embedding_dim: Int,
+) -> Result(Embedding, HfLoadError) {
+  hf_loader_io.load_embedding(weights, prefix, vocab_size, embedding_dim)
+}
+
+/// Load a `LayerNorm` from `prefix <> ".weight"` (scale) and
+/// `prefix <> ".bias"`, both `[num_features]`.
+pub fn load_layer_norm(
+  weights: Dict(String, Tensor),
+  prefix: String,
+  num_features: Int,
+) -> Result(LayerNorm, HfLoadError) {
+  hf_loader_io.load_layer_norm(weights, prefix, num_features)
+}
+
+/// Load a `MultiHeadAttention` from `q_proj`/`k_proj`/`v_proj`/`out_proj`
+/// (weight + bias each) under the supplied `prefix`.
+pub fn load_multi_head_attention(
+  weights: Dict(String, Tensor),
+  prefix: String,
+  num_heads: Int,
+  embed_dim: Int,
+) -> Result(MultiHeadAttention, HfLoadError) {
+  hf_loader_io.load_multi_head_attention(weights, prefix, num_heads, embed_dim)
+}
+
+/// Load a `FeedForward` from `linear1`/`linear2` (weight + bias each) under
+/// the supplied `prefix`.
+pub fn load_feed_forward(
+  weights: Dict(String, Tensor),
+  prefix: String,
+  embed_dim: Int,
+  hidden_dim: Int,
+  activation: Activation,
+) -> Result(FeedForward, HfLoadError) {
+  hf_loader_io.load_feed_forward(
+    weights,
+    prefix,
+    embed_dim,
+    hidden_dim,
+    activation,
+  )
+}
+
+/// Load a single `EncoderBlock` (MHA + 2× LayerNorm + FFN) under
+/// `prefix` (e.g. `"encoder.layers.0"`).
+pub fn load_encoder_block(
+  weights: Dict(String, Tensor),
+  prefix: String,
+  num_heads: Int,
+  embed_dim: Int,
+  hidden_dim: Int,
+  activation: Activation,
+) -> Result(EncoderBlock, HfLoadError) {
+  hf_loader_io.load_encoder_block(
+    weights,
+    prefix,
+    num_heads,
+    embed_dim,
+    hidden_dim,
+    activation,
+  )
+}
+
+/// Load a full `Transformer` (encoder stack + decoder stack) under the
+/// conventional `encoder.layers.{i}` / `decoder.layers.{i}` prefixes.
+pub fn load_transformer(
+  weights: Dict(String, Tensor),
+  num_enc_layers: Int,
+  num_dec_layers: Int,
+  embed_dim: Int,
+  num_heads: Int,
+  hidden_dim: Int,
+  activation: Activation,
+) -> Result(Transformer, HfLoadError) {
+  hf_loader_io.load_transformer(
+    weights,
+    num_enc_layers,
+    num_dec_layers,
+    embed_dim,
+    num_heads,
+    hidden_dim,
+    activation,
+  )
+}
+
+/// Read a `.safetensors` file then project it into a `Transformer` using
+/// the dimensions in `config`.
+pub fn from_safetensors_file(
+  path: String,
+  config: TransformerConfig,
+) -> Result(Transformer, HfLoadError) {
+  hf_loader_io.from_safetensors_file(path, config)
 }
