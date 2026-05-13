@@ -53,6 +53,16 @@ pub type TensorLayout =
 pub type TensorError =
   tensor.TensorError
 
+/// Runtime acceleration capabilities detected for this VM.
+pub type TensorCapabilities {
+  TensorCapabilities(
+    nif_loaded: Bool,
+    zig_loaded: Bool,
+    backend_info: String,
+    tflops_backends: List(TflopsBackend),
+  )
+}
+
 /// Result storage selected by the RTX-first planner.
 pub type AcceleratedTensor =
   cuda.AcceleratedTensor
@@ -297,6 +307,11 @@ pub fn map2(
   f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   tensor.map2(a, b, f)
+}
+
+/// Softmax along one axis, preserving shape and normalizing each slice.
+pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.softmax_axis(t, axis)
 }
 
 // --- Reductions -------------------------------------------------------------
@@ -614,9 +629,19 @@ pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.add_broadcast(a, b)
 }
 
+/// Subtract with broadcasting
+pub fn sub_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.sub_broadcast(a, b)
+}
+
 /// Multiply with broadcasting
 pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.mul_broadcast(a, b)
+}
+
+/// Divide with broadcasting
+pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.div_broadcast(a, b)
 }
 
 // --- Strided (Zero-copy) ----------------------------------------------------
@@ -732,4 +757,14 @@ pub fn measure_tflops_averaged(
 /// Detect available compute backends
 pub fn detect_backends() -> List(TflopsBackend) {
   tflops_mod.detect_backends()
+}
+
+/// Inspect native runtime acceleration availability.
+pub fn capabilities() -> TensorCapabilities {
+  TensorCapabilities(
+    nif_loaded: ffi.is_nif_loaded(),
+    zig_loaded: ffi.zig_is_loaded(),
+    backend_info: ffi.zig_backend_info(),
+    tflops_backends: detect_backends(),
+  )
 }
