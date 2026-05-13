@@ -19,6 +19,7 @@ import viva_tensor/core/error.{
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
+import viva_tensor/core/tensor_axis
 import viva_tensor/layout
 
 // --- Types ---
@@ -1382,22 +1383,25 @@ fn sum_axis_with_keepdims(
       case t.shape {
         [] -> Error(DimensionError("Cannot reduce scalar"))
         _ -> {
-          use axis_size <- result.try(axis_size(t.shape, axis_idx))
+          use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
           use data <- result.try(try_to_list(t))
 
-          let new_shape = reduced_shape(t.shape, axis_idx, keepdims)
+          let new_shape = tensor_axis.reduced_shape(t.shape, axis_idx, keepdims)
           let new_size = list.fold(new_shape, 1, fn(acc, d) { acc * d })
 
           case new_size <= 0 {
             True -> Ok(Tensor(data: [], shape: new_shape))
             False ->
-              reduce_sum_axis_data(
+              tensor_axis.reduce_sum_axis_data(
                 data,
                 t.shape,
                 new_shape,
                 axis_idx,
                 axis_size,
               )
+              |> result.map(fn(values) {
+                Tensor(data: values, shape: new_shape)
+              })
           }
         }
       }
@@ -1440,7 +1444,7 @@ fn mean_axis_with_keepdims(
   case axis_idx >= 0 && axis_idx < r {
     False -> Error(DimensionError("Invalid axis index"))
     True -> {
-      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       case axis_size <= 0 {
         True -> Error(DimensionError("Cannot compute mean along empty axis"))
         False ->
@@ -1458,7 +1462,7 @@ pub fn try_variance_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, variance_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.variance_list)
 }
 
 /// Variance along a specific axis.
@@ -1471,7 +1475,7 @@ pub fn try_variance_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, variance_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.variance_list)
 }
 
 /// Variance along a specific axis while keeping the reduced dimension as size 1.
@@ -1484,7 +1488,7 @@ pub fn variance_axis_keepdims(
 
 /// Standard deviation along a specific axis, preserving materialization failures.
 pub fn try_std_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, std_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.std_list)
 }
 
 /// Standard deviation along a specific axis.
@@ -1497,7 +1501,7 @@ pub fn try_std_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, std_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.std_list)
 }
 
 /// Standard deviation along a specific axis while keeping the reduced dimension as size 1.
@@ -1510,7 +1514,7 @@ pub fn std_axis_keepdims(
 
 /// Maximum along a specific axis, preserving materialization failures.
 pub fn try_max_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, max_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.max_list)
 }
 
 /// Maximum along a specific axis.
@@ -1523,7 +1527,7 @@ pub fn try_max_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, max_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.max_list)
 }
 
 /// Maximum along a specific axis while keeping the reduced dimension as size 1.
@@ -1536,7 +1540,7 @@ pub fn max_axis_keepdims(
 
 /// Minimum along a specific axis, preserving materialization failures.
 pub fn try_min_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, min_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.min_list)
 }
 
 /// Minimum along a specific axis.
@@ -1549,7 +1553,7 @@ pub fn try_min_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, min_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.min_list)
 }
 
 /// Minimum along a specific axis while keeping the reduced dimension as size 1.
@@ -1565,7 +1569,7 @@ pub fn try_argmax_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, argmax_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.argmax_list)
 }
 
 /// Flat argmax index along a specific axis, represented as Float values.
@@ -1578,7 +1582,7 @@ pub fn try_argmax_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, argmax_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.argmax_list)
 }
 
 /// Flat argmax index along a specific axis while keeping the reduced dimension.
@@ -1594,7 +1598,7 @@ pub fn try_argmin_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, argmin_list)
+  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.argmin_list)
 }
 
 /// Flat argmin index along a specific axis, represented as Float values.
@@ -1607,7 +1611,7 @@ pub fn try_argmin_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, argmin_list)
+  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.argmin_list)
 }
 
 /// Flat argmin index along a specific axis while keeping the reduced dimension.
@@ -1626,14 +1630,14 @@ pub fn try_softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   case axis >= 0 && axis < rnk {
     False -> Error(DimensionError("Invalid axis for softmax"))
     True -> {
-      use axis_size <- result.try(axis_size(shp, axis))
+      use axis_size <- result.try(tensor_axis.axis_size(shp, axis))
       let inner_size = layout_math.size(list.drop(shp, axis + 1))
 
       case axis_size <= 0 {
         True -> Ok(Tensor(data: [], shape: shp))
         False -> {
           use input <- result.try(try_to_list(t))
-          use data <- result.try(softmax_axis_data(
+          use data <- result.try(tensor_axis.softmax_axis_data(
             input,
             size(t),
             axis_size,
@@ -1651,207 +1655,6 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   try_softmax_axis(t, axis)
 }
 
-fn softmax_axis_data(
-  data: List(Float),
-  total_size: Int,
-  axis_size: Int,
-  inner_size: Int,
-) -> Result(List(Float), TensorError) {
-  let group_width = axis_size * inner_size
-
-  case group_width <= 0 {
-    True -> Ok([])
-    False -> {
-      let outer_size = total_size / group_width
-      list.range(0, outer_size - 1)
-      |> list.fold(Ok([]), fn(acc, outer) {
-        use values <- result.try(acc)
-        use chunk <- result.try(softmax_axis_outer(
-          data,
-          outer,
-          axis_size,
-          inner_size,
-        ))
-        Ok(list.append(values, chunk))
-      })
-    }
-  }
-}
-
-fn softmax_axis_outer(
-  data: List(Float),
-  outer: Int,
-  axis_size: Int,
-  inner_size: Int,
-) -> Result(List(Float), TensorError) {
-  use groups <- result.try(
-    list.range(0, inner_size - 1)
-    |> list.fold(Ok([]), fn(acc, inner) {
-      use values <- result.try(acc)
-      use normalized <- result.try(softmax_axis_values(
-        data,
-        outer,
-        inner,
-        axis_size,
-        inner_size,
-      ))
-      Ok([normalized, ..values])
-    })
-    |> result.map(list.reverse),
-  )
-
-  list.range(0, axis_size - 1)
-  |> list.fold(Ok([]), fn(acc, axis_pos) {
-    use values <- result.try(acc)
-    use axis_values <- result.try(
-      groups
-      |> list.fold(Ok([]), fn(group_acc, group) {
-        use group_values <- result.try(group_acc)
-        use value <- result.try(
-          list_at_float(group, axis_pos)
-          |> result.map_error(fn(_) {
-            IndexOutOfBounds(axis_pos, list.length(group))
-          }),
-        )
-        Ok([value, ..group_values])
-      })
-      |> result.map(list.reverse),
-    )
-    Ok(list.append(values, axis_values))
-  })
-}
-
-fn softmax_axis_values(
-  data: List(Float),
-  outer: Int,
-  inner: Int,
-  axis_size: Int,
-  inner_size: Int,
-) -> Result(List(Float), TensorError) {
-  case
-    list.range(0, axis_size - 1)
-    |> list.fold(Ok([]), fn(acc, axis_pos) {
-      use values <- result.try(acc)
-      let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
-      use value <- result.try(
-        list_at_float(data, index)
-        |> result.map_error(fn(_) { IndexOutOfBounds(index, list.length(data)) }),
-      )
-      Ok([value, ..values])
-    })
-    |> result.map(list.reverse)
-  {
-    Ok(values) -> softmax_values(values)
-    Error(error) -> Error(error)
-  }
-}
-
-fn softmax_values(values: List(Float)) -> Result(List(Float), TensorError) {
-  case values {
-    [] -> Error(DimensionError("Cannot compute softmax over an empty slice"))
-    [first, ..rest] -> {
-      let max_value =
-        list.fold(rest, first, fn(acc, value) { float.max(acc, value) })
-      let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
-      let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
-
-      Ok(list.map(shifted, fn(value) { value /. total }))
-    }
-  }
-}
-
-fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
-  lst
-  |> list.index_map(fn(item, i) { #(item, i) })
-  |> list.filter(fn(pair) { pair.1 != idx })
-  |> list.map(fn(pair) { pair.0 })
-}
-
-fn axis_size(shape: List(Int), axis_idx: Int) -> Result(Int, TensorError) {
-  list_at_int(shape, axis_idx)
-  |> result.map_error(fn(_) { DimensionError("Invalid axis index") })
-}
-
-fn reduced_shape(shape: List(Int), axis_idx: Int, keepdims: Bool) -> List(Int) {
-  case keepdims {
-    True ->
-      shape
-      |> list.index_map(fn(dim, idx) {
-        case idx == axis_idx {
-          True -> 1
-          False -> dim
-        }
-      })
-    False -> remove_at_index(shape, axis_idx)
-  }
-}
-
-fn reduce_sum_axis_data(
-  data: List(Float),
-  input_shape: List(Int),
-  output_shape: List(Int),
-  axis_idx: Int,
-  axis_size: Int,
-) -> Result(Tensor, TensorError) {
-  case axis_size <= 0 {
-    True -> {
-      let output_size = list.fold(output_shape, 1, fn(acc, dim) { acc * dim })
-      Ok(Tensor(data: list.repeat(0.0, output_size), shape: output_shape))
-    }
-    False -> {
-      let output_size = list.fold(output_shape, 1, fn(acc, dim) { acc * dim })
-      list.range(0, output_size - 1)
-      |> list.fold(Ok([]), fn(acc, out_idx) {
-        use values <- result.try(acc)
-        use value <- result.try(sum_axis_output(
-          data,
-          input_shape,
-          output_shape,
-          out_idx,
-          axis_idx,
-          axis_size,
-        ))
-        Ok([value, ..values])
-      })
-      |> result.map(fn(values) {
-        Tensor(data: list.reverse(values), shape: output_shape)
-      })
-    }
-  }
-}
-
-fn sum_axis_output(
-  data: List(Float),
-  input_shape: List(Int),
-  output_shape: List(Int),
-  out_idx: Int,
-  axis_idx: Int,
-  axis_size: Int,
-) -> Result(Float, TensorError) {
-  let output_coords = flat_to_multi(out_idx, output_shape)
-  list.range(0, axis_size - 1)
-  |> list.fold(Ok(0.0), fn(acc, axis_pos) {
-    use total <- result.try(acc)
-    let input_coords =
-      insert_reduced_axis(
-        output_coords,
-        axis_idx,
-        axis_pos,
-        output_shape,
-        input_shape,
-      )
-
-    let input_idx = multi_to_flat(input_coords, input_shape)
-    use value <- result.try(
-      list_at_float(data, input_idx)
-      |> result.map_error(fn(_) {
-        IndexOutOfBounds(input_idx, list.length(data))
-      }),
-    )
-    Ok(total +. value)
-  })
-}
-
 fn cumulative_axis(
   t: Tensor,
   axis_idx: Int,
@@ -1861,14 +1664,14 @@ fn cumulative_axis(
   case axis_idx >= 0 && axis_idx < r {
     False -> Error(DimensionError("Invalid axis index"))
     True -> {
-      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       let inner_size = layout_math.size(list.drop(t.shape, axis_idx + 1))
 
       case axis_size <= 0 {
         True -> Ok(Tensor(data: [], shape: t.shape))
         False -> {
           use data <- result.try(try_to_list(t))
-          use result_data <- result.try(axis_transform_data(
+          use result_data <- result.try(tensor_axis.axis_transform_data(
             data,
             size(t),
             axis_size,
@@ -1882,99 +1685,6 @@ fn cumulative_axis(
   }
 }
 
-fn axis_transform_data(
-  data: List(Float),
-  total_size: Int,
-  axis_size: Int,
-  inner_size: Int,
-  transform: fn(List(Float)) -> List(Float),
-) -> Result(List(Float), TensorError) {
-  let group_width = axis_size * inner_size
-
-  case group_width <= 0 {
-    True -> Ok([])
-    False -> {
-      let outer_size = total_size / group_width
-      list.range(0, outer_size - 1)
-      |> list.fold(Ok([]), fn(acc, outer) {
-        use values <- result.try(acc)
-        use chunk <- result.try(axis_transform_outer(
-          data,
-          outer,
-          axis_size,
-          inner_size,
-          transform,
-        ))
-        Ok(list.append(values, chunk))
-      })
-    }
-  }
-}
-
-fn axis_transform_outer(
-  data: List(Float),
-  outer: Int,
-  axis_size: Int,
-  inner_size: Int,
-  transform: fn(List(Float)) -> List(Float),
-) -> Result(List(Float), TensorError) {
-  use groups <- result.try(
-    list.range(0, inner_size - 1)
-    |> list.fold(Ok([]), fn(acc, inner) {
-      use values <- result.try(acc)
-      use axis_values <- result.try(axis_values(
-        data,
-        outer,
-        inner,
-        axis_size,
-        inner_size,
-      ))
-      Ok([transform(axis_values), ..values])
-    })
-    |> result.map(list.reverse),
-  )
-
-  list.range(0, axis_size - 1)
-  |> list.fold(Ok([]), fn(acc, axis_pos) {
-    use values <- result.try(acc)
-    use axis_values <- result.try(
-      groups
-      |> list.fold(Ok([]), fn(group_acc, group) {
-        use group_values <- result.try(group_acc)
-        use value <- result.try(
-          list_at_float(group, axis_pos)
-          |> result.map_error(fn(_) {
-            IndexOutOfBounds(axis_pos, list.length(group))
-          }),
-        )
-        Ok([value, ..group_values])
-      })
-      |> result.map(list.reverse),
-    )
-    Ok(list.append(values, axis_values))
-  })
-}
-
-fn axis_values(
-  data: List(Float),
-  outer: Int,
-  inner: Int,
-  axis_size: Int,
-  inner_size: Int,
-) -> Result(List(Float), TensorError) {
-  list.range(0, axis_size - 1)
-  |> list.fold(Ok([]), fn(acc, axis_pos) {
-    use values <- result.try(acc)
-    let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
-    use value <- result.try(
-      list_at_float(data, index)
-      |> result.map_error(fn(_) { IndexOutOfBounds(index, list.length(data)) }),
-    )
-    Ok([value, ..values])
-  })
-  |> result.map(list.reverse)
-}
-
 fn reduce_axis_with_keepdims(
   t: Tensor,
   axis_idx: Int,
@@ -1985,163 +1695,24 @@ fn reduce_axis_with_keepdims(
   case axis_idx >= 0 && axis_idx < r {
     False -> Error(DimensionError("Invalid axis index"))
     True -> {
-      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       case axis_size <= 0 {
         True -> Error(DimensionError("Cannot reduce along empty axis"))
         False -> {
           use data <- result.try(try_to_list(t))
-          let output_shape = reduced_shape(t.shape, axis_idx, keepdims)
-          let output_size = list.fold(output_shape, 1, fn(acc, d) { acc * d })
-
-          list.range(0, output_size - 1)
-          |> list.fold(Ok([]), fn(acc, out_idx) {
-            use values <- result.try(acc)
-            use value <- result.try(reduce_axis_output(
-              data,
-              t.shape,
-              output_shape,
-              out_idx,
-              axis_idx,
-              axis_size,
-              reducer,
-            ))
-            Ok([value, ..values])
-          })
-          |> result.map(fn(values) {
-            Tensor(data: list.reverse(values), shape: output_shape)
-          })
+          let output_shape =
+            tensor_axis.reduced_shape(t.shape, axis_idx, keepdims)
+          use values <- result.try(tensor_axis.reduce_axis_data(
+            data,
+            t.shape,
+            output_shape,
+            axis_idx,
+            axis_size,
+            reducer,
+          ))
+          Ok(Tensor(data: values, shape: output_shape))
         }
       }
-    }
-  }
-}
-
-fn reduce_axis_output(
-  data: List(Float),
-  input_shape: List(Int),
-  output_shape: List(Int),
-  out_idx: Int,
-  axis_idx: Int,
-  axis_size: Int,
-  reducer: fn(List(Float)) -> Result(Float, TensorError),
-) -> Result(Float, TensorError) {
-  let output_coords = flat_to_multi(out_idx, output_shape)
-
-  let values_result =
-    list.range(0, axis_size - 1)
-    |> list.fold(Ok([]), fn(acc, axis_pos) {
-      use values <- result.try(acc)
-      let input_coords =
-        insert_reduced_axis(
-          output_coords,
-          axis_idx,
-          axis_pos,
-          output_shape,
-          input_shape,
-        )
-
-      let input_idx = multi_to_flat(input_coords, input_shape)
-      use value <- result.try(
-        list_at_float(data, input_idx)
-        |> result.map_error(fn(_) {
-          IndexOutOfBounds(input_idx, list.length(data))
-        }),
-      )
-      Ok([value, ..values])
-    })
-
-  case values_result {
-    Ok(values) -> reducer(list.reverse(values))
-    Error(error) -> Error(error)
-  }
-}
-
-fn max_list(values: List(Float)) -> Result(Float, TensorError) {
-  case values {
-    [] -> Error(DimensionError("Cannot compute max of an empty tensor"))
-    [first, ..rest] ->
-      Ok(list.fold(rest, first, fn(acc, x) { float.max(acc, x) }))
-  }
-}
-
-fn min_list(values: List(Float)) -> Result(Float, TensorError) {
-  case values {
-    [] -> Error(DimensionError("Cannot compute min of an empty tensor"))
-    [first, ..rest] ->
-      Ok(list.fold(rest, first, fn(acc, x) { float.min(acc, x) }))
-  }
-}
-
-fn variance_list(values: List(Float)) -> Result(Float, TensorError) {
-  case maths.variance(values, 0) {
-    Ok(value) -> Ok(value)
-    Error(_) ->
-      Error(DimensionError("Cannot compute variance of an empty tensor"))
-  }
-}
-
-fn std_list(values: List(Float)) -> Result(Float, TensorError) {
-  case maths.standard_deviation(values, 0) {
-    Ok(value) -> Ok(value)
-    Error(_) -> Error(DimensionError("Cannot compute std of an empty tensor"))
-  }
-}
-
-fn argmax_list(values: List(Float)) -> Result(Float, TensorError) {
-  case values {
-    [] -> Error(DimensionError("Cannot compute argmax of an empty tensor"))
-    [first, ..rest] -> {
-      let #(idx, _, _) =
-        list.fold(rest, #(0, first, 1), fn(acc, value) {
-          let #(best_idx, best_value, current_idx) = acc
-          case value >. best_value {
-            True -> #(current_idx, value, current_idx + 1)
-            False -> #(best_idx, best_value, current_idx + 1)
-          }
-        })
-
-      Ok(int.to_float(idx))
-    }
-  }
-}
-
-fn argmin_list(values: List(Float)) -> Result(Float, TensorError) {
-  case values {
-    [] -> Error(DimensionError("Cannot compute argmin of an empty tensor"))
-    [first, ..rest] -> {
-      let #(idx, _, _) =
-        list.fold(rest, #(0, first, 1), fn(acc, value) {
-          let #(best_idx, best_value, current_idx) = acc
-          case value <. best_value {
-            True -> #(current_idx, value, current_idx + 1)
-            False -> #(best_idx, best_value, current_idx + 1)
-          }
-        })
-
-      Ok(int.to_float(idx))
-    }
-  }
-}
-
-fn insert_reduced_axis(
-  output_coords: List(Int),
-  axis_idx: Int,
-  axis_pos: Int,
-  output_shape: List(Int),
-  input_shape: List(Int),
-) -> List(Int) {
-  case list.length(output_shape) == list.length(input_shape) {
-    True ->
-      output_coords
-      |> list.index_map(fn(coord, idx) {
-        case idx == axis_idx {
-          True -> axis_pos
-          False -> coord
-        }
-      })
-    False -> {
-      let #(before, after) = list.split(output_coords, axis_idx)
-      list.flatten([before, [axis_pos], after])
     }
   }
 }
@@ -2452,7 +2023,7 @@ pub fn concat_axis(
               // Build new shape
               let concat_dim =
                 list.fold(tensors, 0, fn(acc, t) {
-                  case axis_size(t.shape, axis) {
+                  case tensor_axis.axis_size(t.shape, axis) {
                     Ok(d) -> acc + d
                     Error(_) -> acc
                   }
@@ -2502,7 +2073,9 @@ pub fn concat_axis(
                           case found_t >= 0 {
                             True -> acc
                             False -> {
-                              let t_axis_size = case axis_size(t.shape, axis) {
+                              let t_axis_size = case
+                                tensor_axis.axis_size(t.shape, axis)
+                              {
                                 Ok(d) -> d
                                 Error(_) -> 0
                               }
@@ -2752,7 +2325,7 @@ pub fn slice(
             list_at_int(lengths, 0)
             |> result.map_error(fn(_) { DimensionError("Invalid slice length") }),
           )
-          use dim <- result.try(axis_size(t.shape, 0))
+          use dim <- result.try(tensor_axis.axis_size(t.shape, 0))
 
           case s < 0 || len < 0 || s + len > dim {
             True -> Error(IndexOutOfBounds(s + len, dim))
@@ -3809,7 +3382,7 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
       case d == 1 {
         False -> Error(InvalidShape("Dimension at axis is not 1"))
         True -> {
-          let new_shape = remove_at_index(t.shape, axis)
+          let new_shape = tensor_axis.remove_at_index(t.shape, axis)
           case t {
             Tensor(data, _) -> Ok(Tensor(data: data, shape: new_shape))
             NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
@@ -3817,7 +3390,7 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
               Ok(StridedTensor(
                 storage: storage,
                 shape: new_shape,
-                strides: remove_at_index(strides, axis),
+                strides: tensor_axis.remove_at_index(strides, axis),
                 offset: offset,
               ))
           }
