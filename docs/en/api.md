@@ -119,6 +119,8 @@ let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))
 | `size(tensor)`            | Total element count.                                             |
 | `rank(tensor)`            | Number of dimensions.                                            |
 | `reshape(tensor, shape)`  | Change shape while preserving element count.                     |
+| `device(tensor)`          | Payload device class.                                            |
+| `dtype(tensor)`           | Tensor element type.                                             |
 | `flatten(tensor)`         | Convert to one dimension.                                        |
 | `squeeze(tensor)`         | Remove size-one dimensions.                                      |
 | `unsqueeze(tensor, axis)` | Insert a size-one dimension.                                     |

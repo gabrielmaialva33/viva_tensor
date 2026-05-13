@@ -188,7 +188,7 @@ make build-all
 Use `import viva_tensor as t` for the stable library surface. The root module
 exports tensor creation, math, reductions, broadcasting, shape/layout inspection,
 native acceleration helpers, `softmax_axis`, runtime `capabilities()`, and
-`plan_backend()` for deterministic backend selection.
+`plan_backend()` for deterministic backend selection. Backend plans include rejected backend reasons, and `device()`/`dtype()` expose basic tensor placement metadata.
 
 Lower-level backend, quantization, sparse, neural-network, telemetry, benchmark,
 and example modules remain experimental until their contracts are documented and

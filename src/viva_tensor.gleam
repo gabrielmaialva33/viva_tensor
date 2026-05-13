@@ -656,6 +656,18 @@ pub fn rank(t: Tensor) -> Int {
 pub fn layout(t: Tensor) -> TensorLayout {
   tensor.layout(t)
 }
+/// Inspect where a tensor payload lives.
+pub fn device(t: Tensor) -> TensorDevice {
+  let info = layout(t)
+  info.device
+}
+
+/// Inspect the tensor element type.
+pub fn dtype(t: Tensor) -> TensorDtype {
+  let info = layout(t)
+  info.dtype
+}
+
 
 /// Convert to list
 pub fn to_list(t: Tensor) -> List(Float) {

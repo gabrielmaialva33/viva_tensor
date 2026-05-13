@@ -33,6 +33,7 @@ All notable changes to this project will be documented in this file.
 - Added stable backend capability records and `plan_backend()` so callers can
   inspect BEAM CPU, native CPU, CUDA FP32/FP16/INT8, and sparse backend
   availability without touching experimental modules.
+- Added `device()`/`dtype()` helpers for basic tensor placement metadata.
 
 ### Highlights
 
