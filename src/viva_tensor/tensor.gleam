@@ -13,6 +13,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
+import gleam_community/maths
 import viva_tensor/core/error.{
   BroadcastError, DimensionError, IndexOutOfBounds, InvalidShape, ShapeMismatch,
 }
@@ -92,6 +93,55 @@ pub fn from_list2d(rows: List(List(Float))) -> Result(Tensor, TensorError) {
 /// Create vector (1D tensor)
 pub fn vector(data: List(Float)) -> Tensor {
   from_list(data)
+}
+
+/// Create a 1D tensor with evenly spaced values over a closed interval.
+pub fn try_linspace(
+  start: Float,
+  stop: Float,
+  steps: Int,
+) -> Result(Tensor, TensorError) {
+  case steps {
+    n if n <= 0 -> Error(InvalidShape("linspace requires steps > 0"))
+    1 -> Ok(from_list([start]))
+    _ -> {
+      case maths.linear_space(start, stop, steps, True) {
+        Ok(data) -> Ok(from_list(data))
+        Error(_) -> Error(InvalidShape("linspace requires steps > 0"))
+      }
+    }
+  }
+}
+
+/// Create a 1D tensor with evenly spaced values over a closed interval.
+pub fn linspace(start: Float, stop: Float, steps: Int) -> Tensor {
+  try_linspace(start, stop, steps)
+  |> result.unwrap(from_list([]))
+}
+
+/// Create a 1D tensor with logarithmically spaced values.
+pub fn try_logspace(
+  start: Float,
+  stop: Float,
+  steps: Int,
+  base: Float,
+) -> Result(Tensor, TensorError) {
+  case steps <= 0 || base <=. 0.0 {
+    True -> Error(InvalidShape("logspace requires steps > 0 and base > 0"))
+    False -> {
+      case maths.logarithmic_space(start, stop, steps, True, base) {
+        Ok(data) -> Ok(from_list(data))
+        Error(_) ->
+          Error(InvalidShape("logspace requires steps > 0 and base > 0"))
+      }
+    }
+  }
+}
+
+/// Create a 1D tensor with logarithmically spaced values.
+pub fn logspace(start: Float, stop: Float, steps: Int, base: Float) -> Tensor {
+  try_logspace(start, stop, steps, base)
+  |> result.unwrap(from_list([]))
 }
 
 /// Create matrix (2D tensor) with explicit dimensions
@@ -1957,6 +2007,31 @@ pub fn try_normalize(t: Tensor) -> Result(Tensor, TensorError) {
 pub fn normalize(t: Tensor) -> Tensor {
   try_normalize(t)
   |> result.unwrap(t)
+}
+
+/// Compare two scalars with relative and absolute tolerances.
+pub fn is_close(a: Float, b: Float, rtol: Float, atol: Float) -> Bool {
+  maths.is_close(a, b, rtol, atol)
+}
+
+/// Compare two tensors element-wise and return whether all pairs are close.
+pub fn all_close(
+  a: Tensor,
+  b: Tensor,
+  rtol: Float,
+  atol: Float,
+) -> Result(Bool, TensorError) {
+  case a.shape == b.shape {
+    False -> Error(ShapeMismatch(a.shape, b.shape))
+    True -> {
+      use a_data <- result.try(try_to_list(a))
+      use b_data <- result.try(try_to_list(b))
+
+      maths.all_close(list.zip(a_data, b_data), rtol, atol)
+      |> list.all(fn(close) { close })
+      |> Ok
+    }
+  }
 }
 
 /// Clamp values to [min, max], preserving materialization failures.

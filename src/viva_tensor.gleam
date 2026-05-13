@@ -195,6 +195,35 @@ pub fn vector(data: List(Float)) -> Tensor {
   tensor.vector(data)
 }
 
+/// Create a 1D tensor with evenly spaced values over a closed interval.
+pub fn linspace(start: Float, stop: Float, steps: Int) -> Tensor {
+  tensor.linspace(start, stop, steps)
+}
+
+/// Create a 1D tensor with evenly spaced values over a closed interval.
+pub fn try_linspace(
+  start: Float,
+  stop: Float,
+  steps: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_linspace(start, stop, steps)
+}
+
+/// Create a 1D tensor with logarithmically spaced values.
+pub fn logspace(start: Float, stop: Float, steps: Int, base: Float) -> Tensor {
+  tensor.logspace(start, stop, steps, base)
+}
+
+/// Create a 1D tensor with logarithmically spaced values.
+pub fn try_logspace(
+  start: Float,
+  stop: Float,
+  steps: Int,
+  base: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_logspace(start, stop, steps, base)
+}
+
 /// Create matrix (2D tensor)
 pub fn matrix(
   rows: Int,
@@ -846,6 +875,21 @@ pub fn normalize(t: Tensor) -> Tensor {
 /// Normalize to unit length, preserving materialization failures.
 pub fn try_normalize(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_normalize(t)
+}
+
+/// Compare two scalars with relative and absolute tolerances.
+pub fn is_close(a: Float, b: Float, rtol: Float, atol: Float) -> Bool {
+  tensor.is_close(a, b, rtol, atol)
+}
+
+/// Compare two tensors element-wise and return whether all pairs are close.
+pub fn all_close(
+  a: Tensor,
+  b: Tensor,
+  rtol: Float,
+  atol: Float,
+) -> Result(Bool, TensorError) {
+  tensor.all_close(a, b, rtol, atol)
 }
 
 /// Add a scalar to every element.
