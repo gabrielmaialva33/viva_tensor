@@ -31,6 +31,7 @@ internal_modules = [
   "viva_tensor/nn/autograd",
   "viva_tensor/nn/backward",
   "viva_tensor/nn/conv",
+  "viva_tensor/nn/cv",
   "viva_tensor/nn/embedding",
   "viva_tensor/nn/init",
   "viva_tensor/nn/layers",

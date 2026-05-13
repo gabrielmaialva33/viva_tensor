@@ -44,6 +44,7 @@ import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/backward as nn_backward
 import viva_tensor/nn/conv as nn_conv
+import viva_tensor/nn/cv as nn_cv
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/init as nn_init
 import viva_tensor/nn/losses as nn_losses
@@ -236,9 +237,21 @@ pub type RmsNorm =
 pub type BatchNorm1d =
   nn_norm.BatchNorm1d
 
+/// 2D batch normalization layer. Normalizes over `[B, H, W]` per channel `C`.
+pub type BatchNorm2d =
+  nn_cv.BatchNorm2d
+
 /// Group normalization layer.
 pub type GroupNorm =
   nn_norm.GroupNorm
+
+/// Config for `max_unpool_2d_forward` — inverse of `max_pool_2d_with_indices`.
+pub type MaxUnpool2dConfig =
+  nn_cv.MaxUnpool2dConfig
+
+/// Config for `roi_align`.
+pub type RoiAlignConfig =
+  nn_cv.RoiAlignConfig
 
 /// A labeled training example: an input tensor paired with a target tensor.
 pub type Sample =
@@ -2345,6 +2358,79 @@ pub fn upsample_forward(
   input: Tensor,
 ) -> Result(Tensor, TensorError) {
   nn_pool.upsample_forward(config, input)
+}
+
+// --- Computer-vision ops ---------------------------------------------------
+
+/// Run a 2D max-pool returning both pooled values and the flat argmax index
+/// per output cell. Input `[N, C, H, W]`; outputs are both
+/// `[N, C, H_out, W_out]`. Indices are stored as `Float` (truncated by the
+/// unpool consumer); fully-padded windows get `-1.0`.
+pub fn max_pool_2d_with_indices(
+  input: Tensor,
+  kernel_size: Int,
+  stride: Int,
+  padding: Int,
+) -> Result(#(Tensor, Tensor), TensorError) {
+  nn_cv.max_pool_2d_with_indices(input, kernel_size, stride, padding)
+}
+
+/// Inverse of `max_pool_2d_with_indices`. Scatters pooled values back at the
+/// stored indices, zeros elsewhere. Input `[N, C, H_out, W_out]`, indices
+/// `[N, C, H_out, W_out]`, output `[N, C, H_in, W_in]` where `(H_in, W_in)`
+/// comes from `output_size`.
+pub fn max_unpool_2d_forward(
+  config: MaxUnpool2dConfig,
+  input: Tensor,
+  indices: Tensor,
+  output_size: #(Int, Int),
+) -> Result(Tensor, TensorError) {
+  nn_cv.max_unpool_2d_forward(config, input, indices, output_size)
+}
+
+/// Greedy Non-Maximum Suppression. `boxes` `[N, 4]` (rows `[x1, y1, x2, y2]`),
+/// `scores` `[N]`. Returns the indices of kept boxes, sorted by descending
+/// score.
+pub fn nms(
+  boxes: Tensor,
+  scores: Tensor,
+  iou_threshold: Float,
+) -> Result(List(Int), TensorError) {
+  nn_cv.nms(boxes, scores, iou_threshold)
+}
+
+/// Bilinear ROIAlign. `features` `[N, C, H, W]`, `rois` `[K, 5]` with rows
+/// `[batch_index, x1, y1, x2, y2]`. Output `[K, C, output_h, output_w]`.
+pub fn roi_align(
+  config: RoiAlignConfig,
+  features: Tensor,
+  rois: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_cv.roi_align(config, features, rois)
+}
+
+/// Batched 2-D matmul `[Ba, M, K] @ [Bb, K, N] -> [max(Ba, Bb), M, N]` with
+/// broadcasting when either batch dim is `1`.
+pub fn batched_matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  nn_cv.batched_matmul(a, b)
+}
+
+/// Initialize a `BatchNorm2d` with `scale = ones([C])`, `bias = zeros([C])`,
+/// `running_mean = zeros([C])`, `running_var = ones([C])`, `momentum = 0.1`,
+/// `eps = 1.0e-5`. `C = num_features`.
+pub fn batch_norm_2d_init(num_features: Int) -> BatchNorm2d {
+  nn_cv.batch_norm_2d_init(num_features)
+}
+
+/// Forward pass for `BatchNorm2d`. Input `[B, C, H, W]`, output same shape.
+/// In training mode updates running stats via EMA; in eval mode uses them
+/// directly. Returns the (possibly updated) layer plus the output.
+pub fn batch_norm_2d_forward(
+  layer: BatchNorm2d,
+  input: Tensor,
+  training: Bool,
+) -> Result(#(BatchNorm2d, Tensor), TensorError) {
+  nn_cv.batch_norm_2d_forward(layer, input, training)
 }
 
 // --- TFLOPS Benchmarking ----------------------------------------------------
