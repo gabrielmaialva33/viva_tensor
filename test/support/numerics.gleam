@@ -124,7 +124,5 @@ fn close(actual: Float, expected: Float, rtol: Float, atol: Float) -> Bool {
 }
 
 fn shape_to_string(shape: List(Int)) -> String {
-  "["
-  <> string.join(list.map(shape, int.to_string), ", ")
-  <> "]"
+  "[" <> string.join(list.map(shape, int.to_string), ", ") <> "]"
 }

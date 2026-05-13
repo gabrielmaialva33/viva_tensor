@@ -309,8 +309,7 @@ fn general_kernel(
         Error(_) -> 0
       }
     })
-  let sum_combos =
-    cartesian(list.map(sum_dims, fn(d) { list.range(0, d - 1) }))
+  let sum_combos = cartesian(list.map(sum_dims, fn(d) { list.range(0, d - 1) }))
 
   let lhs_data = list.zip(lhs, operands)
 

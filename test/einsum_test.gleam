@@ -168,4 +168,3 @@ pub fn einsum_ellipsis_rejected_test() {
     Error(_) -> Nil
   }
 }
-

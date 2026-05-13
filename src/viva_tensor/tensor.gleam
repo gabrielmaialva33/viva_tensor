@@ -5306,11 +5306,7 @@ pub fn einsum(
   use parsed <- result.try(einsum_kernel.parse(equation))
   let #(lhs_labels, rhs_labels) = parsed
   let ops = list.map(operands, fn(t) { tensor_to_operand(t) })
-  use dim_map <- result.try(einsum_kernel.validate(
-    lhs_labels,
-    rhs_labels,
-    ops,
-  ))
+  use dim_map <- result.try(einsum_kernel.validate(lhs_labels, rhs_labels, ops))
 
   case operands, lhs_labels {
     [a], [labels_a] ->
