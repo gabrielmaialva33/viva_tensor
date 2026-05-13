@@ -1806,35 +1806,47 @@ pub fn stack(tensors: List(Tensor), axis: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Take first N elements along first axis
-pub fn take_first(t: Tensor, n: Int) -> Tensor {
-  let data = get_data(t)
+/// Take first N elements along first axis, preserving materialization failures.
+pub fn try_take_first(t: Tensor, n: Int) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
   case t.shape {
-    [] -> t
+    [] -> Ok(t)
     [first_dim, ..rest_dims] -> {
       let take_n = int.min(n, first_dim)
       let stride = list.fold(rest_dims, 1, fn(acc, d) { acc * d })
       let new_data = list.take(data, take_n * stride)
       let new_shape = [take_n, ..rest_dims]
-      Tensor(data: new_data, shape: new_shape)
+      Ok(Tensor(data: new_data, shape: new_shape))
     }
   }
 }
 
-/// Take last N elements along first axis
-pub fn take_last(t: Tensor, n: Int) -> Tensor {
-  let data = get_data(t)
+/// Take first N elements along first axis.
+pub fn take_first(t: Tensor, n: Int) -> Tensor {
+  try_take_first(t, n)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
+/// Take last N elements along first axis, preserving materialization failures.
+pub fn try_take_last(t: Tensor, n: Int) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
   case t.shape {
-    [] -> t
+    [] -> Ok(t)
     [first_dim, ..rest_dims] -> {
       let take_n = int.min(n, first_dim)
       let stride = list.fold(rest_dims, 1, fn(acc, d) { acc * d })
       let skip = { first_dim - take_n } * stride
       let new_data = list.drop(data, skip)
       let new_shape = [take_n, ..rest_dims]
-      Tensor(data: new_data, shape: new_shape)
+      Ok(Tensor(data: new_data, shape: new_shape))
     }
   }
+}
+
+/// Take last N elements along first axis.
+pub fn take_last(t: Tensor, n: Int) -> Tensor {
+  try_take_last(t, n)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
 }
 
 /// Slice tensor: extract sub-tensor from start to start+lengths
@@ -1907,20 +1919,32 @@ pub fn slice(
   }
 }
 
-/// L2 norm: ||x||_2 = sqrt(sum(x_i^2))
-pub fn norm(t: Tensor) -> Float {
-  let data = get_data(t)
+/// L2 norm: ||x||_2 = sqrt(sum(x_i^2)), preserving materialization failures.
+pub fn try_norm(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
   let sum_sq = list.fold(data, 0.0, fn(acc, x) { acc +. x *. x })
-  ffi.sqrt(sum_sq)
+  Ok(ffi.sqrt(sum_sq))
 }
 
-/// Normalize to unit length: x / ||x||_2
-pub fn normalize(t: Tensor) -> Tensor {
-  let n = norm(t)
+/// L2 norm: ||x||_2 = sqrt(sum(x_i^2)).
+pub fn norm(t: Tensor) -> Float {
+  try_norm(t)
+  |> result.unwrap(0.0)
+}
+
+/// Normalize to unit length: x / ||x||_2, preserving materialization failures.
+pub fn try_normalize(t: Tensor) -> Result(Tensor, TensorError) {
+  use n <- result.try(try_norm(t))
   case n >. 0.0001 {
-    True -> scale(t, 1.0 /. n)
-    False -> t
+    True -> try_scale(t, 1.0 /. n)
+    False -> Ok(t)
   }
+}
+
+/// Normalize to unit length: x / ||x||_2.
+pub fn normalize(t: Tensor) -> Tensor {
+  try_normalize(t)
+  |> result.unwrap(t)
 }
 
 /// Clamp values to [min, max]

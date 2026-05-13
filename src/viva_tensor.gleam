@@ -828,9 +828,19 @@ pub fn norm(t: Tensor) -> Float {
   tensor.norm(t)
 }
 
+/// L2 norm, preserving materialization failures.
+pub fn try_norm(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_norm(t)
+}
+
 /// Normalize to unit length
 pub fn normalize(t: Tensor) -> Tensor {
   tensor.normalize(t)
+}
+
+/// Normalize to unit length, preserving materialization failures.
+pub fn try_normalize(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_normalize(t)
 }
 
 /// Clamp values
