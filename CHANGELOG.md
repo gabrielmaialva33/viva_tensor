@@ -86,6 +86,9 @@ All notable changes to this project will be documented in this file.
   failures while keeping the existing convenience API compatible.
 - Added fallible scalar utility helpers `try_add_scalar()`, `try_negate()`, and
   `try_clamp()`, with `try_clamp()` exposed from the stable root facade.
+- Added fallible quantization metrics and backed scalar math helpers with
+  `gleam_community_maths`, replacing local logarithm/mean/percentile/cosine
+  approximations with maintained community implementations.
 
 ### Highlights
 
