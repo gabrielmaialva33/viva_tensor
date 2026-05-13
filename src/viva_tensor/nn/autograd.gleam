@@ -48,10 +48,12 @@
 //// ```
 
 import gleam/dict.{type Dict}
+import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
+import gleam_community/maths
 import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/ops
@@ -363,6 +365,597 @@ pub fn relu(tape: Tape, a: Variable) -> Traced(Variable) {
   let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
 
   Traced(value: Variable(id: res_id, data: res_data), tape: new_tape)
+}
+
+// -------------------------------------------------------------------------
+// Traced Op Wrappers (Sprint 6) - One-stop helpers per primitive
+// -------------------------------------------------------------------------
+//
+// Each `traced_*` helper:
+//   1. Runs the forward op on the underlying `Tensor` values.
+//   2. Registers a `BackwardFn` closure that captures exactly the saved
+//      tensors required for the analytical backward formula.
+//
+// Convention notes (matches Sprint 6 design):
+//   - "saved INPUT" closures capture the original input tensor (`a.data` etc).
+//   - "saved OUTPUT" closures capture the forward output tensor — useful when
+//     the gradient is cheaper to express in terms of `y` than `x` (sigmoid,
+//     tanh, softmax, ...).
+//   - LayerNorm captures the precomputed forward stats (mean + rstd per row)
+//     so the backward pass does not recompute them.
+
+/// Traced ReLU: `y = max(0, x)`. Saved closure value: **INPUT** (`x` mask).
+///
+/// Mirrors the `relu` helper but follows the `traced_*` naming convention used
+/// by the Sprint 6 surface. The backward closure captures `a.data` and rebuilds
+/// the positivity mask on demand — small input, cheap to recompute.
+pub fn traced_relu(
+  tape: Tape,
+  x: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  let Traced(out, new_tape) = relu(tape, x)
+  Ok(Traced(out, new_tape))
+}
+
+/// Traced sigmoid: `y = 1 / (1 + exp(-x))`. Saved closure value: **OUTPUT**.
+///
+/// The backward formula is `dy/dx = y * (1 - y)`, so we capture the forward
+/// output tensor in the closure rather than recomputing exp(-x).
+pub fn traced_sigmoid(
+  tape: Tape,
+  x: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  let res_data = ops.map(x.data, sigmoid_scalar)
+  let res_id = tape.next_id
+  let saved_y = res_data
+
+  // Backward: dy/dx = y * (1 - y)
+  let backward = fn(grad: Tensor) {
+    let derivative = ops.map(saved_y, fn(y) { y *. { 1.0 -. y } })
+    use grad_x <- result.try(ops.mul_auto(grad, derivative))
+    Ok([#(x.id, grad_x)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced tanh: `y = tanh(x)`. Saved closure value: **OUTPUT**.
+///
+/// Backward: `dy/dx = 1 - y^2`. Captures the forward output (cheaper than
+/// recomputing tanh(x) from scratch in the backward pass).
+pub fn traced_tanh(
+  tape: Tape,
+  x: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  let res_data = ops.map(x.data, maths.tanh)
+  let res_id = tape.next_id
+  let saved_y = res_data
+
+  // Backward: dy/dx = 1 - y^2
+  let backward = fn(grad: Tensor) {
+    let derivative = ops.map(saved_y, fn(y) { 1.0 -. y *. y })
+    use grad_x <- result.try(ops.mul_auto(grad, derivative))
+    Ok([#(x.id, grad_x)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced GELU (exact form). Saved closure value: **INPUT**.
+///
+/// Forward: `y = 0.5 * x * (1 + erf(x / sqrt(2)))`.
+/// Backward: `dy/dx = 0.5 * (1 + erf(x / sqrt(2))) + x * phi(x)`,
+/// where `phi(x) = (1 / sqrt(2*pi)) * exp(-x^2 / 2)` is the standard normal pdf.
+pub fn traced_gelu(
+  tape: Tape,
+  x: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  let res_data = ops.map(x.data, gelu_scalar)
+  let res_id = tape.next_id
+  let saved_x = x.data
+
+  let backward = fn(grad: Tensor) {
+    let derivative = ops.map(saved_x, gelu_derivative_scalar)
+    use grad_x <- result.try(ops.mul_auto(grad, derivative))
+    Ok([#(x.id, grad_x)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced softmax along `axis`. Saved closure value: **OUTPUT** (the
+/// post-softmax probabilities).
+///
+/// Backward formula (per slice along `axis`):
+///   `grad_x_i = s_i * (grad_y_i - sum_j(grad_y_j * s_j))`
+/// where `s = softmax(x)`. The closure captures `s` and `axis`.
+pub fn traced_softmax(
+  tape: Tape,
+  x: Variable,
+  axis: Int,
+) -> Result(Traced(Variable), TensorError) {
+  use res_data <- result.try(ops.softmax_axis(x.data, axis))
+  let res_id = tape.next_id
+  let saved_y = res_data
+  let saved_axis = axis
+  let saved_shape = tensor.shape(x.data)
+
+  // Backward: grad_x = s * (grad - sum(grad * s, axis=axis, keepdims))
+  let backward = fn(grad: Tensor) {
+    use prod <- result.try(ops.mul_auto(grad, saved_y))
+    use sum_per_slice <- result.try(sum_along_axis_keepdims(
+      prod,
+      saved_shape,
+      saved_axis,
+    ))
+    use shifted <- result.try(ops.sub_broadcast(grad, sum_per_slice))
+    use grad_x <- result.try(ops.mul_auto(saved_y, shifted))
+    Ok([#(x.id, grad_x)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced matmul (alias of `matmul`). Saved closure values: **INPUTS**
+/// (both `a` and `b`), used in `dL/dA = grad @ B^T` and `dL/dB = A^T @ grad`.
+pub fn traced_matmul(
+  tape: Tape,
+  a: Variable,
+  b: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  matmul(tape, a, b)
+}
+
+/// Traced linear: `y = x @ w`. Saved closure values: **INPUTS** (`x`, `w`).
+///
+/// Identical math to `traced_matmul`, but named explicitly so call sites that
+/// build dense layers read more clearly. The backward closure captures both
+/// operands and applies `dL/dx = grad @ w^T`, `dL/dw = x^T @ grad`.
+pub fn traced_linear(
+  tape: Tape,
+  x: Variable,
+  w: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  matmul(tape, x, w)
+}
+
+/// Traced add (alias of `add`). Saved closure values: just the **shapes** of
+/// the inputs (so we can sum-reduce broadcast gradients back to source shape).
+pub fn traced_add(
+  tape: Tape,
+  a: Variable,
+  b: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  add(tape, a, b)
+}
+
+/// Traced sub (alias of `sub`). Saved closure values: **shapes** of the
+/// inputs (sign of grad_b is flipped).
+pub fn traced_sub(
+  tape: Tape,
+  a: Variable,
+  b: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  sub(tape, a, b)
+}
+
+/// Traced element-wise mul (alias of `mul`). Saved closure values: **INPUTS**
+/// (`a` and `b`), via the standard product rule `d(uv) = u dv + v du`.
+pub fn traced_mul(
+  tape: Tape,
+  a: Variable,
+  b: Variable,
+) -> Result(Traced(Variable), TensorError) {
+  mul(tape, a, b)
+}
+
+/// Traced scalar scale: `y = scalar * x`. Saved closure value: **the scalar**.
+///
+/// Backward is trivial: `dy/dx = scalar * grad`. No tensor saved — only the
+/// float coefficient needs to ride along in the closure.
+pub fn traced_scale(
+  tape: Tape,
+  x: Variable,
+  scalar: Float,
+) -> Result(Traced(Variable), TensorError) {
+  let res_data = ops.scale(x.data, scalar)
+  let res_id = tape.next_id
+  let saved_scalar = scalar
+
+  let backward = fn(grad: Tensor) {
+    let grad_x = ops.scale(grad, saved_scalar)
+    Ok([#(x.id, grad_x)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced LayerNorm over the last axis. Saved closure values: **FORWARD STATS**
+/// (per-row `mean` and `rstd`) plus the normalized intermediate `x_hat` and the
+/// scale tensor. Inputs are 2D: `x` is `[batch, features]`, `scale`/`bias` are
+/// `[features]`.
+///
+/// Backward (per-row, with `N = features`):
+///   `dx_hat = grad * scale`
+///   `dx = (1/std) * (dx_hat - mean(dx_hat) - x_hat * mean(dx_hat * x_hat))`
+///   `dscale = sum_over_batch(grad * x_hat)`
+///   `dbias  = sum_over_batch(grad)`
+pub fn traced_layer_norm(
+  tape: Tape,
+  x: Variable,
+  scale_var: Variable,
+  bias_var: Variable,
+  eps: Float,
+) -> Result(Traced(Variable), TensorError) {
+  let x_shape = tensor.shape(x.data)
+  use #(batch, features) <- result.try(case x_shape {
+    [b, f] -> Ok(#(b, f))
+    _ ->
+      Error(DimensionError(
+        "traced_layer_norm expects 2D input [batch, features], got "
+        <> string_shape(x_shape),
+      ))
+  })
+
+  let scale_shape = tensor.shape(scale_var.data)
+  let bias_shape = tensor.shape(bias_var.data)
+  use _ <- result.try(case scale_shape == [features] && bias_shape == [features]
+  {
+    True -> Ok(Nil)
+    False ->
+      Error(DimensionError(
+        "traced_layer_norm scale/bias shape mismatch: expected ["
+        <> int.to_string(features)
+        <> "]",
+      ))
+  })
+
+  let x_data = tensor.to_list(x.data)
+  let scale_data = tensor.to_list(scale_var.data)
+  let bias_data = tensor.to_list(bias_var.data)
+
+  // Forward pass: compute per-row mean and rstd, then normalize and apply
+  // scale/bias. We retain `means`, `rstds`, and `x_hat_data` so backward can
+  // reuse them without recomputation.
+  let rows = chunk_rows(x_data, features)
+  let stats = list.map(rows, fn(row) { row_mean_rstd(row, eps) })
+  let means = list.map(stats, fn(s) { s.0 })
+  let rstds = list.map(stats, fn(s) { s.1 })
+
+  let x_hat_rows =
+    list.map(list.zip(rows, stats), fn(pair) {
+      let #(row, stat) = pair
+      let #(mu, rstd) = stat
+      list.map(row, fn(v) { { v -. mu } *. rstd })
+    })
+  let x_hat_data = list.flatten(x_hat_rows)
+
+  let out_rows =
+    list.map(x_hat_rows, fn(row) {
+      list.map(list.zip(row, list.zip(scale_data, bias_data)), fn(t) {
+        let #(xh, sb) = t
+        let #(s, b) = sb
+        xh *. s +. b
+      })
+    })
+  use res_data <- result.try(tensor.new(list.flatten(out_rows), x_shape))
+
+  let res_id = tape.next_id
+  let saved_x_hat = x_hat_data
+  let saved_rstds = rstds
+  let saved_scale = scale_data
+  let saved_features = features
+  let saved_batch = batch
+  let _ = means
+
+  let backward = fn(grad: Tensor) {
+    let grad_data = tensor.to_list(grad)
+    let grad_rows = chunk_rows(grad_data, saved_features)
+    let xhat_rows = chunk_rows(saved_x_hat, saved_features)
+
+    // dscale and dbias accumulate across the batch.
+    let bias_grad =
+      list.fold(grad_rows, list.repeat(0.0, saved_features), fn(acc, row) {
+        list.map(list.zip(acc, row), fn(p) { p.0 +. p.1 })
+      })
+    let scale_grad =
+      list.fold(
+        list.zip(grad_rows, xhat_rows),
+        list.repeat(0.0, saved_features),
+        fn(acc, pair) {
+          let #(g, xh) = pair
+          list.map(list.zip(acc, list.zip(g, xh)), fn(t) {
+            let #(a, rest) = t
+            let #(gv, xv) = rest
+            a +. gv *. xv
+          })
+        },
+      )
+
+    // dx for each row uses the canonical normalization backward.
+    let n_f = int.to_float(saved_features)
+    let dx_rows =
+      list.map(
+        list.zip(list.zip(grad_rows, xhat_rows), saved_rstds),
+        fn(triple) {
+          let #(grad_xhat, rstd) = triple
+          let #(g, xh) = grad_xhat
+          let dxhat = list.map(list.zip(g, saved_scale), fn(p) { p.0 *. p.1 })
+          let mean_dxhat =
+            list.fold(dxhat, 0.0, fn(acc, v) { acc +. v }) /. n_f
+          let mean_dxhat_xhat =
+            list.fold(list.zip(dxhat, xh), 0.0, fn(acc, pair) {
+              acc +. pair.0 *. pair.1
+            })
+            /. n_f
+          list.map(list.zip(dxhat, xh), fn(pair) {
+            let #(d, h) = pair
+            rstd *. { d -. mean_dxhat -. h *. mean_dxhat_xhat }
+          })
+        },
+      )
+    use grad_x <- result.try(tensor.new(list.flatten(dx_rows), x_shape))
+    use grad_scale <- result.try(tensor.new(scale_grad, [saved_features]))
+    use grad_bias <- result.try(tensor.new(bias_grad, [saved_features]))
+
+    Ok([
+      #(x.id, grad_x),
+      #(scale_var.id, grad_scale),
+      #(bias_var.id, grad_bias),
+    ])
+  }
+
+  let _ = saved_batch
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+// -------------------------------------------------------------------------
+// Traced Loss Wrappers (Sprint 6)
+// -------------------------------------------------------------------------
+//
+// Targets are *constants* — they have no `Variable` id and never receive a
+// gradient. Only the `pred` Variable gets a gradient entry. Reduction is
+// fixed to `mean` for the traced losses (matches typical training loops).
+
+/// Traced MSE loss: `loss = mean((pred - target)^2)`. Saved closure values:
+/// **pred input** and **constant target tensor**.
+///
+/// Returns a scalar `Variable`. Backward formula:
+///   `dL/dpred = 2 * (pred - target) / N`
+/// where `N = numel(pred)`.
+pub fn traced_mse_loss(
+  tape: Tape,
+  pred: Variable,
+  target: Tensor,
+) -> Result(Traced(Variable), TensorError) {
+  let pred_shape = tensor.shape(pred.data)
+  let target_shape = tensor.shape(target)
+  use _ <- result.try(case pred_shape == target_shape {
+    True -> Ok(Nil)
+    False ->
+      Error(DimensionError(
+        "traced_mse_loss: shape mismatch pred="
+        <> string_shape(pred_shape)
+        <> " target="
+        <> string_shape(target_shape),
+      ))
+  })
+
+  use diff <- result.try(ops.sub_auto(pred.data, target))
+  let squared = ops.map(diff, fn(v) { v *. v })
+  let loss_value = ops.mean(squared)
+  let res_data = tensor.from_list([loss_value])
+
+  let res_id = tape.next_id
+  let saved_diff = diff
+  let n = int.to_float(tensor.size(pred.data))
+
+  // Backward: dL/dpred = (2 / N) * (pred - target) * grad_scalar
+  let backward = fn(grad: Tensor) {
+    let grad_val = case tensor.to_list(grad) {
+      [g, ..] -> g
+      [] -> 1.0
+    }
+    let coeff = 2.0 *. grad_val /. n
+    let grad_pred = ops.scale(saved_diff, coeff)
+    Ok([#(pred.id, grad_pred)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+/// Traced L1 loss: `loss = mean(|pred - target|)`. Saved closure values:
+/// **pred input** and **constant target tensor**.
+///
+/// Backward formula:
+///   `dL/dpred_i = sign(pred_i - target_i) / N`
+/// where `N = numel(pred)`. The subgradient at `pred_i == target_i` is taken
+/// to be 0.
+pub fn traced_l1_loss(
+  tape: Tape,
+  pred: Variable,
+  target: Tensor,
+) -> Result(Traced(Variable), TensorError) {
+  let pred_shape = tensor.shape(pred.data)
+  let target_shape = tensor.shape(target)
+  use _ <- result.try(case pred_shape == target_shape {
+    True -> Ok(Nil)
+    False ->
+      Error(DimensionError(
+        "traced_l1_loss: shape mismatch pred="
+        <> string_shape(pred_shape)
+        <> " target="
+        <> string_shape(target_shape),
+      ))
+  })
+
+  use diff <- result.try(ops.sub_auto(pred.data, target))
+  let abs_diff = ops.map(diff, fn(v) { float.absolute_value(v) })
+  let loss_value = ops.mean(abs_diff)
+  let res_data = tensor.from_list([loss_value])
+
+  let res_id = tape.next_id
+  let saved_diff = diff
+  let n = int.to_float(tensor.size(pred.data))
+
+  // Backward: dL/dpred = sign(diff) / N * grad_scalar
+  let backward = fn(grad: Tensor) {
+    let grad_val = case tensor.to_list(grad) {
+      [g, ..] -> g
+      [] -> 1.0
+    }
+    let coeff = grad_val /. n
+    let signs = ops.map(saved_diff, sign_scalar)
+    let grad_pred = ops.scale(signs, coeff)
+    Ok([#(pred.id, grad_pred)])
+  }
+
+  let new_ops = dict.insert(tape.operations, res_id, backward)
+  let new_tape = Tape(next_id: res_id + 1, operations: new_ops)
+  Ok(Traced(value: Variable(id: res_id, data: res_data), tape: new_tape))
+}
+
+// -------------------------------------------------------------------------
+// Scalar helpers for the traced ops above
+// -------------------------------------------------------------------------
+
+fn sigmoid_scalar(x: Float) -> Float {
+  case x >=. 0.0 {
+    True -> 1.0 /. { 1.0 +. float.exponential(0.0 -. x) }
+    False -> {
+      let ex = float.exponential(x)
+      ex /. { 1.0 +. ex }
+    }
+  }
+}
+
+/// Exact GELU: `0.5 * x * (1 + erf(x / sqrt(2)))`.
+fn gelu_scalar(x: Float) -> Float {
+  let inv_sqrt2 = 0.7071067811865475
+  0.5 *. x *. { 1.0 +. maths.erf(x *. inv_sqrt2) }
+}
+
+/// d/dx of exact GELU: `0.5 * (1 + erf(x / sqrt(2))) + x * phi(x)` where
+/// `phi(x) = exp(-x^2 / 2) / sqrt(2 * pi)`.
+fn gelu_derivative_scalar(x: Float) -> Float {
+  let inv_sqrt2 = 0.7071067811865475
+  let inv_sqrt_2pi = 0.3989422804014327
+  let cdf_part = 0.5 *. { 1.0 +. maths.erf(x *. inv_sqrt2) }
+  let pdf_part = inv_sqrt_2pi *. float.exponential(0.0 -. x *. x /. 2.0)
+  cdf_part +. x *. pdf_part
+}
+
+fn sign_scalar(v: Float) -> Float {
+  case v >. 0.0, v <. 0.0 {
+    True, _ -> 1.0
+    _, True -> -1.0
+    _, _ -> 0.0
+  }
+}
+
+fn chunk_rows(data: List(Float), row_size: Int) -> List(List(Float)) {
+  case row_size <= 0, data {
+    True, _ -> []
+    _, [] -> []
+    _, _ -> {
+      let head = list.take(data, row_size)
+      let rest = list.drop(data, row_size)
+      [head, ..chunk_rows(rest, row_size)]
+    }
+  }
+}
+
+fn row_mean_rstd(row: List(Float), eps: Float) -> #(Float, Float) {
+  let n = int.to_float(list.length(row))
+  let mu = case n >. 0.0 {
+    True -> list.fold(row, 0.0, fn(acc, v) { acc +. v }) /. n
+    False -> 0.0
+  }
+  let var = case n >. 0.0 {
+    True ->
+      list.fold(row, 0.0, fn(acc, v) {
+        let d = v -. mu
+        acc +. d *. d
+      })
+      /. n
+    False -> 0.0
+  }
+  let denom = case float.square_root(var +. eps) {
+    Ok(s) -> s
+    Error(_) -> 1.0
+  }
+  let rstd = case denom == 0.0 {
+    True -> 0.0
+    False -> 1.0 /. denom
+  }
+  #(mu, rstd)
+}
+
+/// Sum tensor along `axis`, keeping that dim as size 1.
+/// Used by softmax backward to broadcast per-slice sums back to the input
+/// shape. Generic implementation that walks flat indices.
+fn sum_along_axis_keepdims(
+  t: Tensor,
+  shape: List(Int),
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  let rank = list.length(shape)
+  case axis < 0 || axis >= rank {
+    True ->
+      Error(DimensionError(
+        "sum_along_axis_keepdims: invalid axis " <> int.to_string(axis),
+      ))
+    False -> {
+      let data = tensor.to_list(t)
+      let total = list.length(data)
+      let target_shape =
+        list.index_map(shape, fn(d, i) {
+          case i == axis {
+            True -> 1
+            False -> d
+          }
+        })
+      let target_size = list.fold(target_shape, 1, fn(a, b) { a * b })
+
+      let accum =
+        indices(total)
+        |> list.fold(dict.new(), fn(acc, flat_idx) {
+          let multi = flat_to_multi(flat_idx, shape)
+          let projected =
+            list.index_map(multi, fn(v, i) {
+              case i == axis {
+                True -> 0
+                False -> v
+              }
+            })
+          let target_flat = multi_to_flat(projected, target_shape)
+          let v = value_at(data, flat_idx)
+          case dict.get(acc, target_flat) {
+            Ok(existing) -> dict.insert(acc, target_flat, existing +. v)
+            Error(_) -> dict.insert(acc, target_flat, v)
+          }
+        })
+
+      let reduced =
+        indices(target_size)
+        |> list.map(fn(i) { dict.get(accum, i) |> result.unwrap(0.0) })
+      tensor.new(reduced, target_shape)
+    }
+  }
 }
 
 // -------------------------------------------------------------------------

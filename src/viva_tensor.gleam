@@ -40,8 +40,10 @@ import viva_tensor/metrics/classification as metrics_classification
 import viva_tensor/metrics/regression as metrics_regression
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
+import viva_tensor/core/tensor as core_tensor
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
+import viva_tensor/nn/autograd
 import viva_tensor/nn/backward as nn_backward
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/cv as nn_cv
@@ -4606,4 +4608,137 @@ pub fn sample(
   model_fn: fn(Tensor, Int) -> Result(Tensor, TensorError),
 ) -> Result(Tensor, TensorError) {
   diffusion_samplers.sample(config, state, shape, model_fn)
+}
+
+// --- Autograd Tape (traced ops) ---------------------------------------------
+//
+// Thin re-exports of `viva_tensor/nn/autograd` traced helpers. These work on
+// `viva_tensor/core/tensor.Tensor` (the implementation tensor), not the facade
+// `Tensor` type defined above, so call sites that want autograd should import
+// `viva_tensor/core/tensor` for constructing input tensors. The traced
+// functions record their forward op on the tape and register a backward
+// closure capturing exactly the tensors the analytical backward needs.
+
+/// Traced ReLU forward + backward (saves INPUT in closure).
+pub fn traced_relu(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_relu(tape, x)
+}
+
+/// Traced sigmoid forward + backward (saves OUTPUT in closure).
+pub fn traced_sigmoid(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_sigmoid(tape, x)
+}
+
+/// Traced tanh forward + backward (saves OUTPUT in closure).
+pub fn traced_tanh(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_tanh(tape, x)
+}
+
+/// Traced GELU (exact) forward + backward (saves INPUT in closure).
+pub fn traced_gelu(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_gelu(tape, x)
+}
+
+/// Traced softmax along `axis` (saves OUTPUT in closure).
+pub fn traced_softmax(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+  axis: Int,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_softmax(tape, x, axis)
+}
+
+/// Traced matmul (saves both INPUT operands in closure).
+pub fn traced_matmul(
+  tape: autograd.Tape,
+  a: autograd.Variable,
+  b: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_matmul(tape, a, b)
+}
+
+/// Traced linear `y = x @ w` (saves INPUTS in closure).
+pub fn traced_linear(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+  w: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_linear(tape, x, w)
+}
+
+/// Traced add (saves INPUT shapes for broadcast reduction).
+pub fn traced_add(
+  tape: autograd.Tape,
+  a: autograd.Variable,
+  b: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_add(tape, a, b)
+}
+
+/// Traced sub (saves INPUT shapes for broadcast reduction).
+pub fn traced_sub(
+  tape: autograd.Tape,
+  a: autograd.Variable,
+  b: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_sub(tape, a, b)
+}
+
+/// Traced elementwise mul (saves INPUT operands).
+pub fn traced_mul(
+  tape: autograd.Tape,
+  a: autograd.Variable,
+  b: autograd.Variable,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_mul(tape, a, b)
+}
+
+/// Traced scale-by-constant (saves only the float scalar).
+pub fn traced_scale(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+  scalar: Float,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_scale(tape, x, scalar)
+}
+
+/// Traced LayerNorm over last axis (saves FORWARD STATS: x_hat + rstds).
+pub fn traced_layer_norm(
+  tape: autograd.Tape,
+  x: autograd.Variable,
+  scale: autograd.Variable,
+  bias: autograd.Variable,
+  eps: Float,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_layer_norm(tape, x, scale, bias, eps)
+}
+
+/// Traced MSE loss (target is constant; saves pred-target diff in closure).
+pub fn traced_mse_loss(
+  tape: autograd.Tape,
+  pred: autograd.Variable,
+  target: core_tensor.Tensor,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_mse_loss(tape, pred, target)
+}
+
+/// Traced L1 loss (target is constant; saves pred-target diff in closure).
+pub fn traced_l1_loss(
+  tape: autograd.Tape,
+  pred: autograd.Variable,
+  target: core_tensor.Tensor,
+) -> Result(autograd.Traced(autograd.Variable), TensorError) {
+  autograd.traced_l1_loss(tape, pred, target)
 }
