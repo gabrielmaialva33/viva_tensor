@@ -63,6 +63,36 @@ pub fn try_logspace_rejects_invalid_base_test() {
   t.try_logspace(1.0, 3.0, 3, 0.0) |> should.be_error()
 }
 
+pub fn like_constructors_test() {
+  let source = t.fill([2, 2], 9.0)
+
+  t.zeros_like(source) |> t.to_list() |> should.equal([0.0, 0.0, 0.0, 0.0])
+  t.ones_like(source) |> t.to_list() |> should.equal([1.0, 1.0, 1.0, 1.0])
+  t.full_like(source, 7.0) |> t.to_list() |> should.equal([7.0, 7.0, 7.0, 7.0])
+}
+
+pub fn eye_identity_diag_test() {
+  t.eye(3)
+  |> t.to_list()
+  |> should.equal([1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0])
+
+  t.identity(2) |> t.to_list() |> should.equal([1.0, 0.0, 0.0, 1.0])
+
+  case t.try_diag(t.from_list([2.0, 3.0, 4.0])) {
+    Ok(diagonal) -> {
+      t.shape(diagonal) |> should.equal([3, 3])
+      t.to_list(diagonal)
+      |> should.equal([2.0, 0.0, 0.0, 0.0, 3.0, 0.0, 0.0, 0.0, 4.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn try_eye_and_diag_reject_invalid_inputs_test() {
+  t.try_eye(0) |> should.be_error()
+  t.zeros([2, 2]) |> t.try_diag() |> should.be_error()
+}
+
 pub fn try_to_list_test() {
   let v = t.from_list([1.0, 2.0, 3.0])
   t.try_to_list(v) |> should.equal(Ok([1.0, 2.0, 3.0]))
@@ -355,6 +385,52 @@ pub fn try_percentile_rejects_invalid_percentile_test() {
 
   t.try_percentile(values, -1) |> should.be_error()
   t.try_percentile(values, 101) |> should.be_error()
+}
+
+pub fn max_min_axis_test() {
+  case t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0]) {
+    Ok(matrix) -> {
+      case t.max_axis(matrix, 0) {
+        Ok(values) -> t.to_list(values) |> should.equal([4.0, 5.0, 6.0])
+        Error(_) -> should.fail()
+      }
+
+      case t.min_axis(matrix, 1) {
+        Ok(values) -> t.to_list(values) |> should.equal([1.0, 3.0])
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn max_min_axis_keepdims_test() {
+  case t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0]) {
+    Ok(matrix) -> {
+      case t.try_max_axis_keepdims(matrix, 1) {
+        Ok(values) -> {
+          t.shape(values) |> should.equal([2, 1])
+          t.to_list(values) |> should.equal([5.0, 6.0])
+        }
+        Error(_) -> should.fail()
+      }
+
+      case t.try_min_axis_keepdims(matrix, 0) {
+        Ok(values) -> {
+          t.shape(values) |> should.equal([1, 3])
+          t.to_list(values) |> should.equal([1.0, 3.0, 2.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn max_min_axis_reject_invalid_axis_test() {
+  t.from_list([1.0, 2.0])
+  |> t.try_max_axis(1)
+  |> should.be_error()
 }
 
 // =============================================================================
@@ -793,6 +869,63 @@ pub fn all_close_shape_mismatch_test() {
 
   t.all_close(a, b, 0.00001, 0.00001)
   |> should.be_error()
+}
+
+pub fn tensor_distance_similarity_test() {
+  let a = t.from_list([1.0, 2.0, 3.0])
+  let b = t.from_list([4.0, 6.0, 3.0])
+
+  t.try_manhattan_distance(a, b) |> should.equal(Ok(7.0))
+  t.try_dot_similarity(a, b) |> should.equal(Ok(25.0))
+
+  case t.try_euclidean_distance(a, b) {
+    Ok(value) -> { value >. 4.999 && value <. 5.001 } |> should.be_true()
+    Error(_) -> should.fail()
+  }
+
+  t.try_cosine_similarity(a, a) |> should.equal(Ok(1.0))
+}
+
+pub fn tensor_distance_rejects_shape_mismatch_test() {
+  let a = t.from_list([1.0, 2.0])
+  let b = t.zeros([1, 2])
+
+  t.try_euclidean_distance(a, b) |> should.be_error()
+}
+
+pub fn zscore_and_standardize_test() {
+  let values = t.from_list([1.0, 2.0, 3.0])
+
+  case t.try_zscore(values) {
+    Ok(scaled) -> {
+      let assert [a, b, c] = t.to_list(scaled)
+      { a <. -1.22 && a >. -1.23 } |> should.be_true()
+      b |> should.equal(0.0)
+      { c >. 1.22 && c <. 1.23 } |> should.be_true()
+      t.shape(scaled) |> should.equal([3])
+    }
+    Error(_) -> should.fail()
+  }
+
+  t.try_standardize(t.fill([3], 1.0)) |> should.be_error()
+}
+
+pub fn minmax_scale_and_clip_by_norm_test() {
+  let values = t.from_list([2.0, 4.0, 6.0])
+
+  case t.try_minmax_scale(values, 0.0, 1.0) {
+    Ok(scaled) -> t.to_list(scaled) |> should.equal([0.0, 0.5, 1.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.try_clip_by_norm(t.from_list([3.0, 4.0]), 2.5) {
+    Ok(clipped) -> {
+      let assert [a, b] = t.to_list(clipped)
+      { a >. 1.49 && a <. 1.51 } |> should.be_true()
+      { b >. 1.99 && b <. 2.01 } |> should.be_true()
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn squeeze_test() {

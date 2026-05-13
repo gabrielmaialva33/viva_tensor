@@ -20,9 +20,16 @@ pub fn stable_creation_and_layout_contract_test() {
   t.device(tensor) |> should.equal(layout.BeamCpu)
   t.dtype(tensor) |> should.equal(layout.Float64)
   t.linspace(0.0, 1.0, 3) |> t.to_list() |> should.equal([0.0, 0.5, 1.0])
+  t.zeros_like(tensor) |> t.shape() |> should.equal([2, 3])
+  t.eye(2) |> t.to_list() |> should.equal([1.0, 0.0, 0.0, 1.0])
 
   case t.try_logspace(1.0, 3.0, 3, 10.0) {
     Ok(logs) -> t.to_list(logs) |> should.equal([10.0, 100.0, 1000.0])
+    Error(_) -> should.fail()
+  }
+
+  case t.try_diag(t.from_list([2.0, 4.0])) {
+    Ok(diagonal) -> t.to_list(diagonal) |> should.equal([2.0, 0.0, 0.0, 4.0])
     Error(_) -> should.fail()
   }
 
@@ -88,6 +95,8 @@ pub fn stable_fallible_unary_contract_test() {
   t.try_median(tensor) |> should.equal(Ok(2.0))
   t.try_percentile(tensor, 50) |> should.equal(Ok(2.0))
   t.try_variance(tensor) |> should.equal(Ok(0.6666666666666666))
+  t.try_manhattan_distance(tensor, tensor) |> should.equal(Ok(0.0))
+  t.try_dot_similarity(tensor, tensor) |> should.equal(Ok(14.0))
 
   case t.try_flatten(tensor) {
     Ok(flat) -> {
@@ -116,6 +125,11 @@ pub fn stable_axis_reduction_contract_test() {
           t.shape(reduced) |> should.equal([2, 1])
           t.to_list(reduced) |> should.equal([2.0, 5.0])
         }
+        Error(_) -> should.fail()
+      }
+
+      case t.try_max_axis(matrix, 1) {
+        Ok(reduced) -> t.to_list(reduced) |> should.equal([3.0, 6.0])
         Error(_) -> should.fail()
       }
     }
