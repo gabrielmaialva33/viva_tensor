@@ -593,8 +593,8 @@ pub fn softmax_axis_public_facade_test() {
 
 pub fn capabilities_smoke_test() {
   let caps = t.capabilities()
-  caps.nif_loaded == caps.nif_loaded |> should.be_true()
-  caps.zig_loaded == caps.zig_loaded |> should.be_true()
+  { caps.nif_loaded || !caps.nif_loaded } |> should.be_true()
+  { caps.zig_loaded || !caps.zig_loaded } |> should.be_true()
 }
 
 pub fn map2_test() {

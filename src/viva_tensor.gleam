@@ -761,10 +761,24 @@ pub fn detect_backends() -> List(TflopsBackend) {
 
 /// Inspect native runtime acceleration availability.
 pub fn capabilities() -> TensorCapabilities {
+  let nif_loaded = ffi.is_nif_loaded()
+  let zig_loaded = case nif_loaded {
+    True -> ffi.zig_is_loaded()
+    False -> False
+  }
+  let backend_info = case zig_loaded {
+    True -> ffi.zig_backend_info()
+    False -> "Zig NIF not loaded"
+  }
+  let backends = case nif_loaded {
+    True -> detect_backends()
+    False -> [tflops_mod.PureErlang]
+  }
+
   TensorCapabilities(
-    nif_loaded: ffi.is_nif_loaded(),
-    zig_loaded: ffi.zig_is_loaded(),
-    backend_info: ffi.zig_backend_info(),
-    tflops_backends: detect_backends(),
+    nif_loaded: nif_loaded,
+    zig_loaded: zig_loaded,
+    backend_info: backend_info,
+    tflops_backends: backends,
   )
 }
