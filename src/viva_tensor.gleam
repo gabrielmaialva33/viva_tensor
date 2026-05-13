@@ -1008,9 +1008,17 @@ pub fn try_unsqueeze(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   tensor.try_unsqueeze(t, axis)
 }
 
-/// Take flattened elements by explicit indices.
-pub fn take(t: Tensor, indices: List(Int)) -> Tensor {
-  tensor.take(t, indices)
+/// Take flattened elements by explicit indices (legacy: ignores tensor shape).
+pub fn take_flat(t: Tensor, indices: List(Int)) -> Tensor {
+  tensor.take_flat(t, indices)
+}
+
+/// Take flattened elements by explicit indices, preserving index errors.
+pub fn try_take_flat(
+  t: Tensor,
+  indices: List(Int),
+) -> Result(Tensor, TensorError) {
+  tensor.try_take_flat(t, indices)
 }
 
 /// Take flattened elements by explicit indices, preserving index errors.
@@ -1018,14 +1026,43 @@ pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
   tensor.try_take(t, indices)
 }
 
-/// Return flattened indices for non-zero values, represented as floats.
-pub fn nonzero(t: Tensor) -> Tensor {
-  tensor.nonzero(t)
+/// Gather slices along `axis` at each of the given indices (NumPy-style `take`).
+pub fn take(
+  t: Tensor,
+  indices: List(Int),
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.take(t, indices, axis)
+}
+
+/// Convenience wrapper around `take` for 1D integer-valued index tensors.
+pub fn gather(t: Tensor, indices: Tensor) -> Result(Tensor, TensorError) {
+  tensor.gather(t, indices)
+}
+
+/// Select elements of `t` where the same-shaped `mask` tensor is non-zero.
+pub fn mask_select(t: Tensor, mask: Tensor) -> Result(Tensor, TensorError) {
+  tensor.mask_select(t, mask)
+}
+
+/// Return flattened indices for non-zero values, represented as floats (legacy).
+pub fn nonzero_flat(t: Tensor) -> Tensor {
+  tensor.nonzero_flat(t)
+}
+
+/// Return flattened indices for non-zero values, represented as floats (legacy).
+pub fn try_nonzero_flat(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_nonzero_flat(t)
 }
 
 /// Return flattened indices for non-zero values, preserving materialization failures.
 pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
   tensor.try_nonzero(t)
+}
+
+/// Return multi-dimensional indices of non-zero elements of `t` (NumPy `nonzero`).
+pub fn nonzero(t: Tensor) -> Result(List(List(Int)), TensorError) {
+  tensor.nonzero(t)
 }
 
 /// Select flattened values where a broadcasted mask is non-zero.

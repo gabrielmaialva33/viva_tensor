@@ -1268,10 +1268,10 @@ pub fn mask_axis_reductions_test() {
 pub fn indexing_helpers_test() {
   let values = t.from_list([10.0, 20.0, 30.0, 40.0])
 
-  t.take(values, [2, 0]) |> t.to_list() |> should.equal([30.0, 10.0])
+  t.take_flat(values, [2, 0]) |> t.to_list() |> should.equal([30.0, 10.0])
   t.try_take(values, [4]) |> should.be_error()
 
-  t.nonzero(t.from_list([0.0, 5.0, 0.0, -1.0]))
+  t.nonzero_flat(t.from_list([0.0, 5.0, 0.0, -1.0]))
   |> t.to_list()
   |> should.equal([1.0, 3.0])
 }

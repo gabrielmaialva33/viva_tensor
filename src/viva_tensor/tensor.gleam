@@ -2287,7 +2287,10 @@ pub fn take_last(t: Tensor, n: Int) -> Tensor {
 }
 
 /// Take flattened elements by explicit indices.
-pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
+pub fn try_take_flat(
+  t: Tensor,
+  indices: List(Int),
+) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
   let values_result =
     indices
@@ -2305,13 +2308,18 @@ pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
 }
 
 /// Take flattened elements by explicit indices.
-pub fn take(t: Tensor, indices: List(Int)) -> Tensor {
-  try_take(t, indices)
+pub fn take_flat(t: Tensor, indices: List(Int)) -> Tensor {
+  try_take_flat(t, indices)
   |> result.unwrap(Tensor(data: [], shape: [0]))
 }
 
+/// Backwards-compatible alias for `try_take_flat`.
+pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
+  try_take_flat(t, indices)
+}
+
 /// Return flattened indices for non-zero values, represented as floats.
-pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
+pub fn try_nonzero_flat(t: Tensor) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
   let indices =
     data
@@ -2329,9 +2337,189 @@ pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
 }
 
 /// Return flattened indices for non-zero values, represented as floats.
-pub fn nonzero(t: Tensor) -> Tensor {
-  try_nonzero(t)
+pub fn nonzero_flat(t: Tensor) -> Tensor {
+  try_nonzero_flat(t)
   |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
+/// Backwards-compatible alias for `try_nonzero_flat`.
+pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
+  try_nonzero_flat(t)
+}
+
+/// Gather slices along `axis` at each of the given integer indices (NumPy-style `take`).
+///
+/// Negative indices wrap from the end. For a 1D tensor with `axis = 0` this is
+/// equivalent to selecting elements at the given positions; for higher ranks it
+/// picks the corresponding sub-tensors and keeps the surrounding dimensions
+/// intact.
+///
+/// ## Example
+/// ```
+/// take(from_list([10.0, 20.0, 30.0]), [2, 0, -1], 0)
+/// // -> Ok(Tensor([30.0, 10.0, 30.0], [3]))
+/// ```
+pub fn take(
+  t: Tensor,
+  indices: List(Int),
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  let shape = shape(t)
+  let r = list.length(shape)
+  case r {
+    0 -> Error(DimensionError("take requires a tensor with rank >= 1"))
+    _ -> {
+      let normalized_axis = case axis < 0 {
+        True -> axis + r
+        False -> axis
+      }
+      case normalized_axis < 0 || normalized_axis >= r {
+        True ->
+          Error(DimensionError(
+            "take: axis "
+            <> int.to_string(axis)
+            <> " out of bounds for rank "
+            <> int.to_string(r),
+          ))
+        False -> {
+          let assert Ok(dim_size) = list_at_int(shape, normalized_axis)
+          use normalized_indices <- result.try(
+            indices
+            |> list.fold(Ok([]), fn(acc, idx) {
+              use rev <- result.try(acc)
+              let resolved = case idx < 0 {
+                True -> idx + dim_size
+                False -> idx
+              }
+              case resolved < 0 || resolved >= dim_size {
+                True -> Error(IndexOutOfBounds(idx, dim_size))
+                False -> Ok([resolved, ..rev])
+              }
+            })
+            |> result.map(list.reverse),
+          )
+          use data <- result.try(try_to_list(t))
+          let strides = compute_strides(shape)
+          let assert Ok(axis_stride) = list_at_int(strides, normalized_axis)
+          let outer_count =
+            list.take(shape, normalized_axis)
+            |> list.fold(1, fn(acc, d) { acc * d })
+          let outer_stride = case normalized_axis {
+            0 -> list.fold(shape, 1, fn(acc, d) { acc * d })
+            _ -> {
+              let assert Ok(s) = list_at_int(strides, normalized_axis - 1)
+              s
+            }
+          }
+          let inner_size = axis_stride
+          let out_data =
+            list.range(0, outer_count - 1)
+            |> list.flat_map(fn(outer) {
+              normalized_indices
+              |> list.flat_map(fn(idx) {
+                let base = outer * outer_stride + idx * axis_stride
+                list.range(0, inner_size - 1)
+                |> list.map(fn(k) {
+                  case list_at_float(data, base + k) {
+                    Ok(v) -> v
+                    Error(_) -> 0.0
+                  }
+                })
+              })
+            })
+          let new_shape =
+            shape
+            |> list.index_map(fn(d, i) {
+              case i == normalized_axis {
+                True -> list.length(normalized_indices)
+                False -> d
+              }
+            })
+          Ok(Tensor(data: out_data, shape: new_shape))
+        }
+      }
+    }
+  }
+}
+
+/// Convenience wrapper around `take` for 1D integer-valued index tensors.
+///
+/// Each float in `indices` is floored to an integer and used to gather along
+/// axis 0 of `t`.
+///
+/// ## Example
+/// ```
+/// gather(from_list([10.0, 20.0, 30.0]), from_list([2.0, 0.0]))
+/// // -> Ok(Tensor([30.0, 10.0], [2]))
+/// ```
+pub fn gather(t: Tensor, indices: Tensor) -> Result(Tensor, TensorError) {
+  case shape(indices) {
+    [_] -> {
+      use idx_data <- result.try(try_to_list(indices))
+      let int_indices = list.map(idx_data, float.truncate)
+      take(t, int_indices, 0)
+    }
+    other ->
+      Error(DimensionError(
+        "gather requires a 1D index tensor, got shape "
+        <> shape_to_string(other),
+      ))
+  }
+}
+
+/// Select elements of `t` where the same-shaped `mask` tensor is non-zero.
+///
+/// Returns a 1D tensor with the elements taken in row-major (flattened) order.
+/// Treats every float in `mask` as a boolean: `0.0` is `False`, anything else
+/// is `True`.
+///
+/// ## Example
+/// ```
+/// mask_select(from_list([1.0, 2.0, 3.0]), from_list([1.0, 0.0, 1.0]))
+/// // -> Ok(Tensor([1.0, 3.0], [2]))
+/// ```
+pub fn mask_select(t: Tensor, mask: Tensor) -> Result(Tensor, TensorError) {
+  let t_shape = shape(t)
+  let m_shape = shape(mask)
+  case t_shape == m_shape {
+    False -> Error(ShapeMismatch(t_shape, m_shape))
+    True -> {
+      use data <- result.try(try_to_list(t))
+      use mask_data <- result.try(try_to_list(mask))
+      let selected =
+        list.zip(data, mask_data)
+        |> list.filter_map(fn(pair) {
+          let #(v, m) = pair
+          case m != 0.0 {
+            True -> Ok(v)
+            False -> Error(Nil)
+          }
+        })
+      Ok(Tensor(data: selected, shape: [list.length(selected)]))
+    }
+  }
+}
+
+/// Return multi-dimensional indices of non-zero elements of `t`.
+///
+/// Output is a list of length `nnz`; each entry is itself a list of length
+/// `rank(t)` describing the position of a non-zero element. The 1D tensor
+/// `[0.0, 1.0, 0.0, 3.0]` yields `[[1], [3]]`.
+pub fn nonzero(t: Tensor) -> Result(List(List(Int)), TensorError) {
+  use data <- result.try(try_to_list(t))
+  let shape = shape(t)
+  let indices =
+    data
+    |> list.index_map(fn(value, flat_idx) { #(value, flat_idx) })
+    |> list.filter(fn(pair) {
+      let #(value, _) = pair
+      value != 0.0
+    })
+    |> list.map(fn(pair) {
+      let #(_, flat_idx) = pair
+      flat_to_multi(flat_idx, shape)
+    })
+  Ok(indices)
 }
 
 /// Select flattened values where a broadcasted mask is non-zero.
