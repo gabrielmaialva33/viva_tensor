@@ -425,6 +425,21 @@ pub fn mean(t: Tensor) -> Float {
   tensor.mean(t)
 }
 
+/// Mean of all elements, preserving materialization and empty-tensor errors.
+pub fn try_mean(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_mean(t)
+}
+
+/// Product of all elements.
+pub fn product(t: Tensor) -> Float {
+  tensor.product(t)
+}
+
+/// Product of all elements, preserving materialization failures.
+pub fn try_product(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_product(t)
+}
+
 /// Sum along one axis.
 pub fn sum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   tensor.sum_axis(t, axis)
@@ -516,9 +531,19 @@ pub fn variance(t: Tensor) -> Float {
   tensor.variance(t)
 }
 
+/// Variance, preserving materialization and empty-tensor errors.
+pub fn try_variance(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_variance(t)
+}
+
 /// Standard deviation
 pub fn std(t: Tensor) -> Float {
   tensor.std(t)
+}
+
+/// Standard deviation, preserving materialization and empty-tensor errors.
+pub fn try_std(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_std(t)
 }
 
 // --- Linear Algebra ---------------------------------------------------------

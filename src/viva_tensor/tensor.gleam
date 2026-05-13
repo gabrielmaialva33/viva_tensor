@@ -801,20 +801,73 @@ fn sum_dense(t: Tensor) -> Result(Float, TensorError) {
   Ok(list.fold(data, 0.0, fn(acc, x) { acc +. x }))
 }
 
-/// Product of all elements
+/// Product of all elements, preserving materialization failures.
+pub fn try_product(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
+  Ok(list.fold(data, 1.0, fn(acc, x) { acc *. x }))
+}
+
+/// Product of all elements.
 pub fn product(t: Tensor) -> Float {
-  let data = get_data(t)
-  list.fold(data, 1.0, fn(acc, x) { acc *. x })
+  try_product(t)
+  |> result.unwrap(1.0)
+}
+
+/// Mean: E[X] = (1/n) * sum(x_i), preserving empty-tensor and materialization errors.
+pub fn try_mean(t: Tensor) -> Result(Float, TensorError) {
+  use total <- result.try(try_sum(t))
+  let n = int.to_float(size(t))
+  case n >. 0.0 {
+    True -> Ok(total /. n)
+    False -> Error(DimensionError("Cannot compute mean of an empty tensor"))
+  }
 }
 
 /// Mean: E[X] = (1/n) * sum(x_i)
 pub fn mean(t: Tensor) -> Float {
-  let s = sum(t)
-  let n = int.to_float(size(t))
+  try_mean(t)
+  |> result.unwrap(0.0)
+}
+
+fn variance_dense(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
+  use m <- result.try(try_mean(t))
+  let n = int.to_float(list.length(data))
   case n >. 0.0 {
-    True -> s /. n
-    False -> 0.0
+    False -> Error(DimensionError("Cannot compute variance of an empty tensor"))
+    True -> {
+      let squared_diffs =
+        list.map(data, fn(x) {
+          let diff = x -. m
+          diff *. diff
+        })
+
+      Ok(list.fold(squared_diffs, 0.0, fn(acc, x) { acc +. x }) /. n)
+    }
   }
+}
+
+/// Variance, preserving empty-tensor and materialization errors.
+pub fn try_variance(t: Tensor) -> Result(Float, TensorError) {
+  variance_dense(t)
+}
+
+/// Variance: Var(X) = E[(X - mean)^2].
+pub fn variance(t: Tensor) -> Float {
+  try_variance(t)
+  |> result.unwrap(0.0)
+}
+
+/// Standard deviation, preserving empty-tensor and materialization errors.
+pub fn try_std(t: Tensor) -> Result(Float, TensorError) {
+  use value <- result.try(try_variance(t))
+  Ok(ffi.sqrt(value))
+}
+
+/// Standard deviation: sqrt(Var(X)).
+pub fn std(t: Tensor) -> Float {
+  try_std(t)
+  |> result.unwrap(0.0)
 }
 
 /// Maximum value, preserving materialization failures.
@@ -921,28 +974,6 @@ pub fn try_argmin(t: Tensor) -> Result(Int, TensorError) {
 pub fn argmin(t: Tensor) -> Int {
   try_argmin(t)
   |> result.unwrap(0)
-}
-
-/// Variance: Var(X) = E[X^2] - E[X]^2  (computational form)
-/// We use the two-pass algorithm for numerical stability.
-pub fn variance(t: Tensor) -> Float {
-  let data = get_data(t)
-  let m = mean(t)
-  let squared_diffs =
-    list.map(data, fn(x) {
-      let diff = x -. m
-      diff *. diff
-    })
-  let n = int.to_float(size(t))
-  case n >. 0.0 {
-    True -> list.fold(squared_diffs, 0.0, fn(acc, x) { acc +. x }) /. n
-    False -> 0.0
-  }
-}
-
-/// Standard deviation: sqrt(Var(X))
-pub fn std(t: Tensor) -> Float {
-  ffi.sqrt(variance(t))
 }
 
 /// Sum along a specific axis, preserving materialization failures.
