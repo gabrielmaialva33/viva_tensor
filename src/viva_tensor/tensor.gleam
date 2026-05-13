@@ -765,14 +765,26 @@ pub fn scale(t: Tensor, s: Float) -> Tensor {
   |> result.unwrap(t)
 }
 
-/// Add constant
-pub fn add_scalar(t: Tensor, s: Float) -> Tensor {
-  map(t, fn(x) { x +. s })
+/// Add constant, preserving materialization failures.
+pub fn try_add_scalar(t: Tensor, s: Float) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) { x +. s })
 }
 
-/// Negation
+/// Add constant.
+pub fn add_scalar(t: Tensor, s: Float) -> Tensor {
+  try_add_scalar(t, s)
+  |> result.unwrap(t)
+}
+
+/// Negation, preserving materialization failures.
+pub fn try_negate(t: Tensor) -> Result(Tensor, TensorError) {
+  try_scale(t, -1.0)
+}
+
+/// Negation.
 pub fn negate(t: Tensor) -> Tensor {
-  scale(t, -1.0)
+  try_negate(t)
+  |> result.unwrap(t)
 }
 
 // --- Reduction Operations ---
@@ -1947,9 +1959,19 @@ pub fn normalize(t: Tensor) -> Tensor {
   |> result.unwrap(t)
 }
 
-/// Clamp values to [min, max]
+/// Clamp values to [min, max], preserving materialization failures.
+pub fn try_clamp(
+  t: Tensor,
+  min_val: Float,
+  max_val: Float,
+) -> Result(Tensor, TensorError) {
+  try_map(t, fn(x) { float.min(float.max(x, min_val), max_val) })
+}
+
+/// Clamp values to [min, max].
 pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
-  map(t, fn(x) { float.min(float.max(x, min_val), max_val) })
+  try_clamp(t, min_val, max_val)
+  |> result.unwrap(t)
 }
 
 // --- Random ---

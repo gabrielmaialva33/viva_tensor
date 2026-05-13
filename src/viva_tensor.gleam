@@ -848,6 +848,15 @@ pub fn clamp(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   tensor.clamp(t, min_val, max_val)
 }
 
+/// Clamp values, preserving materialization failures.
+pub fn try_clamp(
+  t: Tensor,
+  min_val: Float,
+  max_val: Float,
+) -> Result(Tensor, TensorError) {
+  tensor.try_clamp(t, min_val, max_val)
+}
+
 // --- Broadcasting -----------------------------------------------------------
 
 /// Can these shapes broadcast together?
