@@ -33,6 +33,11 @@ pub fn stable_fallible_unary_contract_test() {
     Ok(scaled) -> t.to_list(scaled) |> should.equal([2.0, 4.0, 6.0])
     Error(_) -> should.fail()
   }
+
+  t.try_max(tensor) |> should.equal(Ok(3.0))
+  t.try_min(tensor) |> should.equal(Ok(1.0))
+  t.try_argmax(tensor) |> should.equal(Ok(2))
+  t.try_argmin(tensor) |> should.equal(Ok(0))
 }
 
 pub fn stable_axis_reduction_contract_test() {

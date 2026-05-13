@@ -173,9 +173,31 @@ pub fn max_test() {
   t.max(a) |> should.equal(5.0)
 }
 
+pub fn try_max_test() {
+  let a = t.from_list([1.0, 5.0, 3.0, 2.0])
+  t.try_max(a) |> should.equal(Ok(5.0))
+}
+
+pub fn try_max_empty_test() {
+  t.from_list([])
+  |> t.try_max()
+  |> should.be_error()
+}
+
 pub fn min_test() {
   let a = t.from_list([1.0, 5.0, 3.0, 2.0])
   t.min(a) |> should.equal(1.0)
+}
+
+pub fn try_min_test() {
+  let a = t.from_list([1.0, 5.0, 3.0, 2.0])
+  t.try_min(a) |> should.equal(Ok(1.0))
+}
+
+pub fn try_min_empty_test() {
+  t.from_list([])
+  |> t.try_min()
+  |> should.be_error()
 }
 
 pub fn argmax_test() {
@@ -183,9 +205,31 @@ pub fn argmax_test() {
   t.argmax(a) |> should.equal(1)
 }
 
+pub fn try_argmax_test() {
+  let a = t.from_list([1.0, 5.0, 3.0])
+  t.try_argmax(a) |> should.equal(Ok(1))
+}
+
+pub fn try_argmax_empty_test() {
+  t.from_list([])
+  |> t.try_argmax()
+  |> should.be_error()
+}
+
 pub fn argmin_test() {
   let a = t.from_list([3.0, 1.0, 5.0])
   t.argmin(a) |> should.equal(1)
+}
+
+pub fn try_argmin_test() {
+  let a = t.from_list([3.0, 1.0, 5.0])
+  t.try_argmin(a) |> should.equal(Ok(1))
+}
+
+pub fn try_argmin_empty_test() {
+  t.from_list([])
+  |> t.try_argmin()
+  |> should.be_error()
 }
 
 // =============================================================================
