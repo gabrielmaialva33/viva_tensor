@@ -636,6 +636,15 @@ pub fn tensor_device_and_dtype_test() {
 
 }
 
+pub fn matmul_backend_plan_reports_rejections_test() {
+  let plan = t.plan_backend(t.OperationMatmul(15, 15, 15))
+
+  list.any(plan.rejected, fn(rejection) {
+    rejection.backend == t.BackendCudaFp16
+  })
+  |> should.be_true()
+}
+
 pub fn map2_test() {
   let a = t.from_list([1.0, 2.0])
   let b = t.from_list([3.0, 4.0])

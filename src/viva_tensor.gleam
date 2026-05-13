@@ -113,11 +113,16 @@ pub type BackendCapability {
 }
 
 /// Backend decision for a tensor operation.
+pub type BackendRejection {
+  BackendRejection(backend: TensorBackend, reason: String)
+}
+
 pub type TensorBackendPlan {
   TensorBackendPlan(
     operation: TensorOperation,
     selected: TensorBackend,
     fallbacks: List(TensorBackend),
+    rejected: List(BackendRejection),
     reason: String,
   )
 }
@@ -898,6 +903,7 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
         available,
         [BackendZigSimd, BackendMkl, BackendPureGleam],
         "Element-wise ops prefer SIMD, then native CPU, then pure Gleam.",
+        "Backend does not support stable element-wise dispatch.",
       )
     OperationBroadcast ->
       plan_first_available(
@@ -905,6 +911,7 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
         available,
         [BackendZigSimd, BackendPureGleam],
         "Broadcasting preserves views and only needs native compute when materialized.",
+        "Backend does not support stable broadcast dispatch.",
       )
     OperationReduction ->
       plan_first_available(
@@ -912,6 +919,7 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
         available,
         [BackendZigSimd, BackendMkl, BackendPureGleam],
         "Reductions prefer SIMD/native CPU and fall back to pure Gleam.",
+        "Backend does not support stable reduction dispatch.",
       )
     OperationSoftmax ->
       plan_first_available(
@@ -919,6 +927,7 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
         available,
         [BackendPureGleam],
         "Softmax currently uses the stable Gleam implementation.",
+        "Softmax currently only has stable pure Gleam dispatch.",
       )
   }
 }
@@ -1033,7 +1042,13 @@ fn plan_matmul(
     False -> "Native NIF is not loaded; pure Gleam fallback is selected."
   }
 
-  plan_first_available(operation, available, candidates, reason)
+  plan_first_available(
+    operation,
+    available,
+    candidates,
+    reason,
+    "Backend is not part of the stable matmul dispatch path for this shape.",
+  )
 }
 
 fn plan_first_available(
@@ -1041,16 +1056,100 @@ fn plan_first_available(
   available: List(TensorBackend),
   candidates: List(TensorBackend),
   reason: String,
+  unsupported_reason: String,
 ) -> TensorBackendPlan {
-  let selected =
-    candidates
-    |> list.find(fn(candidate) { list.contains(available, candidate) })
-    |> result.unwrap(BackendPureGleam)
+  let selected = select_backend(available, candidates)
 
   TensorBackendPlan(
     operation: operation,
     selected: selected,
     fallbacks: candidates,
+    rejected: backend_rejections(
+      operation,
+      selected,
+      available,
+      candidates,
+      unsupported_reason,
+    ),
     reason: reason,
   )
+}
+
+fn select_backend(
+  available: List(TensorBackend),
+  candidates: List(TensorBackend),
+) -> TensorBackend {
+  candidates
+  |> list.find(fn(candidate) { list.contains(available, candidate) })
+  |> result.unwrap(BackendPureGleam)
+}
+
+fn backend_rejections(
+  operation: TensorOperation,
+  selected: TensorBackend,
+  available: List(TensorBackend),
+  candidates: List(TensorBackend),
+  unsupported_reason: String,
+) -> List(BackendRejection) {
+  all_tensor_backends()
+  |> list.filter(fn(backend) { backend != selected })
+  |> list.map(fn(backend) {
+    BackendRejection(
+      backend: backend,
+      reason: rejection_reason(
+        operation,
+        backend,
+        available,
+        candidates,
+        unsupported_reason,
+      ),
+    )
+  })
+}
+
+fn rejection_reason(
+  operation: TensorOperation,
+  backend: TensorBackend,
+  available: List(TensorBackend),
+  candidates: List(TensorBackend),
+  unsupported_reason: String,
+) -> String {
+  case list.contains(candidates, backend), list.contains(available, backend) {
+    False, _ ->
+      operation_specific_rejection(operation, backend, unsupported_reason)
+    True, False -> "Backend is not available in this VM."
+    True, True -> "A higher-priority backend was selected."
+  }
+}
+
+fn operation_specific_rejection(
+  operation: TensorOperation,
+  backend: TensorBackend,
+  fallback_reason: String,
+) -> String {
+  case operation, backend {
+    OperationMatmul(_, _, _), BackendCudaSparse ->
+      "Sparse Tensor Core dispatch requires an explicit sparse tensor."
+    OperationMatmul(_, _, _), BackendCudaInt8 ->
+      "INT8 Tensor Core dispatch requires explicit quantized tensors."
+    OperationMatmul(m, n, k), BackendCudaFp16 ->
+      case m % 16 == 0 && n % 16 == 0 && k % 16 == 0 {
+        True -> fallback_reason
+        False -> "FP16 Tensor Core matmul requires dimensions aligned to 16."
+      }
+    _, _ -> fallback_reason
+  }
+}
+
+fn all_tensor_backends() -> List(TensorBackend) {
+  [
+    BackendCudaSparse,
+    BackendCudaFp16,
+    BackendCudaInt8,
+    BackendCudaFp32,
+    BackendCudaFp32,
+    BackendMkl,
+    BackendZigSimd,
+    BackendPureGleam,
+  ]
 }

@@ -105,7 +105,7 @@ Use `capabilities()` to inspect whether the current VM loaded the native NIF,
 the Zig SIMD backend, which TFLOPS backends are visible, and the stable backend
 capability records. Use `backend_capabilities()` when you only need the
 capability table, or `plan_backend(operation)` to see which backend the stable
-planner would choose for an operation.
+planner would choose for an operation. Plans include `rejected` backend entries with human-readable reasons for unavailable or unsuitable backends.
 
 ```gleam
 let plan = t.plan_backend(t.OperationMatmul(m: 1024, n: 1024, k: 1024))

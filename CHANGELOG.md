@@ -31,6 +31,7 @@ All notable changes to this project will be documented in this file.
 - Added a small `make bench-regression` benchmark for stable public API hot
   paths.
 - Added stable backend capability records and `plan_backend()` so callers can
+- Added structured backend rejection reasons to `TensorBackendPlan` and exposed
   inspect BEAM CPU, native CPU, CUDA FP32/FP16/INT8, and sparse backend
   availability without touching experimental modules.
 - Added `device()`/`dtype()` helpers for basic tensor placement metadata.
