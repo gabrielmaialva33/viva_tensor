@@ -10,6 +10,7 @@
 #   make demo       - Run the demonstration
 #   make docs       - Generate documentation
 #   make clean      - Clean build artifacts
+#   make clean-workspace - Remove generated local artifacts from the tree
 #   make fmt        - Format code
 #   make fmt-check  - Check formatting
 #   make check      - Type check
@@ -73,7 +74,7 @@ endif
 # MAIN TARGETS
 # =============================================================================
 
-.PHONY: all verify build test bench bench-regression bench-rtx metrics demo docs clean fmt fmt-check check help
+.PHONY: all verify build test bench bench-regression bench-rtx metrics demo docs clean clean-workspace fmt fmt-check check help
 .PHONY: zig zig-clean zig-info build-all
 .PHONY: bench-int8 bench-nf4 bench-awq bench-flash bench-sparse bench-all
 .PHONY: watch deps publish
@@ -192,6 +193,20 @@ else
 endif
 	@$(LOG) "$(GREEN)[OK]$(NC) Clean!"
 
+## Remove generated local artifacts that make the project tree noisy
+clean-workspace: clean zig-clean
+	@$(LOG) "$(YELLOW)[CLEAN]$(NC) Cleaning benchmark reports and native intermediates..."
+ifeq ($(OS),Windows_NT)
+	@if exist bench$(SEP)reports $(RMDIR) bench$(SEP)reports
+	@if exist zig_src$(SEP)*.o $(RM) zig_src$(SEP)*.o
+	@if exist zig_src$(SEP)*.a $(RM) zig_src$(SEP)*.a
+else
+	@$(RMDIR) bench$(SEP)reports 2>$(NULL) || true
+	@$(RM) zig_src$(SEP)*.o 2>$(NULL) || true
+	@$(RM) zig_src$(SEP)*.a 2>$(NULL) || true
+endif
+	@$(LOG) "$(GREEN)[OK]$(NC) Workspace artifacts removed. Research clones under tmp/ are left untouched."
+
 ## Create output directory if it doesn't exist
 ensure-output:
 ifeq ($(OS),Windows_NT)
@@ -226,10 +241,17 @@ endif
 ## Clean Zig NIF artifacts
 zig-clean:
 	@$(LOG) "$(YELLOW)[CLEAN]$(NC) Cleaning NIF..."
+ifeq ($(OS),Windows_NT)
+	@if exist zig_src$(SEP)zig-out $(RMDIR) zig_src$(SEP)zig-out
+	@if exist zig_src$(SEP).zig-cache $(RMDIR) zig_src$(SEP).zig-cache
+	@if exist priv$(SEP)viva_tensor_zig.so $(RM) priv$(SEP)viva_tensor_zig.so
+	@if exist priv$(SEP)viva_tensor_zig.dll $(RM) priv$(SEP)viva_tensor_zig.dll
+else
 	@$(RMDIR) zig_src$(SEP)zig-out 2>$(NULL) || true
 	@$(RMDIR) zig_src$(SEP).zig-cache 2>$(NULL) || true
 	@$(RM) priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
 	@$(RM) priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
+endif
 	@$(LOG) "$(GREEN)[OK]$(NC) NIF cleaned!"
 
 ## Show NIF build info
@@ -328,6 +350,7 @@ help:
 	@echo "  make check       - Type check"
 	@echo "  make verify      - Format check + type check + tests + docs"
 	@echo "  make clean       - Clean build"
+	@echo "  make clean-workspace - Remove ignored local artifacts from the tree"
 	@echo "  make all         - Build + test + bench"
 	@echo ""
 	@echo "NIF (Native):"
