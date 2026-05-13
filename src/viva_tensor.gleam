@@ -42,6 +42,7 @@ import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/nn/embedding as nn_embedding
+import viva_tensor/nn/pool as nn_pool
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
@@ -2203,6 +2204,98 @@ pub fn conv_transpose_2d_forward(
 /// Global average pooling
 pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
   tensor.global_avg_pool2d(input)
+}
+
+// --- Pool / Regularization layers ------------------------------------------
+
+/// Inverted-dropout layer (drop probability `p`).
+pub type Dropout =
+  nn_pool.Dropout
+
+/// 1D max-pool configuration.
+pub type MaxPool1dConfig =
+  nn_pool.MaxPool1dConfig
+
+/// 1D average-pool configuration.
+pub type AvgPool1dConfig =
+  nn_pool.AvgPool1dConfig
+
+/// 2D adaptive average-pool configuration.
+pub type AdaptiveAvgPool2dConfig =
+  nn_pool.AdaptiveAvgPool2dConfig
+
+/// 1D adaptive average-pool configuration.
+pub type AdaptiveAvgPool1dConfig =
+  nn_pool.AdaptiveAvgPool1dConfig
+
+/// Upsample configuration (mode + integer scale factor).
+pub type UpsampleConfig =
+  nn_pool.UpsampleConfig
+
+/// Upsample mode selector.
+pub type UpsampleMode =
+  nn_pool.UpsampleMode
+
+/// Initialize a `Dropout` layer with drop probability `p`. Output shape: same
+/// as input.
+pub fn dropout_init(p: Float) -> Dropout {
+  nn_pool.dropout_init(p)
+}
+
+/// Forward pass for inverted dropout. Output shape: same as input.
+/// Passthrough when `training = False` or `p == 0.0`. When `p == 1.0` every
+/// element is zeroed.
+pub fn dropout_forward(
+  layer: Dropout,
+  input: Tensor,
+  training: Bool,
+) -> Tensor {
+  nn_pool.dropout_forward(layer, input, training)
+}
+
+/// 1D max pooling. Input `[batch, channels, length]`, output
+/// `[batch, channels, (length + 2*padding - kernel_size) / stride + 1]`.
+pub fn max_pool_1d_forward(
+  config: MaxPool1dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_pool.max_pool_1d_forward(config, input)
+}
+
+/// 1D average pooling. Input `[batch, channels, length]`, output
+/// `[batch, channels, (length + 2*padding - kernel_size) / stride + 1]`.
+pub fn avg_pool_1d_forward(
+  config: AvgPool1dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_pool.avg_pool_1d_forward(config, input)
+}
+
+/// 2D adaptive average pooling. Input `[batch, channels, H, W]`, output
+/// `[batch, channels, output_h, output_w]`.
+pub fn adaptive_avg_pool_2d_forward(
+  config: AdaptiveAvgPool2dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_pool.adaptive_avg_pool_2d_forward(config, input)
+}
+
+/// 1D adaptive average pooling. Input `[batch, channels, length]`, output
+/// `[batch, channels, output_size]`.
+pub fn adaptive_avg_pool_1d_forward(
+  config: AdaptiveAvgPool1dConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_pool.adaptive_avg_pool_1d_forward(config, input)
+}
+
+/// 2D upsampling (nearest or bilinear). Input `[batch, channels, H, W]`,
+/// output `[batch, channels, H * scale_factor, W * scale_factor]`.
+pub fn upsample_forward(
+  config: UpsampleConfig,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_pool.upsample_forward(config, input)
 }
 
 // --- TFLOPS Benchmarking ----------------------------------------------------
