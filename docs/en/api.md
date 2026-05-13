@@ -117,6 +117,10 @@ Use broadcasting-specific functions when shapes differ.
 | `div_broadcast(a, b)`         | Divide with NumPy-style broadcasting.     |
 | `maximum(a, b)`               | Element-wise maximum with broadcasting.   |
 | `minimum(a, b)`               | Element-wise minimum with broadcasting.   |
+| `equal(a, b)` / `not_equal(a, b)` | Element-wise equality masks with broadcasting. |
+| `greater(a, b)` / `greater_equal(a, b)` | Element-wise comparison masks with broadcasting. |
+| `less(a, b)` / `less_equal(a, b)` | Element-wise comparison masks with broadcasting. |
+| `where(condition, true, false)` | Select values using a non-zero condition mask. |
 
 ## Reductions
 
