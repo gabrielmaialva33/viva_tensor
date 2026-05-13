@@ -83,6 +83,10 @@ pub fn stable_fallible_unary_contract_test() {
   t.try_argmin(tensor) |> should.equal(Ok(0))
   t.try_mean(tensor) |> should.equal(Ok(2.0))
   t.try_product(tensor) |> should.equal(Ok(6.0))
+  t.try_cumsum(tensor) |> should.equal(Ok(t.from_list([1.0, 3.0, 6.0])))
+  t.try_cumprod(tensor) |> should.equal(Ok(t.from_list([1.0, 2.0, 6.0])))
+  t.try_median(tensor) |> should.equal(Ok(2.0))
+  t.try_percentile(tensor, 50) |> should.equal(Ok(2.0))
   t.try_variance(tensor) |> should.equal(Ok(0.6666666666666666))
 
   case t.try_flatten(tensor) {

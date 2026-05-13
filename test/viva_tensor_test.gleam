@@ -304,6 +304,59 @@ pub fn try_std_empty_test() {
   |> should.be_error()
 }
 
+pub fn cumsum_test() {
+  let values = t.from_list([1.0, 2.0, 3.0, 4.0]) |> t.cumsum()
+
+  t.to_list(values) |> should.equal([1.0, 3.0, 6.0, 10.0])
+  t.shape(values) |> should.equal([4])
+}
+
+pub fn cumprod_test() {
+  let values = t.from_list([1.0, 2.0, 3.0, 4.0]) |> t.cumprod()
+
+  t.to_list(values) |> should.equal([1.0, 2.0, 6.0, 24.0])
+  t.shape(values) |> should.equal([4])
+}
+
+pub fn cumsum_preserves_matrix_shape_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(matrix) -> {
+      let values = t.cumsum(matrix)
+
+      t.to_list(values) |> should.equal([1.0, 3.0, 6.0, 10.0])
+      t.shape(values) |> should.equal([2, 2])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn try_median_test() {
+  let odd = t.from_list([3.0, 1.0, 2.0])
+  let even = t.from_list([4.0, 1.0, 3.0, 2.0])
+
+  t.try_median(odd) |> should.equal(Ok(2.0))
+  t.try_median(even) |> should.equal(Ok(2.5))
+}
+
+pub fn try_median_empty_test() {
+  t.from_list([])
+  |> t.try_median()
+  |> should.be_error()
+}
+
+pub fn try_percentile_test() {
+  let values = t.from_list([15.0, 20.0, 35.0, 40.0, 50.0])
+
+  t.try_percentile(values, 40) |> should.equal(Ok(29.0))
+}
+
+pub fn try_percentile_rejects_invalid_percentile_test() {
+  let values = t.from_list([1.0, 2.0, 3.0])
+
+  t.try_percentile(values, -1) |> should.be_error()
+  t.try_percentile(values, 101) |> should.be_error()
+}
+
 // =============================================================================
 // DOT PRODUCT & MATMUL
 // =============================================================================
