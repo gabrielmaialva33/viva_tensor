@@ -9,7 +9,7 @@ import gleam/io
 import gleam/list
 import gleam/string
 
-import viva_tensor/metrics
+import viva_tensor/observability/metrics
 import viva_tensor/quant/awq
 import viva_tensor/quant/compression
 import viva_tensor/quant/nf4

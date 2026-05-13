@@ -10,7 +10,7 @@ import gleam/int
 import gleam/io
 import gleam/list
 import viva_tensor/core/ffi
-import viva_tensor/tflops.{type Backend, PureErlang}
+import viva_tensor/native/tflops.{type Backend, PureErlang}
 
 // =============================================================================
 // MAIN
