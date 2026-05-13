@@ -1,0 +1,89 @@
+name: Publish Docs
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ "v*" ]
+  workflow_dispatch:
+
+env:
+  GLEAM_VERSION: "1.16.0"
+  OTP_VERSION: "28"
+
+# Required for GitHub Pages deployment via the artifact-based publish action.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one concurrent publish run; never cancel an in-progress deployment so
+# the live site is not left in a half-updated state.
+concurrency:
+  group: "pages"
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build site
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Erlang + Gleam
+        uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          gleam-version: ${{ env.GLEAM_VERSION }}
+
+      - name: Cache deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/gleam
+            build/packages
+          key: ${{ runner.os }}-gleam-${{ hashFiles('gleam.toml') }}
+
+      - name: Install deps
+        run: gleam deps download
+
+      - name: Build HexDocs HTML
+        run: gleam docs build
+
+      - name: Assemble Pages site
+        run: |
+          set -euo pipefail
+          SITE_DIR="_site"
+          rm -rf "$SITE_DIR"
+          mkdir -p "$SITE_DIR"
+
+          # Copy the static landing page to the site root.
+          cp -R docs/landing/. "$SITE_DIR/"
+
+          # Generated HexDocs HTML lives under `viva_tensor/` on the site so
+          # that the landing page can link to `viva_tensor/index.html`.
+          mkdir -p "$SITE_DIR/viva_tensor"
+          cp -R build/dev/docs/viva_tensor/. "$SITE_DIR/viva_tensor/"
+
+          # Sanity: site root must have an index.html and the generated docs.
+          test -f "$SITE_DIR/index.html"
+          test -f "$SITE_DIR/viva_tensor/index.html"
+
+      - name: Configure Pages
+        uses: actions/configure-pages@v4
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    name: Deploy to GitHub Pages
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@v4

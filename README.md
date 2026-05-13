@@ -12,6 +12,18 @@
 
 ---
 
+## 📘 Documentation
+
+- **Site**: <https://gabrielmaialva33.github.io/viva_tensor/> (auto-published from `main`)
+- **HexDocs**: <https://hexdocs.pm/viva_tensor>
+- **API Guide**: [docs/en/api.md](docs/en/api.md)
+- **Technical Paper**: [docs/en/paper.md](docs/en/paper.md)
+- **Stability Policy**: [docs/en/stability.md](docs/en/stability.md)
+- **Project Structure**: [docs/en/project-structure.md](docs/en/project-structure.md)
+- **FFI Architecture**: [docs/en/ffi-architecture.md](docs/en/ffi-architecture.md)
+
+---
+
 ## Performance
 
 ### GPU Tensor Cores (RTX 4090)
