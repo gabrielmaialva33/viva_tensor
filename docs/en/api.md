@@ -85,6 +85,18 @@ pub fn example() {
 | `try_negate(tensor)`    | Fallible negation preserving native materialization errors. |
 | `clamp(tensor, min, max)` | Clamp values into a closed interval.        |
 | `try_clamp(tensor, min, max)` | Fallible clamp preserving native materialization errors. |
+| `clip(tensor, min, max)` | Alias for clamping values into a closed interval. |
+| `try_clip(tensor, min, max)` | Fallible clip rejecting invalid intervals. |
+| `abs(tensor)` / `try_abs(tensor)` | Absolute value for every element.     |
+| `square(tensor)` / `try_square(tensor)` | Square every element.              |
+| `sqrt(tensor)` / `try_sqrt(tensor)` | Square root, rejecting negative values in `try_sqrt`. |
+| `exp(tensor)` / `try_exp(tensor)` | Exponential for every element.        |
+| `log(tensor)` / `try_log(tensor)` | Natural logarithm, rejecting non-positive values in `try_log`. |
+| `floor(tensor)` / `try_floor(tensor)` | Floor every element.               |
+| `ceil(tensor)` / `try_ceil(tensor)` | Ceiling every element.             |
+| `round(tensor)` / `try_round(tensor)` | Round every element to nearest integer value. |
+| `sign(tensor)` / `try_sign(tensor)` | Return -1, 0, or 1 for each element. |
+| `reciprocal(tensor)` / `try_reciprocal(tensor)` | Reciprocal, rejecting zero values in `try_reciprocal`. |
 | `map(tensor, fun)`      | Apply a scalar function to every element.     |
 | `try_map(tensor, fun)`  | Fallible scalar mapping preserving native materialization errors. |
 | `softmax_axis(tensor, axis)` | Normalize each slice along an axis.     |
@@ -103,6 +115,8 @@ Use broadcasting-specific functions when shapes differ.
 | `sub_broadcast(a, b)`         | Subtract with NumPy-style broadcasting.   |
 | `mul_broadcast(a, b)`         | Multiply with NumPy-style broadcasting.   |
 | `div_broadcast(a, b)`         | Divide with NumPy-style broadcasting.     |
+| `maximum(a, b)`               | Element-wise maximum with broadcasting.   |
+| `minimum(a, b)`               | Element-wise minimum with broadcasting.   |
 
 ## Reductions
 
@@ -119,8 +133,12 @@ Use broadcasting-specific functions when shapes differ.
 | `try_product(tensor)`            | Fallible product preserving materialization errors.     |
 | `cumsum(tensor)`                 | Cumulative sum over flattened values, preserving shape. |
 | `try_cumsum(tensor)`             | Fallible cumulative sum preserving materialization errors. |
+| `cumsum_axis(tensor, axis)`      | Cumulative sum along one axis, preserving shape.    |
+| `try_cumsum_axis(tensor, axis)`  | Fallible cumulative sum along one axis.             |
 | `cumprod(tensor)`                | Cumulative product over flattened values, preserving shape. |
 | `try_cumprod(tensor)`            | Fallible cumulative product preserving materialization errors. |
+| `cumprod_axis(tensor, axis)`     | Cumulative product along one axis, preserving shape. |
+| `try_cumprod_axis(tensor, axis)` | Fallible cumulative product along one axis.         |
 | `median(tensor)`                 | Median over all elements.                              |
 | `try_median(tensor)`             | Fallible median preserving materialization and empty-tensor errors. |
 | `percentile(tensor, percentile)` | Percentile using linear interpolation.                 |
@@ -128,12 +146,22 @@ Use broadcasting-specific functions when shapes differ.
 | `mean_axis(tensor, axis)`        | Mean along one axis.                                   |
 | `try_mean_axis(tensor, axis)`    | Fallible mean along one axis.                          |
 | `mean_axis_keepdims(tensor, axis)`| Mean along one axis while keeping a size-1 dimension. |
+| `variance_axis(tensor, axis)`    | Variance along one axis.                               |
+| `try_variance_axis(tensor, axis)`| Fallible variance along one axis.                      |
+| `variance_axis_keepdims(tensor, axis)`| Variance along one axis while keeping a size-1 dimension. |
+| `std_axis(tensor, axis)`         | Standard deviation along one axis.                     |
+| `try_std_axis(tensor, axis)`     | Fallible standard deviation along one axis.            |
+| `std_axis_keepdims(tensor, axis)`| Standard deviation along one axis while keeping a size-1 dimension. |
 | `max_axis(tensor, axis)`         | Maximum along one axis.                                |
 | `try_max_axis(tensor, axis)`     | Fallible maximum along one axis.                       |
 | `max_axis_keepdims(tensor, axis)`| Maximum along one axis while keeping a size-1 dimension. |
 | `min_axis(tensor, axis)`         | Minimum along one axis.                                |
 | `try_min_axis(tensor, axis)`     | Fallible minimum along one axis.                       |
 | `min_axis_keepdims(tensor, axis)`| Minimum along one axis while keeping a size-1 dimension. |
+| `argmax_axis(tensor, axis)`      | Argmax index along one axis, represented as floats.    |
+| `try_argmax_axis(tensor, axis)`  | Fallible argmax index along one axis.                  |
+| `argmin_axis(tensor, axis)`      | Argmin index along one axis, represented as floats.    |
+| `try_argmin_axis(tensor, axis)`  | Fallible argmin index along one axis.                  |
 | `max(tensor)`                    | Maximum value.                                         |
 | `try_max(tensor)`                | Fallible maximum preserving materialization and empty-tensor errors. |
 | `min(tensor)`                    | Minimum value.                                         |
@@ -210,6 +238,13 @@ would be slower than a dense buffer.
 | `try_norm(tensor)`      | Fallible L2 norm preserving materialization errors. |
 | `normalize(tensor)`     | Normalize to unit length.                           |
 | `try_normalize(tensor)` | Fallible normalization preserving materialization errors. |
+| `abs(tensor)`           | Absolute value for every element.                   |
+| `square(tensor)`        | Square every element.                               |
+| `sqrt(tensor)`          | Square root every element.                          |
+| `try_sqrt(tensor)`      | Fallible square root rejecting negative values.     |
+| `exp(tensor)`           | Exponential for every element.                      |
+| `log(tensor)`           | Natural logarithm for every element.                |
+| `try_log(tensor)`       | Fallible natural logarithm rejecting non-positive values. |
 | `is_close(a, b, rtol, atol)` | Compare two scalars with numeric tolerances. |
 | `all_close(a, b, rtol, atol)` | Compare two tensors element-wise with numeric tolerances. |
 | `euclidean_distance(a, b)` | Euclidean distance for same-shaped tensors.     |

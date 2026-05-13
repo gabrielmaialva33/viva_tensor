@@ -100,6 +100,15 @@ All notable changes to this project will be documented in this file.
   `full_like()`, `eye()`, `try_eye()`, `identity()`, `diag()`, `try_diag()`),
   vector distances/similarity, statistical normalization helpers, and
   `max_axis()`/`min_axis()` reductions with `keepdims` variants.
+- Added axis-aware cumulative operations and statistical reductions:
+  `cumsum_axis()`, `try_cumsum_axis()`, `cumprod_axis()`,
+  `try_cumprod_axis()`, `variance_axis()`, `try_variance_axis()`,
+  `std_axis()`, and `try_std_axis()`, including `keepdims` variants for
+  variance and standard deviation.
+- Added axis arg index reductions (`argmax_axis()`, `try_argmax_axis()`,
+  `argmin_axis()`, `try_argmin_axis()`) and common element-wise math helpers
+  (`abs()`, `square()`, `sqrt()`, `exp()`, `log()`) with fallible variants for
+  domain-sensitive operations.
 
 ### Highlights
 
