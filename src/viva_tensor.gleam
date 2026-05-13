@@ -44,6 +44,7 @@ import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
 import viva_tensor/nn/rnn as nn_rnn
+import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
@@ -2973,4 +2974,72 @@ pub fn data_loader_batches(
 /// ```
 pub fn data_loader_len(loader: DataLoader) -> Int {
   dataloader.data_loader_len(loader)
+}
+
+// --- Learning-rate schedulers (re-export) -----------------------------------
+
+/// Tag identifying which schedule a `Scheduler` is implementing.
+pub type SchedulerKind =
+  nn_scheduler.SchedulerKind
+
+/// Scheduler state record. See `viva_tensor/nn/scheduler` for the formulas
+/// behind each variant.
+pub type Scheduler =
+  nn_scheduler.Scheduler
+
+/// StepLR: `lr = base_lr * gamma^floor(step / step_size)` — staircase decay.
+pub fn step_lr(base_lr: Float, step_size: Int, gamma: Float) -> Scheduler {
+  nn_scheduler.step_lr(base_lr, step_size, gamma)
+}
+
+/// CosineAnnealingLR: half-cosine from `base_lr` down to `eta_min` over
+/// `t_max` steps.
+pub fn cosine_annealing_lr(
+  base_lr: Float,
+  t_max: Int,
+  eta_min: Float,
+) -> Scheduler {
+  nn_scheduler.cosine_annealing_lr(base_lr, t_max, eta_min)
+}
+
+/// LinearWarmup: linear ramp from 0 to `base_lr` over `warmup_steps`, then
+/// constant `base_lr`.
+pub fn linear_warmup(base_lr: Float, warmup_steps: Int) -> Scheduler {
+  nn_scheduler.linear_warmup(base_lr, warmup_steps)
+}
+
+/// OneCycleLR: linear warmup `base_lr -> max_lr` for the first
+/// `pct_start * total_steps` steps, then cosine anneal `max_lr -> base_lr`.
+pub fn one_cycle_lr(
+  base_lr: Float,
+  max_lr: Float,
+  total_steps: Int,
+  pct_start: Float,
+) -> Scheduler {
+  nn_scheduler.one_cycle_lr(base_lr, max_lr, total_steps, pct_start)
+}
+
+/// ExponentialLR: `lr = base_lr * gamma^step` — smooth exponential decay.
+pub fn exponential_lr(base_lr: Float, gamma: Float) -> Scheduler {
+  nn_scheduler.exponential_lr(base_lr, gamma)
+}
+
+/// Advance the scheduler by one step and return the new learning rate.
+pub fn scheduler_step(s: Scheduler) -> #(Scheduler, Float) {
+  nn_scheduler.scheduler_step(s)
+}
+
+/// Compute the learning rate at the scheduler's current step without
+/// advancing.
+pub fn scheduler_lr(s: Scheduler) -> Float {
+  nn_scheduler.scheduler_lr(s)
+}
+
+/// Apply the scheduler's next learning rate to an optimizer. Advances the
+/// scheduler and returns the updated `(scheduler, optimizer)` pair.
+pub fn apply_to_optimizer(
+  s: Scheduler,
+  opt: nn_optim.Optimizer,
+) -> #(Scheduler, nn_optim.Optimizer) {
+  nn_scheduler.apply_to_optimizer(s, opt)
 }
