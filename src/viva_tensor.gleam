@@ -476,9 +476,19 @@ pub fn max(t: Tensor) -> Float {
   tensor.max(t)
 }
 
+/// Maximum value, preserving materialization and empty-tensor errors.
+pub fn try_max(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_max(t)
+}
+
 /// Minimum value
 pub fn min(t: Tensor) -> Float {
   tensor.min(t)
+}
+
+/// Minimum value, preserving materialization and empty-tensor errors.
+pub fn try_min(t: Tensor) -> Result(Float, TensorError) {
+  tensor.try_min(t)
 }
 
 /// Index of maximum value
@@ -486,9 +496,19 @@ pub fn argmax(t: Tensor) -> Int {
   tensor.argmax(t)
 }
 
+/// Index of maximum value, preserving materialization and empty-tensor errors.
+pub fn try_argmax(t: Tensor) -> Result(Int, TensorError) {
+  tensor.try_argmax(t)
+}
+
 /// Index of minimum value
 pub fn argmin(t: Tensor) -> Int {
   tensor.argmin(t)
+}
+
+/// Index of minimum value, preserving materialization and empty-tensor errors.
+pub fn try_argmin(t: Tensor) -> Result(Int, TensorError) {
+  tensor.try_argmin(t)
 }
 
 /// Variance

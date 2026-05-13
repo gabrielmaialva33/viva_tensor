@@ -817,12 +817,12 @@ pub fn mean(t: Tensor) -> Float {
   }
 }
 
-/// Maximum value
-pub fn max(t: Tensor) -> Float {
+/// Maximum value, preserving materialization failures.
+pub fn try_max(t: Tensor) -> Result(Float, TensorError) {
   case t {
     NativeTensor(ref, _) -> {
       case ffi.nt_max(ref) {
-        Ok(value) -> value
+        Ok(value) -> Ok(value)
         Error(_) -> max_dense(t)
       }
     }
@@ -830,20 +830,27 @@ pub fn max(t: Tensor) -> Float {
   }
 }
 
-fn max_dense(t: Tensor) -> Float {
-  let data = get_data(t)
+/// Maximum value.
+pub fn max(t: Tensor) -> Float {
+  try_max(t)
+  |> result.unwrap(0.0)
+}
+
+fn max_dense(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
   case data {
-    [] -> 0.0
-    [first, ..rest] -> list.fold(rest, first, fn(acc, x) { float.max(acc, x) })
+    [] -> Error(DimensionError("Cannot compute max of an empty tensor"))
+    [first, ..rest] ->
+      Ok(list.fold(rest, first, fn(acc, x) { float.max(acc, x) }))
   }
 }
 
-/// Minimum value
-pub fn min(t: Tensor) -> Float {
+/// Minimum value, preserving materialization failures.
+pub fn try_min(t: Tensor) -> Result(Float, TensorError) {
   case t {
     NativeTensor(ref, _) -> {
       case ffi.nt_min(ref) {
-        Ok(value) -> value
+        Ok(value) -> Ok(value)
         Error(_) -> min_dense(t)
       }
     }
@@ -851,19 +858,26 @@ pub fn min(t: Tensor) -> Float {
   }
 }
 
-fn min_dense(t: Tensor) -> Float {
-  let data = get_data(t)
+/// Minimum value.
+pub fn min(t: Tensor) -> Float {
+  try_min(t)
+  |> result.unwrap(0.0)
+}
+
+fn min_dense(t: Tensor) -> Result(Float, TensorError) {
+  use data <- result.try(try_to_list(t))
   case data {
-    [] -> 0.0
-    [first, ..rest] -> list.fold(rest, first, fn(acc, x) { float.min(acc, x) })
+    [] -> Error(DimensionError("Cannot compute min of an empty tensor"))
+    [first, ..rest] ->
+      Ok(list.fold(rest, first, fn(acc, x) { float.min(acc, x) }))
   }
 }
 
-/// Argmax - index of largest element
-pub fn argmax(t: Tensor) -> Int {
-  let data = get_data(t)
+/// Argmax - index of largest element, preserving materialization failures.
+pub fn try_argmax(t: Tensor) -> Result(Int, TensorError) {
+  use data <- result.try(try_to_list(t))
   case data {
-    [] -> 0
+    [] -> Error(DimensionError("Cannot compute argmax of an empty tensor"))
     [first, ..rest] -> {
       let #(idx, _, _) =
         list.fold(rest, #(0, first, 1), fn(acc, x) {
@@ -873,16 +887,22 @@ pub fn argmax(t: Tensor) -> Int {
             False -> #(best_idx, best_val, curr_idx + 1)
           }
         })
-      idx
+      Ok(idx)
     }
   }
 }
 
-/// Argmin - index of smallest element
-pub fn argmin(t: Tensor) -> Int {
-  let data = get_data(t)
+/// Argmax - index of largest element.
+pub fn argmax(t: Tensor) -> Int {
+  try_argmax(t)
+  |> result.unwrap(0)
+}
+
+/// Argmin - index of smallest element, preserving materialization failures.
+pub fn try_argmin(t: Tensor) -> Result(Int, TensorError) {
+  use data <- result.try(try_to_list(t))
   case data {
-    [] -> 0
+    [] -> Error(DimensionError("Cannot compute argmin of an empty tensor"))
     [first, ..rest] -> {
       let #(idx, _, _) =
         list.fold(rest, #(0, first, 1), fn(acc, x) {
@@ -892,9 +912,15 @@ pub fn argmin(t: Tensor) -> Int {
             False -> #(best_idx, best_val, curr_idx + 1)
           }
         })
-      idx
+      Ok(idx)
     }
   }
+}
+
+/// Argmin - index of smallest element.
+pub fn argmin(t: Tensor) -> Int {
+  try_argmin(t)
+  |> result.unwrap(0)
 }
 
 /// Variance: Var(X) = E[X^2] - E[X]^2  (computational form)
