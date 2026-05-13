@@ -9,7 +9,7 @@
 //// Operations are launched asynchronously (mostly).
 
 import gleam/result
-import viva_tensor/core/error.{DimensionError, ShapeMismatch}
+import viva_tensor/core/error.{BackendMismatch, DimensionError, ShapeMismatch}
 import viva_tensor/core/ffi
 import viva_tensor/tensor
 
@@ -503,7 +503,20 @@ fn matmul_accelerated_into_checked(
       tensor.matmul_into(out_tensor, a_tensor, b_tensor)
 
     _, _, _ ->
-      Error(DimensionError("Output, lhs, and rhs must use the same backend"))
+      Error(BackendMismatch(
+        "matmul_accelerated_into",
+        backend_label(out),
+        backend_label(a),
+        backend_label(b),
+      ))
+  }
+}
+
+fn backend_label(t: AcceleratedTensor) -> String {
+  case t {
+    CudaFp16(_, _, _) -> "cuda/fp16"
+    CudaFp32(_, _, _) -> "cuda/fp32"
+    Cpu(_, _) -> "cpu"
   }
 }
 
