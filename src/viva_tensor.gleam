@@ -23,12 +23,15 @@
 
 import gleam/list
 import gleam/result
+import viva_tensor/backend/capability as backend_capability
 import viva_tensor/core/error.{DimensionError}
 import viva_tensor/core/ffi
-import viva_tensor/cuda
 import viva_tensor/layout as tensor_layout
+import viva_tensor/native/cuda
+import viva_tensor/native/tflops as tflops_mod
+import viva_tensor/quant/hadamard as quant_hadamard
+import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
-import viva_tensor/tflops as tflops_mod
 
 // --- Types ------------------------------------------------------------------
 
@@ -128,6 +131,18 @@ pub type TensorBackendPlan {
   )
 }
 
+/// Hardware generation used by accelerator profile discovery.
+pub type HardwareGeneration =
+  backend_capability.HardwareGeneration
+
+/// Hardware feature used by accelerator profile discovery.
+pub type HardwareFeature =
+  backend_capability.HardwareFeature
+
+/// Hardware target profile for current and future accelerator dispatch.
+pub type HardwareProfile =
+  backend_capability.HardwareProfile
+
 /// Runtime acceleration capabilities detected for this VM.
 pub type TensorCapabilities {
   TensorCapabilities(
@@ -158,6 +173,26 @@ pub type LinearLayer =
 /// Opaque reference to a tensor stored in native NIF memory.
 pub type NativeTensorRef =
   ffi.NativeTensorRef
+
+/// Quantized storage format metadata.
+pub type QuantFormat =
+  quant_layout.QuantFormat
+
+/// Quantization scale sharing granularity.
+pub type ScaleGranularity =
+  quant_layout.ScaleGranularity
+
+/// Accumulator format for quantized kernels.
+pub type AccumulatorFormat =
+  quant_layout.AccumulatorFormat
+
+/// Quantized tensor layout metadata.
+pub type QuantLayout =
+  quant_layout.QuantLayout
+
+/// Reversible Hadamard preprocessing result for low-bit quantization.
+pub type HadamardPreprocess =
+  quant_hadamard.HadamardPreprocess
 
 /// Configuration for two-dimensional convolution operations.
 pub type Conv2dConfig =
@@ -1786,6 +1821,73 @@ pub fn backend_capabilities() -> List(BackendCapability) {
   }
 
   build_backend_capabilities(zig_loaded, backends)
+}
+
+/// Inspect hardware target profiles, including unavailable future targets.
+pub fn hardware_profiles() -> List(HardwareProfile) {
+  let caps = capabilities()
+  backend_capability.hardware_profiles(caps.zig_loaded, caps.tflops_backends)
+}
+
+/// Describe a Rubin-ready NVFP4 block-scaled layout using 16-value micro-blocks.
+pub fn nvfp4_block_scaled_layout(shape: List(Int)) -> QuantLayout {
+  quant_layout.nvfp4_block_scaled(shape)
+}
+
+/// Describe an experimental progressive INT2 layout.
+pub fn int2_progressive_layout(
+  shape: List(Int),
+  block_size: Int,
+) -> Result(QuantLayout, TensorError) {
+  quant_layout.int2_progressive(shape, block_size)
+}
+
+/// Describe an experimental progressive INT3 layout.
+pub fn int3_progressive_layout(
+  shape: List(Int),
+  block_size: Int,
+) -> Result(QuantLayout, TensorError) {
+  quant_layout.int3_progressive(shape, block_size)
+}
+
+/// Estimate payload bytes for a quantized layout.
+pub fn quant_layout_memory_bytes(layout: QuantLayout) -> Int {
+  quant_layout.memory_bytes(layout)
+}
+
+/// Estimate compression ratio versus a baseline element width.
+pub fn quant_layout_compression_ratio_against(
+  layout: QuantLayout,
+  baseline_bits_per_value: Int,
+) -> Float {
+  quant_layout.compression_ratio_against(layout, baseline_bits_per_value)
+}
+
+/// Check whether a layout matches Rubin-style native micro-block assumptions.
+pub fn quant_layout_is_rubin_native_candidate(layout: QuantLayout) -> Bool {
+  quant_layout.is_rubin_native_candidate(layout)
+}
+
+/// Apply randomized normalized Hadamard preprocessing to a vector tensor.
+pub fn try_hadamard_preprocess(
+  input: Tensor,
+  seed: Int,
+) -> Result(HadamardPreprocess, TensorError) {
+  quant_hadamard.try_preprocess(input, seed)
+}
+
+/// Invert a previously applied Hadamard preprocessing plan.
+pub fn try_inverse_hadamard_preprocess(
+  preprocessed: HadamardPreprocess,
+) -> Result(Tensor, TensorError) {
+  quant_hadamard.inverse(preprocessed)
+}
+
+/// Apply a normalized Walsh-Hadamard transform to power-of-two vector data.
+pub fn try_normalized_walsh_hadamard(
+  values: List(Float),
+) -> Result(List(Float), TensorError) {
+  quant_hadamard.try_normalized_walsh_hadamard(values)
 }
 
 /// Plan which backend should handle an operation on this VM.
