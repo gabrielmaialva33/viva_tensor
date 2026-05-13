@@ -221,11 +221,7 @@ fn softmax_row(values: List(Float)) -> List(Float) {
 /// Bias terms are omitted for parity with the existing transformer FFN init
 /// (zero biases are equivalent and keep the record small).
 pub type MoeBlock {
-  MoeBlock(
-    router: Router,
-    expert_w1: List(Tensor),
-    expert_w2: List(Tensor),
-  )
+  MoeBlock(router: Router, expert_w1: List(Tensor), expert_w2: List(Tensor))
 }
 
 /// Build a `MoeBlock` with zero-weight experts and a fresh router.
@@ -357,9 +353,7 @@ fn process_token_row(
         let activated = activations.relu(h)
         use o <- result.try(tensor.matmul(activated, w2))
         use o_data <- result.try(tensor.try_to_list(o))
-        Ok(
-          list.map2(acc, o_data, fn(a, v) { a +. weight *. v }),
-        )
+        Ok(list.map2(acc, o_data, fn(a, v) { a +. weight *. v }))
       }
       _, _ ->
         Error(InvalidShape(
@@ -514,10 +508,7 @@ pub fn expert_distribution(
       }
     }
     _, _ ->
-      Error(ShapeMismatch(
-        expected: [-1, num_experts],
-        got: router_probs.shape,
-      ))
+      Error(ShapeMismatch(expected: [-1, num_experts], got: router_probs.shape))
   }
 }
 
