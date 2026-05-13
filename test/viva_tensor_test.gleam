@@ -670,6 +670,20 @@ pub fn flatten_test() {
   }
 }
 
+pub fn try_flatten_test() {
+  case t.matrix(2, 2, [1.0, 2.0, 3.0, 4.0]) {
+    Ok(m) ->
+      case t.try_flatten(m) {
+        Ok(f) -> {
+          t.shape(f) |> should.equal([4])
+          t.to_list(f) |> should.equal([1.0, 2.0, 3.0, 4.0])
+        }
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn squeeze_test() {
   let a = t.zeros([1, 3, 1])
   let s = t.squeeze(a)

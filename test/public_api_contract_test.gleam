@@ -41,6 +41,14 @@ pub fn stable_fallible_unary_contract_test() {
   t.try_mean(tensor) |> should.equal(Ok(2.0))
   t.try_product(tensor) |> should.equal(Ok(6.0))
   t.try_variance(tensor) |> should.equal(Ok(0.6666666666666666))
+
+  case t.try_flatten(tensor) {
+    Ok(flat) -> {
+      t.shape(flat) |> should.equal([3])
+      t.to_list(flat) |> should.equal([1.0, 2.0, 3.0])
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn stable_axis_reduction_contract_test() {

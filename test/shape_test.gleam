@@ -63,6 +63,16 @@ pub fn slice_dimension_mismatch_test() {
   tensor.slice(t, [0, 0], [1, 1]) |> should.be_error()
 }
 
+pub fn slice_out_of_bounds_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  tensor.slice(t, [2], [2]) |> should.be_error()
+}
+
+pub fn slice_2d_out_of_bounds_test() {
+  let t = tensor.Tensor(data: [1.0, 2.0, 3.0, 4.0], shape: [2, 2])
+  tensor.slice(t, [1, 1], [2, 1]) |> should.be_error()
+}
+
 pub fn take_first_test() {
   let t = tensor.from_list([1.0, 2.0, 3.0, 4.0, 5.0])
   let r = tensor.take_first(t, 3)
@@ -119,6 +129,18 @@ pub fn concat_test() {
   let r = tensor.concat([a, b])
   tensor.shape(r) |> should.equal([5])
   tensor.to_list(r) |> should.equal([1.0, 2.0, 3.0, 4.0, 5.0])
+}
+
+pub fn try_concat_test() {
+  let a = tensor.from_list([1.0, 2.0])
+  let b = tensor.from_list([3.0])
+  case tensor.try_concat([a, b]) {
+    Ok(r) -> {
+      tensor.shape(r) |> should.equal([3])
+      tensor.to_list(r) |> should.equal([1.0, 2.0, 3.0])
+    }
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn concat_single_test() {
