@@ -942,7 +942,8 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
       case axis_size <= 0 {
         True -> Ok(Tensor(data: [], shape: shp))
         False -> {
-          let data = softmax_axis_data(get_data(t), size(t), axis_size, inner_size)
+          let data =
+            softmax_axis_data(get_data(t), size(t), axis_size, inner_size)
           Ok(Tensor(data: data, shape: shp))
         }
       }
@@ -977,7 +978,8 @@ fn softmax_axis_outer(
       let values =
         list.range(0, axis_size - 1)
         |> list.map(fn(axis_pos) {
-          let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
+          let index =
+            outer * axis_size * inner_size + inner + axis_pos * inner_size
           list_at_float(data, index) |> result.unwrap(0.0)
         })
       softmax_values(values)
@@ -993,12 +995,11 @@ fn softmax_axis_outer(
 
 fn softmax_values(values: List(Float)) -> List(Float) {
   let max_value =
-    list.fold(values, list_at_float(values, 0) |> result.unwrap(0.0), fn(
-      acc,
-      value,
-    ) {
-      float.max(acc, value)
-    })
+    list.fold(
+      values,
+      list_at_float(values, 0) |> result.unwrap(0.0),
+      fn(acc, value) { float.max(acc, value) },
+    )
   let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
   let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
 
@@ -1795,7 +1796,8 @@ pub fn squeeze(t: Tensor) -> Tensor {
         offset: offset,
       )
     }
-    NativeTensor(ref, shape) -> NativeTensor(ref: ref, shape: squeezed_shape(shape))
+    NativeTensor(ref, shape) ->
+      NativeTensor(ref: ref, shape: squeezed_shape(shape))
   }
 }
 

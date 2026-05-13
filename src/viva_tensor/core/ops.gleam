@@ -928,6 +928,17 @@ pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   add(a_bc, b_bc)
 }
 
+/// Element-wise subtraction with broadcasting
+pub fn sub_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use result_shape <- result.try(broadcast_shape(
+    tensor.shape(a),
+    tensor.shape(b),
+  ))
+  use a_bc <- result.try(broadcast_to(a, result_shape))
+  use b_bc <- result.try(broadcast_to(b, result_shape))
+  sub(a_bc, b_bc)
+}
+
 /// Element-wise multiplication with broadcasting
 pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use result_shape <- result.try(broadcast_shape(
@@ -937,6 +948,17 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use a_bc <- result.try(broadcast_to(a, result_shape))
   use b_bc <- result.try(broadcast_to(b, result_shape))
   mul(a_bc, b_bc)
+}
+
+/// Element-wise division with broadcasting
+pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use result_shape <- result.try(broadcast_shape(
+    tensor.shape(a),
+    tensor.shape(b),
+  ))
+  use a_bc <- result.try(broadcast_to(a, result_shape))
+  use b_bc <- result.try(broadcast_to(b, result_shape))
+  div(a_bc, b_bc)
 }
 
 /// Broadcast tensor to target shape
