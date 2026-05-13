@@ -15,7 +15,9 @@ import gleam/list
 import gleam/result
 import gleam_community/maths
 import viva_tensor/core/error.{
-  BroadcastError, DimensionError, IndexOutOfBounds, InvalidShape, ShapeMismatch,
+  AxisOutOfBounds, BackendMismatch, BroadcastError, DimensionError,
+  IndexOutOfBounds, InvalidShape, NifNotLoaded, OperandShapeMismatch,
+  RankMismatch, ShapeMismatch, SliceArityMismatch,
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
@@ -287,6 +289,7 @@ pub fn is_native(t: Tensor) -> Bool {
 pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
   case ffi.nt_zeros(shape) {
     Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(NifNotLoaded("native_zeros"))
     Error(reason) -> Error(InvalidShape(reason))
   }
 }
@@ -295,6 +298,7 @@ pub fn native_zeros(shape: List(Int)) -> Result(Tensor, TensorError) {
 pub fn native_ones(shape: List(Int)) -> Result(Tensor, TensorError) {
   case ffi.nt_ones(shape) {
     Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(NifNotLoaded("native_ones"))
     Error(reason) -> Error(InvalidShape(reason))
   }
 }
@@ -306,6 +310,7 @@ pub fn native_fill(
 ) -> Result(Tensor, TensorError) {
   case ffi.nt_fill(shape, value) {
     Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+    Error("nif_not_loaded") -> Error(NifNotLoaded("native_fill"))
     Error(reason) -> Error(InvalidShape(reason))
   }
 }
@@ -329,6 +334,7 @@ pub fn native_from_list(
     True -> {
       case ffi.nt_from_list(data, shape) {
         Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+        Error("nif_not_loaded") -> Error(NifNotLoaded("native_from_list"))
         Error(reason) -> Error(InvalidShape(reason))
       }
     }
@@ -510,7 +516,7 @@ pub fn get2d(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
       let index = row * num_cols + col
       get(t, index)
     }
-    _ -> Error(DimensionError("Tensor is not 2D"))
+    other -> Error(RankMismatch("get2d", 2, other))
   }
 }
 
@@ -531,7 +537,7 @@ pub fn get_row(t: Tensor, row_idx: Int) -> Result(Tensor, TensorError) {
         False -> Error(DimensionError("Row index out of bounds"))
       }
     }
-    _ -> Error(DimensionError("Tensor is not 2D"))
+    other -> Error(RankMismatch("get_row", 2, other))
   }
 }
 
@@ -549,7 +555,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
         False -> Error(DimensionError("Column index out of bounds"))
       }
     }
-    _ -> Error(DimensionError("Tensor is not 2D"))
+    other -> Error(RankMismatch("get_col", 2, other))
   }
 }
 
@@ -751,7 +757,13 @@ pub fn linear_relu(
     }
     [_, _], [_, n], [bias_n] ->
       Error(ShapeMismatch(expected: [n], got: [bias_n]))
-    _, _, _ -> Error(DimensionError("Expected [m,k], [k,n], and [n] bias"))
+    _, _, _ ->
+      Error(OperandShapeMismatch(
+        "linear_relu",
+        "inputs",
+        "[m,k], [k,n], [n]",
+        a.shape,
+      ))
   }
 }
 
@@ -999,7 +1011,7 @@ pub fn try_cumsum_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  cumulative_axis(t, axis_idx, maths.cumulative_sum)
+  cumulative_axis("cumsum", t, axis_idx, maths.cumulative_sum)
 }
 
 /// Cumulative sum along one axis, preserving the original shape.
@@ -1012,7 +1024,7 @@ pub fn try_cumprod_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  cumulative_axis(t, axis_idx, maths.cumulative_product)
+  cumulative_axis("cumprod", t, axis_idx, maths.cumulative_product)
 }
 
 /// Cumulative product along one axis, preserving the original shape.
@@ -1349,7 +1361,7 @@ pub fn reciprocal(t: Tensor) -> Tensor {
 /// Sum along a specific axis, preserving materialization failures.
 /// For a [2, 3] tensor, sum_axis(_, 0) gives [3], sum_axis(_, 1) gives [2].
 pub fn try_sum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  sum_axis_with_keepdims(t, axis_idx, False)
+  sum_axis_with_keepdims("sum_axis", t, axis_idx, False)
 }
 
 /// Sum along a specific axis.
@@ -1362,7 +1374,7 @@ pub fn try_sum_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  sum_axis_with_keepdims(t, axis_idx, True)
+  sum_axis_with_keepdims("sum_axis_keepdims", t, axis_idx, True)
 }
 
 /// Sum along a specific axis while keeping the reduced dimension as size 1.
@@ -1374,13 +1386,14 @@ pub fn sum_axis_keepdims(
 }
 
 fn sum_axis_with_keepdims(
+  operation: String,
   t: Tensor,
   axis_idx: Int,
   keepdims: Bool,
 ) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
-    False -> Error(DimensionError("Invalid axis index"))
+    False -> Error(AxisOutOfBounds(operation, axis_idx, r))
     True -> {
       case t.shape {
         [] -> Error(DimensionError("Cannot reduce scalar"))
@@ -1413,7 +1426,7 @@ fn sum_axis_with_keepdims(
 
 /// Mean along a specific axis, preserving materialization failures.
 pub fn try_mean_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  mean_axis_with_keepdims(t, axis_idx, False)
+  mean_axis_with_keepdims("mean_axis", t, axis_idx, False)
 }
 
 /// Mean along a specific axis.
@@ -1426,7 +1439,7 @@ pub fn try_mean_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  mean_axis_with_keepdims(t, axis_idx, True)
+  mean_axis_with_keepdims("mean_axis_keepdims", t, axis_idx, True)
 }
 
 /// Mean along a specific axis while keeping the reduced dimension as size 1.
@@ -1438,19 +1451,20 @@ pub fn mean_axis_keepdims(
 }
 
 fn mean_axis_with_keepdims(
+  operation: String,
   t: Tensor,
   axis_idx: Int,
   keepdims: Bool,
 ) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
-    False -> Error(DimensionError("Invalid axis index"))
+    False -> Error(AxisOutOfBounds(operation, axis_idx, r))
     True -> {
       use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       case axis_size <= 0 {
         True -> Error(DimensionError("Cannot compute mean along empty axis"))
         False ->
-          case sum_axis_with_keepdims(t, axis_idx, keepdims) {
+          case sum_axis_with_keepdims(operation, t, axis_idx, keepdims) {
             Error(e) -> Error(e)
             Ok(summed) -> Ok(scale(summed, 1.0 /. int.to_float(axis_size)))
           }
@@ -1464,7 +1478,13 @@ pub fn try_variance_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.variance_list)
+  reduce_axis_with_keepdims(
+    "variance_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.variance_list,
+  )
 }
 
 /// Variance along a specific axis.
@@ -1477,7 +1497,13 @@ pub fn try_variance_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.variance_list)
+  reduce_axis_with_keepdims(
+    "variance_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.variance_list,
+  )
 }
 
 /// Variance along a specific axis while keeping the reduced dimension as size 1.
@@ -1490,7 +1516,13 @@ pub fn variance_axis_keepdims(
 
 /// Standard deviation along a specific axis, preserving materialization failures.
 pub fn try_std_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.std_list)
+  reduce_axis_with_keepdims(
+    "std_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.std_list,
+  )
 }
 
 /// Standard deviation along a specific axis.
@@ -1503,7 +1535,13 @@ pub fn try_std_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.std_list)
+  reduce_axis_with_keepdims(
+    "std_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.std_list,
+  )
 }
 
 /// Standard deviation along a specific axis while keeping the reduced dimension as size 1.
@@ -1516,7 +1554,13 @@ pub fn std_axis_keepdims(
 
 /// Maximum along a specific axis, preserving materialization failures.
 pub fn try_max_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.max_list)
+  reduce_axis_with_keepdims(
+    "max_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.max_list,
+  )
 }
 
 /// Maximum along a specific axis.
@@ -1529,7 +1573,13 @@ pub fn try_max_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.max_list)
+  reduce_axis_with_keepdims(
+    "max_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.max_list,
+  )
 }
 
 /// Maximum along a specific axis while keeping the reduced dimension as size 1.
@@ -1542,7 +1592,13 @@ pub fn max_axis_keepdims(
 
 /// Minimum along a specific axis, preserving materialization failures.
 pub fn try_min_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.min_list)
+  reduce_axis_with_keepdims(
+    "min_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.min_list,
+  )
 }
 
 /// Minimum along a specific axis.
@@ -1555,7 +1611,13 @@ pub fn try_min_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.min_list)
+  reduce_axis_with_keepdims(
+    "min_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.min_list,
+  )
 }
 
 /// Minimum along a specific axis while keeping the reduced dimension as size 1.
@@ -1571,7 +1633,13 @@ pub fn try_argmax_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.argmax_list)
+  reduce_axis_with_keepdims(
+    "argmax_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.argmax_list,
+  )
 }
 
 /// Flat argmax index along a specific axis, represented as Float values.
@@ -1584,7 +1652,13 @@ pub fn try_argmax_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.argmax_list)
+  reduce_axis_with_keepdims(
+    "argmax_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.argmax_list,
+  )
 }
 
 /// Flat argmax index along a specific axis while keeping the reduced dimension.
@@ -1600,7 +1674,13 @@ pub fn try_argmin_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.argmin_list)
+  reduce_axis_with_keepdims(
+    "argmin_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.argmin_list,
+  )
 }
 
 /// Flat argmin index along a specific axis, represented as Float values.
@@ -1613,7 +1693,13 @@ pub fn try_argmin_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.argmin_list)
+  reduce_axis_with_keepdims(
+    "argmin_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.argmin_list,
+  )
 }
 
 /// Flat argmin index along a specific axis while keeping the reduced dimension.
@@ -1658,13 +1744,14 @@ pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
 }
 
 fn cumulative_axis(
+  operation: String,
   t: Tensor,
   axis_idx: Int,
   transform: fn(List(Float)) -> List(Float),
 ) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
-    False -> Error(DimensionError("Invalid axis index"))
+    False -> Error(AxisOutOfBounds(operation, axis_idx, r))
     True -> {
       use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       let inner_size = layout_math.size(list.drop(t.shape, axis_idx + 1))
@@ -1688,6 +1775,7 @@ fn cumulative_axis(
 }
 
 fn reduce_axis_with_keepdims(
+  operation: String,
   t: Tensor,
   axis_idx: Int,
   keepdims: Bool,
@@ -1695,7 +1783,7 @@ fn reduce_axis_with_keepdims(
 ) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
-    False -> Error(DimensionError("Invalid axis index"))
+    False -> Error(AxisOutOfBounds(operation, axis_idx, r))
     True -> {
       use axis_size <- result.try(tensor_axis.axis_size(t.shape, axis_idx))
       case axis_size <= 0 {
@@ -1857,7 +1945,7 @@ pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
         })
       Ok(rows_list)
     }
-    _ -> Error(DimensionError("Tensor is not 2D"))
+    other -> Error(RankMismatch("to_list2d", 2, other))
   }
 }
 
@@ -2285,7 +2373,7 @@ pub fn slice(
   let r = rank(t)
 
   case list.length(start) == r && list.length(lengths) == r {
-    False -> Error(DimensionError("Slice dimensions must match tensor rank"))
+    False -> Error(SliceArityMismatch(t.shape, start, lengths))
     True -> {
       case r {
         1 -> {
@@ -3146,7 +3234,13 @@ pub fn count_nonzero(t: Tensor) -> Int {
 
 /// Does each axis slice contain any non-zero value?
 pub fn try_any_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.any_list)
+  reduce_axis_with_keepdims(
+    "any_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.any_list,
+  )
 }
 
 /// Does each axis slice contain any non-zero value?
@@ -3159,7 +3253,13 @@ pub fn try_any_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.any_list)
+  reduce_axis_with_keepdims(
+    "any_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.any_list,
+  )
 }
 
 /// Does each axis slice contain any non-zero value, preserving the reduced dimension.
@@ -3172,7 +3272,13 @@ pub fn any_axis_keepdims(
 
 /// Are all values in each axis slice non-zero?
 pub fn try_all_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.all_list)
+  reduce_axis_with_keepdims(
+    "all_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.all_list,
+  )
 }
 
 /// Are all values in each axis slice non-zero?
@@ -3185,7 +3291,13 @@ pub fn try_all_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.all_list)
+  reduce_axis_with_keepdims(
+    "all_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.all_list,
+  )
 }
 
 /// Are all values in each axis slice non-zero, preserving the reduced dimension.
@@ -3201,7 +3313,13 @@ pub fn try_count_nonzero_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, False, tensor_axis.count_nonzero_list)
+  reduce_axis_with_keepdims(
+    "count_nonzero_axis",
+    t,
+    axis_idx,
+    False,
+    tensor_axis.count_nonzero_list,
+  )
 }
 
 /// Count non-zero values along one axis.
@@ -3217,7 +3335,13 @@ pub fn try_count_nonzero_axis_keepdims(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  reduce_axis_with_keepdims(t, axis_idx, True, tensor_axis.count_nonzero_list)
+  reduce_axis_with_keepdims(
+    "count_nonzero_axis_keepdims",
+    t,
+    axis_idx,
+    True,
+    tensor_axis.count_nonzero_list,
+  )
 }
 
 /// Count non-zero values along one axis, preserving the reduced dimension.
@@ -3485,7 +3609,7 @@ pub fn get2d_fast(t: Tensor, row: Int, col: Int) -> Result(Float, TensorError) {
           let flat_idx = offset + row * s0 + col * s1
           Ok(ffi.array_get(storage, flat_idx))
         }
-        _, _ -> Error(DimensionError("Tensor is not 2D"))
+        other, _ -> Error(RankMismatch("get2d_fast", 2, other))
       }
     }
   }
