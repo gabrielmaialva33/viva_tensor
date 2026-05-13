@@ -2652,6 +2652,83 @@ pub fn take_last(t: Tensor, n: Int) -> Tensor {
   |> result.unwrap(Tensor(data: [], shape: [0]))
 }
 
+/// Take flattened elements by explicit indices.
+pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  let values_result =
+    indices
+    |> list.fold(Ok([]), fn(acc, index) {
+      use values <- result.try(acc)
+      use value <- result.try(
+        list_at_float(data, index)
+        |> result.map_error(fn(_) { IndexOutOfBounds(index, list.length(data)) }),
+      )
+      Ok([value, ..values])
+    })
+
+  use values <- result.try(values_result)
+  Ok(Tensor(data: list.reverse(values), shape: [list.length(indices)]))
+}
+
+/// Take flattened elements by explicit indices.
+pub fn take(t: Tensor, indices: List(Int)) -> Tensor {
+  try_take(t, indices)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
+/// Return flattened indices for non-zero values, represented as floats.
+pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
+  use data <- result.try(try_to_list(t))
+  let indices =
+    data
+    |> list.index_map(fn(value, index) { #(value, index) })
+    |> list.filter(fn(pair) {
+      let #(value, _) = pair
+      value != 0.0
+    })
+    |> list.map(fn(pair) {
+      let #(_, index) = pair
+      int.to_float(index)
+    })
+
+  Ok(Tensor(data: indices, shape: [list.length(indices)]))
+}
+
+/// Return flattened indices for non-zero values, represented as floats.
+pub fn nonzero(t: Tensor) -> Tensor {
+  try_nonzero(t)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
+/// Select flattened values where a broadcasted mask is non-zero.
+pub fn try_masked_select(
+  t: Tensor,
+  mask: Tensor,
+) -> Result(Tensor, TensorError) {
+  use pair <- result.try(broadcast_pair(t, mask))
+  let #(values_tensor, mask_tensor) = pair
+  use values <- result.try(try_to_list(values_tensor))
+  use mask_values <- result.try(try_to_list(mask_tensor))
+
+  let selected =
+    list.zip(values, mask_values)
+    |> list.filter_map(fn(pair) {
+      let #(value, mask_value) = pair
+      case mask_value != 0.0 {
+        True -> Ok(value)
+        False -> Error(Nil)
+      }
+    })
+
+  Ok(Tensor(data: selected, shape: [list.length(selected)]))
+}
+
+/// Select flattened values where a broadcasted mask is non-zero.
+pub fn masked_select(t: Tensor, mask: Tensor) -> Tensor {
+  try_masked_select(t, mask)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
 /// Slice tensor: extract sub-tensor from start to start+lengths
 /// slice(t, [1], [3]) extracts elements at indices 1, 2, 3
 pub fn slice(
@@ -3455,6 +3532,117 @@ pub fn try_count_nonzero(t: Tensor) -> Result(Int, TensorError) {
 pub fn count_nonzero(t: Tensor) -> Int {
   try_count_nonzero(t)
   |> result.unwrap(0)
+}
+
+/// Does each axis slice contain any non-zero value?
+pub fn try_any_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, any_list)
+}
+
+/// Does each axis slice contain any non-zero value?
+pub fn any_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_any_axis(t, axis_idx)
+}
+
+/// Does each axis slice contain any non-zero value, preserving the reduced dimension.
+pub fn try_any_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, any_list)
+}
+
+/// Does each axis slice contain any non-zero value, preserving the reduced dimension.
+pub fn any_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_any_axis_keepdims(t, axis_idx)
+}
+
+/// Are all values in each axis slice non-zero?
+pub fn try_all_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, all_list)
+}
+
+/// Are all values in each axis slice non-zero?
+pub fn all_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_all_axis(t, axis_idx)
+}
+
+/// Are all values in each axis slice non-zero, preserving the reduced dimension.
+pub fn try_all_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, all_list)
+}
+
+/// Are all values in each axis slice non-zero, preserving the reduced dimension.
+pub fn all_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_all_axis_keepdims(t, axis_idx)
+}
+
+/// Count non-zero values along one axis.
+pub fn try_count_nonzero_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, False, count_nonzero_list)
+}
+
+/// Count non-zero values along one axis.
+pub fn count_nonzero_axis(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_count_nonzero_axis(t, axis_idx)
+}
+
+/// Count non-zero values along one axis, preserving the reduced dimension.
+pub fn try_count_nonzero_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  reduce_axis_with_keepdims(t, axis_idx, True, count_nonzero_list)
+}
+
+/// Count non-zero values along one axis, preserving the reduced dimension.
+pub fn count_nonzero_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_count_nonzero_axis_keepdims(t, axis_idx)
+}
+
+fn any_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(case list.any(values, fn(x) { x != 0.0 }) {
+    True -> 1.0
+    False -> 0.0
+  })
+}
+
+fn all_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(case list.all(values, fn(x) { x != 0.0 }) {
+    True -> 1.0
+    False -> 0.0
+  })
+}
+
+fn count_nonzero_list(values: List(Float)) -> Result(Float, TensorError) {
+  Ok(
+    values
+    |> list.fold(0, fn(count, x) {
+      case x != 0.0 {
+        True -> count + 1
+        False -> count
+      }
+    })
+    |> int.to_float,
+  )
 }
 
 // --- Shape Manipulation ---

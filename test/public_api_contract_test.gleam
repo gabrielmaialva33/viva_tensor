@@ -219,6 +219,22 @@ pub fn stable_broadcasting_contract_test() {
   t.try_any(row) |> should.equal(Ok(True))
   t.try_all(row) |> should.equal(Ok(True))
   t.try_count_nonzero(row) |> should.equal(Ok(3))
+
+  case t.try_count_nonzero_axis(matrix, 1) {
+    Ok(result) -> t.to_list(result) |> should.equal([3.0, 3.0])
+    Error(_) -> should.fail()
+  }
+
+  t.try_take(row, [2, 0]) |> should.equal(Ok(t.from_list([4.0, 1.0])))
+  t.try_nonzero(t.from_list([0.0, 2.0, 0.0]))
+  |> should.equal(Ok(t.from_list([1.0])))
+
+  case t.try_masked_select(matrix, row) {
+    Ok(result) ->
+      t.to_list(result)
+      |> should.equal([10.0, 10.0, 10.0, 10.0, 10.0, 10.0])
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn stable_linear_algebra_contract_test() {

@@ -1240,6 +1240,54 @@ pub fn mask_reductions_test() {
   t.try_count_nonzero(t.from_list([])) |> should.equal(Ok(0))
 }
 
+pub fn mask_axis_reductions_test() {
+  case t.matrix(2, 3, [0.0, 1.0, 0.0, 2.0, 3.0, 0.0]) {
+    Ok(mask) -> {
+      case t.any_axis(mask, 0) {
+        Ok(result) -> t.to_list(result) |> should.equal([1.0, 1.0, 0.0])
+        Error(_) -> should.fail()
+      }
+
+      case t.all_axis(mask, 0) {
+        Ok(result) -> t.to_list(result) |> should.equal([0.0, 1.0, 0.0])
+        Error(_) -> should.fail()
+      }
+
+      case t.count_nonzero_axis_keepdims(mask, 1) {
+        Ok(result) -> {
+          t.shape(result) |> should.equal([2, 1])
+          t.to_list(result) |> should.equal([1.0, 2.0])
+        }
+        Error(_) -> should.fail()
+      }
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn indexing_helpers_test() {
+  let values = t.from_list([10.0, 20.0, 30.0, 40.0])
+
+  t.take(values, [2, 0]) |> t.to_list() |> should.equal([30.0, 10.0])
+  t.try_take(values, [4]) |> should.be_error()
+
+  t.nonzero(t.from_list([0.0, 5.0, 0.0, -1.0]))
+  |> t.to_list()
+  |> should.equal([1.0, 3.0])
+}
+
+pub fn masked_select_broadcast_test() {
+  case t.matrix(2, 3, [1.0, 5.0, 2.0, 4.0, 3.0, 6.0]) {
+    Ok(values) -> {
+      let mask = t.from_list([1.0, 0.0, 1.0])
+      t.masked_select(values, mask)
+      |> t.to_list()
+      |> should.equal([1.0, 2.0, 4.0, 6.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn softmax_axis_public_facade_test() {
   case t.matrix(2, 2, [0.0, 0.0, 1.0, 1.0]) {
     Ok(logits) ->

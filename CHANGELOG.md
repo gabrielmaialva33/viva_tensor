@@ -118,6 +118,9 @@ All notable changes to this project will be documented in this file.
 - Added numeric-mask logic helpers (`logical_not()`, `logical_and()`,
   `logical_or()`, `logical_xor()`) plus `any()`, `all()`, and
   `count_nonzero()` reductions.
+- Added axis mask reductions (`any_axis()`, `all_axis()`,
+  `count_nonzero_axis()`) and flattened indexing helpers (`take()`,
+  `nonzero()`, `masked_select()`).
 
 ### Highlights
 

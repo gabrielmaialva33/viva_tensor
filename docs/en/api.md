@@ -126,6 +126,11 @@ Use broadcasting-specific functions when shapes differ.
 | `logical_xor(a, b)`          | Exclusive-or over numeric masks.           |
 | `any(mask)` / `all(mask)`    | Reduce a numeric mask to a boolean.        |
 | `count_nonzero(tensor)`      | Count non-zero tensor values.              |
+| `any_axis(mask, axis)` / `all_axis(mask, axis)` | Reduce numeric masks along one axis. |
+| `count_nonzero_axis(tensor, axis)` | Count non-zero values along one axis. |
+| `take(tensor, indices)`      | Take flattened values by explicit indices. |
+| `nonzero(tensor)`            | Return flattened non-zero indices as floats. |
+| `masked_select(tensor, mask)`| Select flattened values using a broadcast mask. |
 
 ## Reductions
 

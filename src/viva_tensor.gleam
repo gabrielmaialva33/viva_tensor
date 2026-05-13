@@ -960,6 +960,39 @@ pub fn try_unsqueeze(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   tensor.try_unsqueeze(t, axis)
 }
 
+/// Take flattened elements by explicit indices.
+pub fn take(t: Tensor, indices: List(Int)) -> Tensor {
+  tensor.take(t, indices)
+}
+
+/// Take flattened elements by explicit indices, preserving index errors.
+pub fn try_take(t: Tensor, indices: List(Int)) -> Result(Tensor, TensorError) {
+  tensor.try_take(t, indices)
+}
+
+/// Return flattened indices for non-zero values, represented as floats.
+pub fn nonzero(t: Tensor) -> Tensor {
+  tensor.nonzero(t)
+}
+
+/// Return flattened indices for non-zero values, preserving materialization failures.
+pub fn try_nonzero(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_nonzero(t)
+}
+
+/// Select flattened values where a broadcasted mask is non-zero.
+pub fn masked_select(t: Tensor, mask: Tensor) -> Tensor {
+  tensor.masked_select(t, mask)
+}
+
+/// Select flattened values where a broadcasted mask is non-zero, preserving errors.
+pub fn try_masked_select(
+  t: Tensor,
+  mask: Tensor,
+) -> Result(Tensor, TensorError) {
+  tensor.try_masked_select(t, mask)
+}
+
 // --- Accessors --------------------------------------------------------------
 
 /// Shape as list of dimensions
@@ -1513,6 +1546,81 @@ pub fn count_nonzero(t: Tensor) -> Int {
 /// Count non-zero values in a tensor, preserving materialization failures.
 pub fn try_count_nonzero(t: Tensor) -> Result(Int, TensorError) {
   tensor.try_count_nonzero(t)
+}
+
+/// Does each axis slice contain any non-zero value?
+pub fn any_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.any_axis(t, axis)
+}
+
+/// Does each axis slice contain any non-zero value?
+pub fn try_any_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_any_axis(t, axis)
+}
+
+/// Does each axis slice contain any non-zero value, preserving the reduced dimension.
+pub fn any_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.any_axis_keepdims(t, axis)
+}
+
+/// Does each axis slice contain any non-zero value, preserving the reduced dimension.
+pub fn try_any_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_any_axis_keepdims(t, axis)
+}
+
+/// Are all values in each axis slice non-zero?
+pub fn all_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.all_axis(t, axis)
+}
+
+/// Are all values in each axis slice non-zero?
+pub fn try_all_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_all_axis(t, axis)
+}
+
+/// Are all values in each axis slice non-zero, preserving the reduced dimension.
+pub fn all_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.all_axis_keepdims(t, axis)
+}
+
+/// Are all values in each axis slice non-zero, preserving the reduced dimension.
+pub fn try_all_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_all_axis_keepdims(t, axis)
+}
+
+/// Count non-zero values along one axis.
+pub fn count_nonzero_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.count_nonzero_axis(t, axis)
+}
+
+/// Count non-zero values along one axis.
+pub fn try_count_nonzero_axis(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_count_nonzero_axis(t, axis)
+}
+
+/// Count non-zero values along one axis, preserving the reduced dimension.
+pub fn count_nonzero_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.count_nonzero_axis_keepdims(t, axis)
+}
+
+/// Count non-zero values along one axis, preserving the reduced dimension.
+pub fn try_count_nonzero_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_count_nonzero_axis_keepdims(t, axis)
 }
 
 // --- Strided (Zero-copy) ----------------------------------------------------
