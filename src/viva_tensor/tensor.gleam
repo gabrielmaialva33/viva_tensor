@@ -2274,32 +2274,43 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Add dimension of size 1 at specified axis (unsqueeze operation)
-pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
+/// Add dimension of size 1 at specified axis (unsqueeze operation).
+pub fn try_unsqueeze(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
   let rnk = list.length(t.shape)
   let insert_at = case axis < 0 {
     True -> rnk + axis + 1
     False -> axis
   }
 
-  let #(before, after) = list.split(t.shape, insert_at)
-  let new_shape = list.flatten([before, [1], after])
-  case t {
-    Tensor(data, _) -> Tensor(data: data, shape: new_shape)
-    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: new_shape)
-    StridedTensor(storage, shape, strides, offset) -> {
-      let new_strides = case strides == compute_strides(shape) {
-        True -> compute_strides(new_shape)
-        False -> insert_stride(strides, insert_at, 0)
+  case insert_at < 0 || insert_at > rnk {
+    True -> Error(DimensionError("Axis out of bounds"))
+    False -> {
+      let #(before, after) = list.split(t.shape, insert_at)
+      let new_shape = list.flatten([before, [1], after])
+      case t {
+        Tensor(data, _) -> Ok(Tensor(data: data, shape: new_shape))
+        NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
+        StridedTensor(storage, shape, strides, offset) -> {
+          let new_strides = case strides == compute_strides(shape) {
+            True -> compute_strides(new_shape)
+            False -> insert_stride(strides, insert_at, 0)
+          }
+          Ok(StridedTensor(
+            storage: storage,
+            shape: new_shape,
+            strides: new_strides,
+            offset: offset,
+          ))
+        }
       }
-      StridedTensor(
-        storage: storage,
-        shape: new_shape,
-        strides: new_strides,
-        offset: offset,
-      )
     }
   }
+}
+
+/// Add dimension of size 1 at specified axis (unsqueeze operation).
+pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
+  try_unsqueeze(t, axis)
+  |> result.unwrap(t)
 }
 
 /// Expand tensor to add batch dimension (alias for unsqueeze)
@@ -2307,41 +2318,63 @@ pub fn expand_dims(t: Tensor, axis: Int) -> Tensor {
   unsqueeze(t, axis)
 }
 
+/// Expand tensor to add batch dimension (fallible alias for try_unsqueeze).
+pub fn try_expand_dims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  try_unsqueeze(t, axis)
+}
+
 // --- Strided Tensor (Zero-copy operations) ---
 
 /// Convert regular tensor to strided (O(n) once, then O(1) access)
-pub fn to_strided(t: Tensor) -> Tensor {
+pub fn try_to_strided(t: Tensor) -> Result(Tensor, TensorError) {
   case t {
-    StridedTensor(_, _, _, _) -> t
+    StridedTensor(_, _, _, _) -> Ok(t)
     Tensor(data, shape) -> {
       let storage = ffi.list_to_array(data)
       let strides = compute_strides(shape)
-      StridedTensor(storage: storage, shape: shape, strides: strides, offset: 0)
+      Ok(StridedTensor(
+        storage: storage,
+        shape: shape,
+        strides: strides,
+        offset: 0,
+      ))
     }
     NativeTensor(_, _) -> {
-      let data = get_data(t)
+      use data <- result.try(try_to_list(t))
       let storage = ffi.list_to_array(data)
       let strides = compute_strides(t.shape)
-      StridedTensor(
+      Ok(StridedTensor(
         storage: storage,
         shape: t.shape,
         strides: strides,
         offset: 0,
-      )
+      ))
+    }
+  }
+}
+
+/// Convert regular tensor to strided (O(n) once, then O(1) access)
+pub fn to_strided(t: Tensor) -> Tensor {
+  try_to_strided(t)
+  |> result.unwrap(t)
+}
+
+/// Convert strided tensor back to regular (materializes the view)
+pub fn try_to_contiguous(t: Tensor) -> Result(Tensor, TensorError) {
+  case t {
+    Tensor(_, _) -> Ok(t)
+    NativeTensor(_, _) -> Ok(t)
+    StridedTensor(_, _, _, _) -> {
+      use data <- result.try(try_to_list(t))
+      Ok(Tensor(data: data, shape: t.shape))
     }
   }
 }
 
 /// Convert strided tensor back to regular (materializes the view)
 pub fn to_contiguous(t: Tensor) -> Tensor {
-  case t {
-    Tensor(_, _) -> t
-    NativeTensor(_, _) -> t
-    StridedTensor(_, _, _, _) -> {
-      let data = get_data(t)
-      Tensor(data: data, shape: t.shape)
-    }
-  }
+  try_to_contiguous(t)
+  |> result.unwrap(t)
 }
 
 /// ZERO-COPY TRANSPOSE - just swap strides and shape!

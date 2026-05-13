@@ -777,6 +777,11 @@ pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
   tensor.unsqueeze(t, axis)
 }
 
+/// Add dimension of size 1, preserving invalid-axis errors.
+pub fn try_unsqueeze(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_unsqueeze(t, axis)
+}
+
 // --- Accessors --------------------------------------------------------------
 
 /// Shape as list of dimensions
@@ -922,9 +927,19 @@ pub fn to_strided(t: Tensor) -> Tensor {
   tensor.to_strided(t)
 }
 
+/// Convert to strided representation, preserving materialization failures.
+pub fn try_to_strided(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_to_strided(t)
+}
+
 /// Convert to contiguous tensor
 pub fn to_contiguous(t: Tensor) -> Tensor {
   tensor.to_contiguous(t)
+}
+
+/// Convert to contiguous tensor, preserving materialization failures.
+pub fn try_to_contiguous(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_to_contiguous(t)
 }
 
 /// Zero-copy transpose
