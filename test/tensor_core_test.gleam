@@ -386,10 +386,26 @@ pub fn add_scalar_test() {
   tensor.to_list(r) |> should.equal([11.0, 12.0, 13.0])
 }
 
+pub fn try_add_scalar_test() {
+  let t = tensor.from_list([1.0, 2.0, 3.0])
+  case tensor.try_add_scalar(t, 10.0) {
+    Ok(r) -> tensor.to_list(r) |> should.equal([11.0, 12.0, 13.0])
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn negate_test() {
   let t = tensor.from_list([1.0, -2.0, 3.0])
   let r = tensor.negate(t)
   tensor.to_list(r) |> should.equal([-1.0, 2.0, -3.0])
+}
+
+pub fn try_negate_test() {
+  let t = tensor.from_list([1.0, -2.0, 3.0])
+  case tensor.try_negate(t) {
+    Ok(r) -> tensor.to_list(r) |> should.equal([-1.0, 2.0, -3.0])
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn product_test() {
@@ -471,6 +487,14 @@ pub fn clamp_test() {
   let t = tensor.from_list([-10.0, 0.5, 5.0, 100.0])
   let r = tensor.clamp(t, 0.0, 1.0)
   tensor.to_list(r) |> should.equal([0.0, 0.5, 1.0, 1.0])
+}
+
+pub fn try_clamp_test() {
+  let t = tensor.from_list([-10.0, 0.5, 5.0, 100.0])
+  case tensor.try_clamp(t, 0.0, 1.0) {
+    Ok(r) -> tensor.to_list(r) |> should.equal([0.0, 0.5, 1.0, 1.0])
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn variance_test() {

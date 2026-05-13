@@ -34,6 +34,11 @@ pub fn stable_fallible_unary_contract_test() {
     Error(_) -> should.fail()
   }
 
+  case t.try_clamp(t.from_list([-1.0, 0.5, 2.0]), 0.0, 1.0) {
+    Ok(clamped) -> t.to_list(clamped) |> should.equal([0.0, 0.5, 1.0])
+    Error(_) -> should.fail()
+  }
+
   t.try_max(tensor) |> should.equal(Ok(3.0))
   t.try_min(tensor) |> should.equal(Ok(1.0))
   t.try_argmax(tensor) |> should.equal(Ok(2))
