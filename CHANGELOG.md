@@ -121,6 +121,10 @@ All notable changes to this project will be documented in this file.
 - Added axis mask reductions (`any_axis()`, `all_axis()`,
   `count_nonzero_axis()`) and flattened indexing helpers (`take()`,
   `nonzero()`, `masked_select()`).
+- Added native `NativeTensor` fast paths for broadcasting-aware `maximum()`,
+  `minimum()`, comparison masks, numeric-mask logic, `where()`, and
+  `count_nonzero()` while preserving pure Gleam fallbacks when the NIF is not
+  available.
 
 ### Highlights
 
