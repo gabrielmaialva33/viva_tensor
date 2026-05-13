@@ -3290,7 +3290,7 @@ pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 pub fn maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use pair <- result.try(broadcast_pair(a, b))
   let #(a_bc, b_bc) = pair
-  map2(a_bc, b_bc, float.max)
+  native_binary_or_map2(a_bc, b_bc, float.max, ffi.nt_maximum)
 }
 
 /// Alias for `maximum`.
@@ -3302,7 +3302,7 @@ pub fn try_maximum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 pub fn minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use pair <- result.try(broadcast_pair(a, b))
   let #(a_bc, b_bc) = pair
-  map2(a_bc, b_bc, float.min)
+  native_binary_or_map2(a_bc, b_bc, float.min, ffi.nt_minimum)
 }
 
 /// Alias for `minimum`.
@@ -3312,7 +3312,7 @@ pub fn try_minimum(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise equality mask with broadcasting.
 pub fn equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x == y })
+  compare_broadcast(a, b, fn(x, y) { x == y }, ffi.nt_equal)
 }
 
 /// Alias for `equal`.
@@ -3322,7 +3322,7 @@ pub fn try_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise inequality mask with broadcasting.
 pub fn not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x != y })
+  compare_broadcast(a, b, fn(x, y) { x != y }, ffi.nt_not_equal)
 }
 
 /// Alias for `not_equal`.
@@ -3332,7 +3332,7 @@ pub fn try_not_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise greater-than mask with broadcasting.
 pub fn greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x >. y })
+  compare_broadcast(a, b, fn(x, y) { x >. y }, ffi.nt_greater)
 }
 
 /// Alias for `greater`.
@@ -3342,7 +3342,7 @@ pub fn try_greater(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise greater-than-or-equal mask with broadcasting.
 pub fn greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x >=. y })
+  compare_broadcast(a, b, fn(x, y) { x >=. y }, ffi.nt_greater_equal)
 }
 
 /// Alias for `greater_equal`.
@@ -3352,7 +3352,7 @@ pub fn try_greater_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise less-than mask with broadcasting.
 pub fn less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x <. y })
+  compare_broadcast(a, b, fn(x, y) { x <. y }, ffi.nt_less)
 }
 
 /// Alias for `less`.
@@ -3362,7 +3362,7 @@ pub fn try_less(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise less-than-or-equal mask with broadcasting.
 pub fn less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  compare_broadcast(a, b, fn(x, y) { x <=. y })
+  compare_broadcast(a, b, fn(x, y) { x <=. y }, ffi.nt_less_equal)
 }
 
 /// Alias for `less_equal`.
@@ -3370,19 +3370,44 @@ pub fn try_less_equal(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   less_equal(a, b)
 }
 
+fn native_binary_or_map2(
+  a_bc: Tensor,
+  b_bc: Tensor,
+  fallback: fn(Float, Float) -> Float,
+  native_op: fn(NativeTensorRef, NativeTensorRef) ->
+    Result(NativeTensorRef, String),
+) -> Result(Tensor, TensorError) {
+  case a_bc, b_bc {
+    NativeTensor(a_ref, shape), NativeTensor(b_ref, _) -> {
+      case native_op(a_ref, b_ref) {
+        Ok(ref) -> Ok(NativeTensor(ref: ref, shape: shape))
+        Error(_) -> map2(a_bc, b_bc, fallback)
+      }
+    }
+    _, _ -> map2(a_bc, b_bc, fallback)
+  }
+}
+
 fn compare_broadcast(
   a: Tensor,
   b: Tensor,
   predicate: fn(Float, Float) -> Bool,
+  native_op: fn(NativeTensorRef, NativeTensorRef) ->
+    Result(NativeTensorRef, String),
 ) -> Result(Tensor, TensorError) {
   use pair <- result.try(broadcast_pair(a, b))
   let #(a_bc, b_bc) = pair
-  map2(a_bc, b_bc, fn(x, y) {
-    case predicate(x, y) {
-      True -> 1.0
-      False -> 0.0
-    }
-  })
+  native_binary_or_map2(
+    a_bc,
+    b_bc,
+    fn(x, y) {
+      case predicate(x, y) {
+        True -> 1.0
+        False -> 0.0
+      }
+    },
+    native_op,
+  )
 }
 
 /// Select values from two tensors using a non-zero condition mask.
@@ -3401,6 +3426,27 @@ pub fn where(
   use condition_bc <- result.try(broadcast_to(condition, target_shape))
   use true_bc <- result.try(broadcast_to(when_true, target_shape))
   use false_bc <- result.try(broadcast_to(when_false, target_shape))
+  case condition_bc, true_bc, false_bc {
+    NativeTensor(condition_ref, _),
+      NativeTensor(true_ref, _),
+      NativeTensor(false_ref, _)
+    -> {
+      case ffi.nt_where(condition_ref, true_ref, false_ref) {
+        Ok(ref) -> Ok(NativeTensor(ref: ref, shape: target_shape))
+        Error(_) ->
+          where_materialized(condition_bc, true_bc, false_bc, target_shape)
+      }
+    }
+    _, _, _ -> where_materialized(condition_bc, true_bc, false_bc, target_shape)
+  }
+}
+
+fn where_materialized(
+  condition_bc: Tensor,
+  true_bc: Tensor,
+  false_bc: Tensor,
+  target_shape: List(Int),
+) -> Result(Tensor, TensorError) {
   use condition_data <- result.try(try_to_list(condition_bc))
   use true_data <- result.try(try_to_list(true_bc))
   use false_data <- result.try(try_to_list(false_bc))
@@ -3428,6 +3474,18 @@ pub fn try_where(
 
 /// Logical NOT over a numeric mask.
 pub fn try_logical_not(t: Tensor) -> Result(Tensor, TensorError) {
+  case t {
+    NativeTensor(ref, shape) -> {
+      case ffi.nt_logical_not(ref) {
+        Ok(out_ref) -> Ok(NativeTensor(ref: out_ref, shape: shape))
+        Error(_) -> logical_not_materialized(t)
+      }
+    }
+    _ -> logical_not_materialized(t)
+  }
+}
+
+fn logical_not_materialized(t: Tensor) -> Result(Tensor, TensorError) {
   try_map(t, fn(x) {
     case x == 0.0 {
       True -> 1.0
@@ -3444,7 +3502,7 @@ pub fn logical_not(t: Tensor) -> Tensor {
 
 /// Logical AND over numeric masks with broadcasting.
 pub fn logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  logical_broadcast(a, b, fn(x, y) { x != 0.0 && y != 0.0 })
+  logical_broadcast(a, b, fn(x, y) { x != 0.0 && y != 0.0 }, ffi.nt_logical_and)
 }
 
 /// Alias for `logical_and`.
@@ -3454,7 +3512,7 @@ pub fn try_logical_and(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Logical OR over numeric masks with broadcasting.
 pub fn logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  logical_broadcast(a, b, fn(x, y) { x != 0.0 || y != 0.0 })
+  logical_broadcast(a, b, fn(x, y) { x != 0.0 || y != 0.0 }, ffi.nt_logical_or)
 }
 
 /// Alias for `logical_or`.
@@ -3464,11 +3522,16 @@ pub fn try_logical_or(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Logical XOR over numeric masks with broadcasting.
 pub fn logical_xor(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
-  logical_broadcast(a, b, fn(x, y) {
-    let x_truthy = x != 0.0
-    let y_truthy = y != 0.0
-    x_truthy != y_truthy
-  })
+  logical_broadcast(
+    a,
+    b,
+    fn(x, y) {
+      let x_truthy = x != 0.0
+      let y_truthy = y != 0.0
+      x_truthy != y_truthy
+    },
+    ffi.nt_logical_xor,
+  )
 }
 
 /// Alias for `logical_xor`.
@@ -3480,19 +3543,37 @@ fn logical_broadcast(
   a: Tensor,
   b: Tensor,
   predicate: fn(Float, Float) -> Bool,
+  native_op: fn(NativeTensorRef, NativeTensorRef) ->
+    Result(NativeTensorRef, String),
 ) -> Result(Tensor, TensorError) {
   use pair <- result.try(broadcast_pair(a, b))
   let #(a_bc, b_bc) = pair
-  map2(a_bc, b_bc, fn(x, y) {
-    case predicate(x, y) {
-      True -> 1.0
-      False -> 0.0
-    }
-  })
+  native_binary_or_map2(
+    a_bc,
+    b_bc,
+    fn(x, y) {
+      case predicate(x, y) {
+        True -> 1.0
+        False -> 0.0
+      }
+    },
+    native_op,
+  )
 }
 
 /// Does the mask contain any non-zero value?
 pub fn try_any(t: Tensor) -> Result(Bool, TensorError) {
+  case t {
+    NativeTensor(ref, _) ->
+      case ffi.nt_count_nonzero(ref) {
+        Ok(count) -> Ok(count > 0)
+        Error(_) -> any_materialized(t)
+      }
+    _ -> any_materialized(t)
+  }
+}
+
+fn any_materialized(t: Tensor) -> Result(Bool, TensorError) {
   use data <- result.try(try_to_list(t))
   Ok(list.any(data, fn(x) { x != 0.0 }))
 }
@@ -3505,6 +3586,17 @@ pub fn any(t: Tensor) -> Bool {
 
 /// Are all mask values non-zero?
 pub fn try_all(t: Tensor) -> Result(Bool, TensorError) {
+  case t {
+    NativeTensor(ref, _) ->
+      case ffi.nt_count_nonzero(ref) {
+        Ok(count) -> Ok(count == size(t))
+        Error(_) -> all_materialized(t)
+      }
+    _ -> all_materialized(t)
+  }
+}
+
+fn all_materialized(t: Tensor) -> Result(Bool, TensorError) {
   use data <- result.try(try_to_list(t))
   Ok(list.all(data, fn(x) { x != 0.0 }))
 }
@@ -3517,6 +3609,17 @@ pub fn all(t: Tensor) -> Bool {
 
 /// Count non-zero values in a tensor.
 pub fn try_count_nonzero(t: Tensor) -> Result(Int, TensorError) {
+  case t {
+    NativeTensor(ref, _) ->
+      case ffi.nt_count_nonzero(ref) {
+        Ok(count) -> Ok(count)
+        Error(_) -> count_nonzero_materialized(t)
+      }
+    _ -> count_nonzero_materialized(t)
+  }
+}
+
+fn count_nonzero_materialized(t: Tensor) -> Result(Int, TensorError) {
   use data <- result.try(try_to_list(t))
   Ok(
     list.fold(data, 0, fn(count, x) {
