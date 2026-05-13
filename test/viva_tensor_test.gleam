@@ -553,6 +553,50 @@ pub fn add_broadcast_test() {
   }
 }
 
+pub fn sub_broadcast_test() {
+  let a = t.fill([2, 3], 10.0)
+  let b = t.from_list([1.0, 2.0, 5.0])
+  case t.sub_broadcast(a, b) {
+    Ok(c) -> {
+      t.shape(c) |> should.equal([2, 3])
+      t.to_list(c) |> should.equal([9.0, 8.0, 5.0, 9.0, 8.0, 5.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn div_broadcast_test() {
+  let a = t.fill([2, 3], 8.0)
+  let b = t.from_list([1.0, 2.0, 4.0])
+  case t.div_broadcast(a, b) {
+    Ok(c) -> {
+      t.shape(c) |> should.equal([2, 3])
+      t.to_list(c) |> should.equal([8.0, 4.0, 2.0, 8.0, 4.0, 2.0])
+    }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn softmax_axis_public_facade_test() {
+  case t.matrix(2, 2, [0.0, 0.0, 1.0, 1.0]) {
+    Ok(logits) ->
+      case t.softmax_axis(logits, 1) {
+        Ok(probabilities) -> {
+          t.shape(probabilities) |> should.equal([2, 2])
+          t.to_list(probabilities) |> should.equal([0.5, 0.5, 0.5, 0.5])
+        }
+        Error(_) -> should.fail()
+      }
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn capabilities_smoke_test() {
+  let caps = t.capabilities()
+  caps.nif_loaded == caps.nif_loaded |> should.be_true()
+  caps.zig_loaded == caps.zig_loaded |> should.be_true()
+}
+
 pub fn map2_test() {
   let a = t.from_list([1.0, 2.0])
   let b = t.from_list([3.0, 4.0])

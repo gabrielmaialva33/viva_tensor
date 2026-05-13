@@ -421,6 +421,24 @@ pub fn mul_broadcast_test() {
   }
 }
 
+pub fn sub_broadcast_test() {
+  let a = core_tensor.from_list([10.0, 20.0, 30.0])
+  let b = core_tensor.from_list([1.0])
+  case ops.sub_broadcast(a, b) {
+    Ok(r) -> core_tensor.to_list(r) |> should.equal([9.0, 19.0, 29.0])
+    Error(_) -> should.fail()
+  }
+}
+
+pub fn div_broadcast_test() {
+  let a = core_tensor.from_list([10.0, 20.0, 30.0])
+  let b = core_tensor.from_list([10.0])
+  case ops.div_broadcast(a, b) {
+    Ok(r) -> core_tensor.to_list(r) |> should.equal([1.0, 2.0, 3.0])
+    Error(_) -> should.fail()
+  }
+}
+
 pub fn broadcast_to_test() {
   let t = core_tensor.from_list([1.0, 2.0, 3.0])
   case ops.broadcast_to(t, [2, 3]) {

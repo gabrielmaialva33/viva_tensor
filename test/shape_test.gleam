@@ -1,5 +1,6 @@
 import gleeunit
 import gleeunit/should
+import viva_tensor/layout
 import viva_tensor/tensor
 
 pub fn main() -> Nil {
@@ -256,6 +257,28 @@ pub fn expand_dims_test() {
   let t = tensor.from_list([1.0, 2.0, 3.0])
   let r = tensor.expand_dims(t, 0)
   tensor.shape(r) |> should.equal([1, 3])
+}
+
+pub fn squeeze_preserves_strided_storage_test() {
+  let base = tensor.Tensor(data: [1.0, 2.0, 3.0], shape: [1, 3, 1])
+  let view = tensor.to_strided(base)
+  let squeezed = tensor.squeeze(view)
+  let info = tensor.layout(squeezed)
+
+  info.storage |> should.equal(layout.StridedStorage)
+  info.shape |> should.equal([3])
+  tensor.to_list(squeezed) |> should.equal([1.0, 2.0, 3.0])
+}
+
+pub fn unsqueeze_preserves_strided_storage_test() {
+  let base = tensor.from_list([1.0, 2.0, 3.0])
+  let view = tensor.to_strided(base)
+  let expanded = tensor.unsqueeze(view, 0)
+  let info = tensor.layout(expanded)
+
+  info.storage |> should.equal(layout.StridedStorage)
+  info.shape |> should.equal([1, 3])
+  tensor.to_list(expanded) |> should.equal([1.0, 2.0, 3.0])
 }
 
 pub fn expand_dims_end_test() {
