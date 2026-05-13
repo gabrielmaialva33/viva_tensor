@@ -1515,25 +1515,31 @@ pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
   }
 }
 
-/// Clone tensor (creates a copy)
-pub fn clone(t: Tensor) -> Tensor {
+/// Clone tensor, preserving native materialization failures.
+pub fn try_clone(t: Tensor) -> Result(Tensor, TensorError) {
   case t {
     NativeTensor(ref, shape) -> {
       case ffi.nt_to_list(ref) {
         Ok(data) -> {
           case ffi.nt_from_list(data, shape) {
-            Ok(cloned_ref) -> NativeTensor(ref: cloned_ref, shape: shape)
-            Error(_) -> Tensor(data: data, shape: shape)
+            Ok(cloned_ref) -> Ok(NativeTensor(ref: cloned_ref, shape: shape))
+            Error(_) -> Ok(Tensor(data: data, shape: shape))
           }
         }
-        Error(_) -> Tensor(data: [], shape: shape)
+        Error(_) -> Error(DimensionError("Could not materialize native tensor"))
       }
     }
     _ -> {
-      let data = get_data(t)
-      Tensor(data: data, shape: t.shape)
+      use data <- result.try(try_to_list(t))
+      Ok(Tensor(data: data, shape: t.shape))
     }
   }
+}
+
+/// Clone tensor (creates a copy).
+pub fn clone(t: Tensor) -> Tensor {
+  try_clone(t)
+  |> result.unwrap(Tensor(data: [], shape: t.shape))
 }
 
 /// Reshape tensor - same data, different shape
@@ -1557,7 +1563,7 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
                 offset: offset,
               ))
             False -> {
-              let data = get_data(t)
+              use data <- result.try(try_to_list(t))
               Ok(Tensor(data: data, shape: new_shape))
             }
           }
@@ -1573,21 +1579,33 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
   }
 }
 
-/// Flatten to 1D
-pub fn flatten(t: Tensor) -> Tensor {
+/// Flatten to 1D, preserving materialization failures.
+pub fn try_flatten(t: Tensor) -> Result(Tensor, TensorError) {
   case t {
-    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: [size(t)])
+    NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: [size(t)]))
     _ -> {
-      let data = get_data(t)
-      Tensor(data: data, shape: [size(t)])
+      use data <- result.try(try_to_list(t))
+      Ok(Tensor(data: data, shape: [size(t)]))
     }
   }
 }
 
-/// Concatenate vectors (1D)
+/// Flatten to 1D.
+pub fn flatten(t: Tensor) -> Tensor {
+  try_flatten(t)
+  |> result.unwrap(Tensor(data: [], shape: [0]))
+}
+
+/// Concatenate vectors (1D), preserving materialization failures.
+pub fn try_concat(tensors: List(Tensor)) -> Result(Tensor, TensorError) {
+  use data <- result.try(materialize_many(tensors))
+  Ok(from_list(list.flatten(data)))
+}
+
+/// Concatenate vectors (1D).
 pub fn concat(tensors: List(Tensor)) -> Tensor {
-  let data = list.flat_map(tensors, fn(t) { get_data(t) })
-  from_list(data)
+  try_concat(tensors)
+  |> result.unwrap(from_list([]))
 }
 
 /// Concatenate tensors along a specific axis
@@ -1631,7 +1649,7 @@ pub fn concat_axis(
               // Build new shape
               let concat_dim =
                 list.fold(tensors, 0, fn(acc, t) {
-                  case list.drop(t.shape, axis) |> list.first {
+                  case axis_size(t.shape, axis) {
                     Ok(d) -> acc + d
                     Error(_) -> acc
                   }
@@ -1651,10 +1669,12 @@ pub fn concat_axis(
               // For other axes, we need to interleave
               case axis == 0 {
                 True -> {
-                  let data = list.flat_map(tensors, fn(t) { get_data(t) })
+                  use chunks <- result.try(materialize_many(tensors))
+                  let data = list.flatten(chunks)
                   Ok(Tensor(data: data, shape: new_shape))
                 }
                 False -> {
+                  use materialized <- result.try(materialize_many(tensors))
                   // General case: interleave based on axis
                   let total_size =
                     list.fold(new_shape, 1, fn(acc, d) { acc * d })
@@ -1662,14 +1682,15 @@ pub fn concat_axis(
 
                   let result =
                     list.range(0, total_size - 1)
-                    |> list.map(fn(flat_idx) {
+                    |> list.fold(Ok([]), fn(acc, flat_idx) {
+                      use values <- result.try(acc)
                       let indices = flat_to_multi(flat_idx, new_shape)
-                      let axis_idx = case
-                        list.drop(indices, axis) |> list.first
-                      {
-                        Ok(i) -> i
-                        Error(_) -> 0
-                      }
+                      use axis_idx <- result.try(
+                        list_at_int(indices, axis)
+                        |> result.map_error(fn(_) {
+                          DimensionError("Invalid axis for concatenation")
+                        }),
+                      )
 
                       // Find which tensor and local index
                       let #(tensor_idx, local_axis_idx, _) =
@@ -1678,9 +1699,7 @@ pub fn concat_axis(
                           case found_t >= 0 {
                             True -> acc
                             False -> {
-                              let t_axis_size = case
-                                list.drop(t.shape, axis) |> list.first
-                              {
+                              let t_axis_size = case axis_size(t.shape, axis) {
                                 Ok(d) -> d
                                 Error(_) -> 0
                               }
@@ -1707,23 +1726,35 @@ pub fn concat_axis(
                         })
 
                       // Get value from correct tensor
-                      case list.drop(tensors, tensor_idx) |> list.first {
-                        Ok(t) -> {
+                      case
+                        list_at_tensor(tensors, tensor_idx),
+                        list_at_float_list(materialized, tensor_idx)
+                      {
+                        Ok(t), Ok(t_data) -> {
                           let t_strides = compute_strides(t.shape)
                           let local_flat =
                             list.zip(local_indices, t_strides)
                             |> list.fold(0, fn(a, p) { a + p.0 * p.1 })
-                          let t_data = get_data(t)
-                          case list.drop(t_data, local_flat) |> list.first {
-                            Ok(v) -> v
-                            Error(_) -> 0.0
-                          }
+                          use value <- result.try(
+                            list_at_float(t_data, local_flat)
+                            |> result.map_error(fn(_) {
+                              IndexOutOfBounds(local_flat, list.length(t_data))
+                            }),
+                          )
+                          Ok([value, ..values])
                         }
-                        Error(_) -> 0.0
+                        _, _ ->
+                          Error(DimensionError(
+                            "Invalid tensor index for concatenation",
+                          ))
                       }
                     })
+                    |> result.map(list.reverse)
 
-                  Ok(Tensor(data: result, shape: new_shape))
+                  case result {
+                    Ok(data) -> Ok(Tensor(data: data, shape: new_shape))
+                    Error(error) -> Error(error)
+                  }
                 }
               }
             }
@@ -1813,7 +1844,7 @@ pub fn slice(
   start: List(Int),
   lengths: List(Int),
 ) -> Result(Tensor, TensorError) {
-  let data = get_data(t)
+  use data <- result.try(try_to_list(t))
   let r = rank(t)
 
   case list.length(start) == r && list.length(lengths) == r {
@@ -1821,36 +1852,55 @@ pub fn slice(
     True -> {
       case r {
         1 -> {
-          // 1D slice
-          let s = case list.first(start) {
-            Ok(v) -> v
-            Error(_) -> 0
+          use s <- result.try(
+            list_at_int(start, 0)
+            |> result.map_error(fn(_) { DimensionError("Invalid slice start") }),
+          )
+          use len <- result.try(
+            list_at_int(lengths, 0)
+            |> result.map_error(fn(_) { DimensionError("Invalid slice length") }),
+          )
+          use dim <- result.try(axis_size(t.shape, 0))
+
+          case s < 0 || len < 0 || s + len > dim {
+            True -> Error(IndexOutOfBounds(s + len, dim))
+            False -> {
+              let sliced = data |> list.drop(s) |> list.take(len)
+              Ok(Tensor(data: sliced, shape: [len]))
+            }
           }
-          let len = case list.first(lengths) {
-            Ok(v) -> v
-            Error(_) -> 0
-          }
-          let sliced = data |> list.drop(s) |> list.take(len)
-          Ok(Tensor(data: sliced, shape: [len]))
         }
         _ -> {
-          // Multi-dimensional slice - general case
-          let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
+          case slice_bounds_valid(t.shape, start, lengths) {
+            False -> Error(DimensionError("Slice bounds exceed tensor shape"))
+            True -> {
+              // Multi-dimensional slice - general case
+              let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
 
-          let result =
-            list.range(0, new_size - 1)
-            |> list.map(fn(flat_idx) {
-              let local_indices = flat_to_multi(flat_idx, lengths)
-              let global_indices =
-                list.map2(local_indices, start, fn(l, s) { l + s })
-              let global_flat = multi_to_flat(global_indices, t.shape)
-              case list.drop(data, global_flat) |> list.first {
-                Ok(v) -> v
-                Error(_) -> 0.0
+              let result =
+                list.range(0, new_size - 1)
+                |> list.fold(Ok([]), fn(acc, flat_idx) {
+                  use values <- result.try(acc)
+                  let local_indices = flat_to_multi(flat_idx, lengths)
+                  let global_indices =
+                    list.map2(local_indices, start, fn(l, s) { l + s })
+                  let global_flat = multi_to_flat(global_indices, t.shape)
+                  use value <- result.try(
+                    list_at_float(data, global_flat)
+                    |> result.map_error(fn(_) {
+                      IndexOutOfBounds(global_flat, list.length(data))
+                    }),
+                  )
+                  Ok([value, ..values])
+                })
+                |> result.map(list.reverse)
+
+              case result {
+                Ok(values) -> Ok(Tensor(data: values, shape: lengths))
+                Error(error) -> Error(error)
               }
-            })
-
-          Ok(Tensor(data: result, shape: lengths))
+            }
+          }
         }
       }
     }
@@ -2337,6 +2387,42 @@ fn list_at_int(lst: List(Int), index: Int) -> Result(Int, Nil) {
 
 fn list_at_float(lst: List(Float), index: Int) -> Result(Float, Nil) {
   layout_math.at(lst, index)
+}
+
+fn list_at_tensor(lst: List(Tensor), index: Int) -> Result(Tensor, Nil) {
+  layout_math.at(lst, index)
+}
+
+fn list_at_float_list(
+  lst: List(List(Float)),
+  index: Int,
+) -> Result(List(Float), Nil) {
+  layout_math.at(lst, index)
+}
+
+fn materialize_many(
+  tensors: List(Tensor),
+) -> Result(List(List(Float)), TensorError) {
+  tensors
+  |> list.fold(Ok([]), fn(acc, tensor) {
+    use values <- result.try(acc)
+    use data <- result.try(try_to_list(tensor))
+    Ok([data, ..values])
+  })
+  |> result.map(list.reverse)
+}
+
+fn slice_bounds_valid(
+  shape: List(Int),
+  start: List(Int),
+  lengths: List(Int),
+) -> Bool {
+  list.zip(shape, list.zip(start, lengths))
+  |> list.all(fn(item) {
+    let #(dim, bounds) = item
+    let #(offset, len) = bounds
+    offset >= 0 && len >= 0 && offset + len <= dim
+  })
 }
 
 fn flat_to_multi(flat: Int, shape: List(Int)) -> List(Int) {

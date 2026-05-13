@@ -762,6 +762,11 @@ pub fn flatten(t: Tensor) -> Tensor {
   tensor.flatten(t)
 }
 
+/// Flatten to 1D, preserving materialization failures.
+pub fn try_flatten(t: Tensor) -> Result(Tensor, TensorError) {
+  tensor.try_flatten(t)
+}
+
 /// Remove dimensions of size 1
 pub fn squeeze(t: Tensor) -> Tensor {
   tensor.squeeze(t)
