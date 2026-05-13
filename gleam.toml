@@ -28,6 +28,7 @@ internal_modules = [
   "viva_tensor/nn/conv",
   "viva_tensor/nn/embedding",
   "viva_tensor/nn/layers",
+  "viva_tensor/nn/attention",
   "viva_tensor/nn/flash_attention",
   "viva_tensor/nn/losses",
   "viva_tensor/nn/norm",

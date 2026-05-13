@@ -23,6 +23,7 @@
 
 import gleam/dict.{type Dict}
 import gleam/list
+import gleam/option.{type Option}
 import gleam/result
 import viva_tensor/backend/capability as backend_capability
 import viva_tensor/backend/dispatch as backend_dispatch
@@ -36,6 +37,7 @@ import viva_tensor/native/cuda
 import viva_tensor/nn/conv as nn_conv
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
+import viva_tensor/nn/attention as nn_attention
 import viva_tensor/nn/embedding as nn_embedding
 import viva_tensor/nn/losses as nn_losses
 import viva_tensor/nn/norm as nn_norm
@@ -2716,4 +2718,46 @@ pub fn hardswish(t: Tensor) -> Tensor {
 /// HardTanh: `clamp(x, min_val, max_val)`.
 pub fn hardtanh(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
   nn_activations.hardtanh(t, min_val, max_val)
+}
+
+// --- Attention --------------------------------------------------------------
+
+/// Multi-Head Attention layer. See `viva_tensor/nn/attention` for details.
+pub type MultiHeadAttention =
+  nn_attention.MultiHeadAttention
+
+/// `softmax((Q @ K^T) / sqrt(d_k)) @ V`. See nn/attention docs.
+pub fn scaled_dot_product_attention(
+  q: Tensor,
+  k: Tensor,
+  v: Tensor,
+  mask: Option(Tensor),
+  is_causal: Bool,
+) -> Result(Tensor, TensorError) {
+  nn_attention.scaled_dot_product_attention(q, k, v, mask, is_causal)
+}
+
+/// Initialize a Multi-Head Attention module with zero weights.
+pub fn multi_head_attention_init(
+  num_heads: Int,
+  embed_dim: Int,
+  use_bias: Bool,
+) -> Result(MultiHeadAttention, TensorError) {
+  nn_attention.multi_head_attention_init(num_heads, embed_dim, use_bias)
+}
+
+/// Multi-Head Attention forward pass.
+pub fn multi_head_attention_forward(
+  mha: MultiHeadAttention,
+  q: Tensor,
+  k: Tensor,
+  v: Tensor,
+  is_causal: Bool,
+) -> Result(Tensor, TensorError) {
+  nn_attention.multi_head_attention_forward(mha, q, k, v, is_causal)
+}
+
+/// Lower-triangular `[seq_len, seq_len]` mask of `1.0`s used by causal SDPA.
+pub fn causal_mask(seq_len: Int) -> Tensor {
+  nn_attention.causal_mask(seq_len)
 }
