@@ -34,6 +34,7 @@ import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/losses as nn_losses
+import viva_tensor/nn/optim as nn_optim
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
 import viva_tensor/tensor
@@ -2282,4 +2283,68 @@ pub fn huber_loss(
   reduction: Reduction,
 ) -> Result(Tensor, TensorError) {
   nn_losses.huber_loss(prediction, target, delta, reduction)
+}
+
+// --- Optimizers -------------------------------------------------------------
+//
+// Gradient-descent optimizer surface (no autograd integration yet — callers
+// hand in `Param`/`GradPair` lists explicitly).
+
+/// Optimizer family tag.
+pub type OptimizerKind =
+  nn_optim.OptimizerKind
+
+/// A named parameter tensor passed to `step`.
+pub type Param =
+  nn_optim.Param
+
+/// A gradient paired with the name of the parameter it belongs to.
+pub type GradPair =
+  nn_optim.GradPair
+
+/// Per-parameter optimizer state (momentum/variance/etc.).
+pub type ParamState =
+  nn_optim.ParamState
+
+/// Optimizer record carrying hyperparameters and per-parameter state.
+pub type Optimizer =
+  nn_optim.Optimizer
+
+/// Vanilla stochastic gradient descent. See `viva_tensor/nn/optim`.
+pub fn sgd(lr: Float) -> Optimizer {
+  nn_optim.sgd(lr)
+}
+
+/// SGD with momentum. See `viva_tensor/nn/optim`.
+pub fn sgd_momentum(lr: Float, momentum: Float) -> Optimizer {
+  nn_optim.sgd_momentum(lr, momentum)
+}
+
+/// RMSprop. See `viva_tensor/nn/optim`.
+pub fn rmsprop(lr: Float, alpha: Float, eps: Float) -> Optimizer {
+  nn_optim.rmsprop(lr, alpha, eps)
+}
+
+/// Adam (Kingma & Ba, 2015). See `viva_tensor/nn/optim`.
+pub fn adam(lr: Float) -> Optimizer {
+  nn_optim.adam(lr)
+}
+
+/// AdamW (Loshchilov & Hutter, 2019). See `viva_tensor/nn/optim`.
+pub fn adamw(lr: Float, weight_decay: Float) -> Optimizer {
+  nn_optim.adamw(lr, weight_decay)
+}
+
+/// Apply one optimizer step. See `viva_tensor/nn/optim.step`.
+pub fn step(
+  opt: Optimizer,
+  params: List(Param),
+  grads: List(GradPair),
+) -> Result(#(Optimizer, List(Param)), TensorError) {
+  nn_optim.step(opt, params, grads)
+}
+
+/// Zero every gradient tensor, preserving shapes. See `viva_tensor/nn/optim.zero_grad`.
+pub fn zero_grad(grads: List(GradPair)) -> List(GradPair) {
+  nn_optim.zero_grad(grads)
 }

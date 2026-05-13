@@ -27,6 +27,7 @@ internal_modules = [
   "viva_tensor/nn/layers",
   "viva_tensor/nn/flash_attention",
   "viva_tensor/nn/losses",
+  "viva_tensor/nn/optim",
   "viva_tensor/observability",
   "viva_tensor/observability/*",
   "viva_tensor/optim",
