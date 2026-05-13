@@ -32,6 +32,10 @@ you need to inspect storage metadata, and `viva_tensor/axis` or
 | `fill(shape, value)`       | Create a tensor filled with one scalar value.    |
 | `from_list(data)`          | Create a one-dimensional tensor.                 |
 | `from_list2d(rows)`        | Create a matrix from rows, validating row sizes. |
+| `linspace(start, stop, steps)` | Create evenly spaced values over a closed interval. |
+| `try_linspace(start, stop, steps)` | Fallible linspace rejecting invalid step counts. |
+| `logspace(start, stop, steps, base)` | Create logarithmically spaced values.       |
+| `try_logspace(start, stop, steps, base)` | Fallible logspace rejecting invalid steps/base. |
 | `matrix(rows, cols, data)` | Create a matrix with explicit dimensions.        |
 
 ```gleam
@@ -185,6 +189,8 @@ would be slower than a dense buffer.
 | `try_norm(tensor)`      | Fallible L2 norm preserving materialization errors. |
 | `normalize(tensor)`     | Normalize to unit length.                           |
 | `try_normalize(tensor)` | Fallible normalization preserving materialization errors. |
+| `is_close(a, b, rtol, atol)` | Compare two scalars with numeric tolerances. |
+| `all_close(a, b, rtol, atol)` | Compare two tensors element-wise with numeric tolerances. |
 
 ## Public Companion Modules
 

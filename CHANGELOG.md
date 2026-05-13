@@ -89,6 +89,9 @@ All notable changes to this project will be documented in this file.
 - Added fallible quantization metrics and backed scalar math helpers with
   `gleam_community_maths`, replacing local logarithm/mean/percentile/cosine
   approximations with maintained community implementations.
+- Added stable root utilities backed by `gleam_community_maths`: `linspace()`,
+  `try_linspace()`, `logspace()`, `try_logspace()`, `is_close()`, and
+  `all_close()`.
 
 ### Highlights
 
