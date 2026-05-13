@@ -156,9 +156,11 @@ Test categories:
 ## Adding New Operations
 
 1. Add function to appropriate module:
-  - Math operations → `core/ops.gleam`
-  - Shape operations → `core/shape.gleam`
-  - NN operations → `nn/` directory
+
+- Math operations → `core/ops.gleam`
+- Shape operations → `core/shape.gleam`
+- NN operations → `nn/` directory
+
 2. Return `Result(Tensor, TensorError)` for fallible operations
 3. Add public re-export in [viva_tensor.gleam](src/viva_tensor.gleam) if needed
 4. Add tests in appropriate test file

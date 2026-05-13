@@ -20,14 +20,14 @@ you need to inspect storage metadata, and `viva_tensor/axis` or
 
 ## Tensor Creation
 
-| Function | Description |
-|:--|:--|
-| `zeros(shape)` | Create a tensor filled with zeros. |
-| `ones(shape)` | Create a tensor filled with ones. |
-| `fill(shape, value)` | Create a tensor filled with one scalar value. |
-| `from_list(data)` | Create a one-dimensional tensor. |
-| `from_list2d(rows)` | Create a matrix from rows, validating row sizes. |
-| `matrix(rows, cols, data)` | Create a matrix with explicit dimensions. |
+| Function                   | Description                                      |
+|:---------------------------|:-------------------------------------------------|
+| `zeros(shape)`             | Create a tensor filled with zeros.               |
+| `ones(shape)`              | Create a tensor filled with ones.                |
+| `fill(shape, value)`       | Create a tensor filled with one scalar value.    |
+| `from_list(data)`          | Create a one-dimensional tensor.                 |
+| `from_list2d(rows)`        | Create a matrix from rows, validating row sizes. |
+| `matrix(rows, cols, data)` | Create a matrix with explicit dimensions.        |
 
 ```gleam
 let a = t.zeros([2, 3])
@@ -53,46 +53,46 @@ pub fn example() {
 
 ## Element-wise Math
 
-| Function | Description |
-|:--|:--|
-| `add(a, b)` | Element-wise addition for equal shapes. |
-| `sub(a, b)` | Element-wise subtraction for equal shapes. |
-| `mul(a, b)` | Element-wise multiplication for equal shapes. |
-| `div(a, b)` | Element-wise division for equal shapes. |
-| `scale(tensor, scalar)` | Multiply every element by a scalar. |
-| `map(tensor, fun)` | Apply a scalar function to every element. |
+| Function                | Description                                   |
+|:------------------------|:----------------------------------------------|
+| `add(a, b)`             | Element-wise addition for equal shapes.       |
+| `sub(a, b)`             | Element-wise subtraction for equal shapes.    |
+| `mul(a, b)`             | Element-wise multiplication for equal shapes. |
+| `div(a, b)`             | Element-wise division for equal shapes.       |
+| `scale(tensor, scalar)` | Multiply every element by a scalar.           |
+| `map(tensor, fun)`      | Apply a scalar function to every element.     |
 
 Use broadcasting-specific functions when shapes differ.
 
-| Function | Description |
-|:--|:--|
-| `can_broadcast(a, b)` | Check whether two shapes are compatible. |
-| `broadcast_to(tensor, shape)` | Create a broadcast view when possible. |
-| `add_broadcast(a, b)` | Add with NumPy-style broadcasting. |
-| `mul_broadcast(a, b)` | Multiply with NumPy-style broadcasting. |
+| Function                      | Description                              |
+|:------------------------------|:-----------------------------------------|
+| `can_broadcast(a, b)`         | Check whether two shapes are compatible. |
+| `broadcast_to(tensor, shape)` | Create a broadcast view when possible.   |
+| `add_broadcast(a, b)`         | Add with NumPy-style broadcasting.       |
+| `mul_broadcast(a, b)`         | Multiply with NumPy-style broadcasting.  |
 
 ## Reductions
 
-| Function | Description |
-|:--|:--|
-| `sum(tensor)` | Sum all elements. |
-| `mean(tensor)` | Mean over all elements. |
-| `max(tensor)` | Maximum value. |
-| `min(tensor)` | Minimum value. |
-| `argmax(tensor)` | Flat index of the maximum value. |
-| `argmin(tensor)` | Flat index of the minimum value. |
-| `variance(tensor)` | Variance over all elements. |
-| `std(tensor)` | Standard deviation over all elements. |
+| Function           | Description                           |
+|:-------------------|:--------------------------------------|
+| `sum(tensor)`      | Sum all elements.                     |
+| `mean(tensor)`     | Mean over all elements.               |
+| `max(tensor)`      | Maximum value.                        |
+| `min(tensor)`      | Minimum value.                        |
+| `argmax(tensor)`   | Flat index of the maximum value.      |
+| `argmin(tensor)`   | Flat index of the minimum value.      |
+| `variance(tensor)` | Variance over all elements.           |
+| `std(tensor)`      | Standard deviation over all elements. |
 
 ## Linear Algebra
 
-| Function | Description |
-|:--|:--|
-| `dot(a, b)` | Dot product for vectors. |
-| `matmul(a, b)` | Matrix multiplication. |
+| Function                     | Description                   |
+|:-----------------------------|:------------------------------|
+| `dot(a, b)`                  | Dot product for vectors.      |
+| `matmul(a, b)`               | Matrix multiplication.        |
 | `matmul_vec(matrix, vector)` | Matrix-vector multiplication. |
-| `transpose(tensor)` | Matrix transpose. |
-| `outer(a, b)` | Outer product. |
+| `transpose(tensor)`          | Matrix transpose.             |
+| `outer(a, b)`                | Outer product.                |
 
 Native-backed variants such as `matmul_into`, `to_accelerated`, and
 `matmul_accelerated_into` are available from the root module for hot paths that
@@ -100,16 +100,16 @@ can reuse buffers or persistent GPU memory.
 
 ## Shape And Layout
 
-| Function | Description |
-|:--|:--|
-| `shape(tensor)` | Tensor dimensions. |
-| `size(tensor)` | Total element count. |
-| `rank(tensor)` | Number of dimensions. |
-| `reshape(tensor, shape)` | Change shape while preserving element count. |
-| `flatten(tensor)` | Convert to one dimension. |
-| `squeeze(tensor)` | Remove size-one dimensions. |
-| `unsqueeze(tensor, axis)` | Insert a size-one dimension. |
-| `layout(tensor)` | Inspect storage, device, dtype, strides, offset, and contiguity. |
+| Function                  | Description                                                      |
+|:--------------------------|:-----------------------------------------------------------------|
+| `shape(tensor)`           | Tensor dimensions.                                               |
+| `size(tensor)`            | Total element count.                                             |
+| `rank(tensor)`            | Number of dimensions.                                            |
+| `reshape(tensor, shape)`  | Change shape while preserving element count.                     |
+| `flatten(tensor)`         | Convert to one dimension.                                        |
+| `squeeze(tensor)`         | Remove size-one dimensions.                                      |
+| `unsqueeze(tensor, axis)` | Insert a size-one dimension.                                     |
+| `layout(tensor)`          | Inspect storage, device, dtype, strides, offset, and contiguity. |
 
 ```gleam
 let info = t.layout(t.zeros([2, 3]))
@@ -117,11 +117,11 @@ let info = t.layout(t.zeros([2, 3]))
 
 ## Public Companion Modules
 
-| Module | Purpose |
-|:--|:--|
-| `viva_tensor/layout` | Canonical tensor layout metadata. |
-| `viva_tensor/axis` | Semantic axis names and axis specifications. |
-| `viva_tensor/named` | Tensor wrapper with named axes. |
+| Module               | Purpose                                      |
+|:---------------------|:---------------------------------------------|
+| `viva_tensor/layout` | Canonical tensor layout metadata.            |
+| `viva_tensor/axis`   | Semantic axis names and axis specifications. |
+| `viva_tensor/named`  | Tensor wrapper with named axes.              |
 
 ## Stability Policy
 
