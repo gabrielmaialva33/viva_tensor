@@ -928,6 +928,83 @@ pub fn mean_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
   }
 }
 
+/// Softmax along one axis, preserving the input shape.
+pub fn softmax_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  let shp = t.shape
+  let rnk = list.length(shp)
+
+  case axis >= 0 && axis < rnk {
+    False -> Error(DimensionError("Invalid axis for softmax"))
+    True -> {
+      let axis_size = list_at_int(shp, axis) |> result.unwrap(0)
+      let inner_size = layout_math.size(list.drop(shp, axis + 1))
+
+      case axis_size <= 0 {
+        True -> Ok(Tensor(data: [], shape: shp))
+        False -> {
+          let data = softmax_axis_data(get_data(t), size(t), axis_size, inner_size)
+          Ok(Tensor(data: data, shape: shp))
+        }
+      }
+    }
+  }
+}
+
+fn softmax_axis_data(
+  data: List(Float),
+  total_size: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> List(Float) {
+  let group_width = axis_size * inner_size
+  let outer_size = total_size / group_width
+
+  list.range(0, outer_size - 1)
+  |> list.flat_map(fn(outer) {
+    softmax_axis_outer(data, outer, axis_size, inner_size)
+  })
+}
+
+fn softmax_axis_outer(
+  data: List(Float),
+  outer: Int,
+  axis_size: Int,
+  inner_size: Int,
+) -> List(Float) {
+  let groups =
+    list.range(0, inner_size - 1)
+    |> list.map(fn(inner) {
+      let values =
+        list.range(0, axis_size - 1)
+        |> list.map(fn(axis_pos) {
+          let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
+          list_at_float(data, index) |> result.unwrap(0.0)
+        })
+      softmax_values(values)
+    })
+
+  list.range(0, axis_size - 1)
+  |> list.flat_map(fn(axis_pos) {
+    list.map(groups, fn(group) {
+      list_at_float(group, axis_pos) |> result.unwrap(0.0)
+    })
+  })
+}
+
+fn softmax_values(values: List(Float)) -> List(Float) {
+  let max_value =
+    list.fold(values, list_at_float(values, 0) |> result.unwrap(0.0), fn(
+      acc,
+      value,
+    ) {
+      float.max(acc, value)
+    })
+  let shifted = list.map(values, fn(value) { ffi.exp(value -. max_value) })
+  let total = list.fold(shifted, 0.0, fn(acc, value) { acc +. value })
+
+  list.map(shifted, fn(value) { value /. total })
+}
+
 fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
   lst
   |> list.index_map(fn(item, i) { #(item, i) })
@@ -1180,10 +1257,21 @@ pub fn reshape(t: Tensor, new_shape: List(Int)) -> Result(Tensor, TensorError) {
     True ->
       case t {
         NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
-        _ -> {
-          let data = get_data(t)
-          Ok(Tensor(data: data, shape: new_shape))
-        }
+        Tensor(data, _) -> Ok(Tensor(data: data, shape: new_shape))
+        StridedTensor(storage, shape, strides, offset) ->
+          case strides == compute_strides(shape) {
+            True ->
+              Ok(StridedTensor(
+                storage: storage,
+                shape: new_shape,
+                strides: compute_strides(new_shape),
+                offset: offset,
+              ))
+            False -> {
+              let data = get_data(t)
+              Ok(Tensor(data: data, shape: new_shape))
+            }
+          }
       }
     False ->
       Error(InvalidShape(
@@ -1668,6 +1756,14 @@ pub fn add_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   add(a_bc, b_bc)
 }
 
+/// Element-wise subtraction with broadcasting
+pub fn sub_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
+  use a_bc <- result.try(broadcast_to(a, result_shape))
+  use b_bc <- result.try(broadcast_to(b, result_shape))
+  sub(a_bc, b_bc)
+}
+
 /// Element-wise multiplication with broadcasting
 pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
@@ -1676,22 +1772,64 @@ pub fn mul_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   mul(a_bc, b_bc)
 }
 
+/// Element-wise division with broadcasting
+pub fn div_broadcast(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  use result_shape <- result.try(broadcast_shape(a.shape, b.shape))
+  use a_bc <- result.try(broadcast_to(a, result_shape))
+  use b_bc <- result.try(broadcast_to(b, result_shape))
+  div(a_bc, b_bc)
+}
+
 // --- Shape Manipulation ---
 
 /// Remove dimensions of size 1 (squeeze operation)
 pub fn squeeze(t: Tensor) -> Tensor {
-  let new_shape = list.filter(t.shape, fn(d) { d != 1 })
-  let final_shape = case new_shape {
-    [] -> [1]
-    _ -> new_shape
-  }
   case t {
-    NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: final_shape)
+    Tensor(data, shape) -> Tensor(data: data, shape: squeezed_shape(shape))
+    StridedTensor(storage, shape, strides, offset) -> {
+      let #(final_shape, final_strides) = squeeze_shape_strides(shape, strides)
+      StridedTensor(
+        storage: storage,
+        shape: final_shape,
+        strides: final_strides,
+        offset: offset,
+      )
+    }
+    NativeTensor(ref, shape) -> NativeTensor(ref: ref, shape: squeezed_shape(shape))
+  }
+}
+
+fn squeezed_shape(shape: List(Int)) -> List(Int) {
+  case list.filter(shape, fn(d) { d != 1 }) {
+    [] -> [1]
+    squeezed -> squeezed
+  }
+}
+
+fn squeeze_shape_strides(
+  shape: List(Int),
+  strides: List(Int),
+) -> #(List(Int), List(Int)) {
+  let kept =
+    list.zip(shape, strides)
+    |> list.filter(fn(pair) {
+      let #(dim, _) = pair
+      dim != 1
+    })
+
+  case kept {
+    [] -> #([1], [1])
     _ -> {
-      let data = get_data(t)
-      Tensor(data: data, shape: final_shape)
+      let final_shape = list.map(kept, fn(pair) { pair.0 })
+      let final_strides = list.map(kept, fn(pair) { pair.1 })
+      #(final_shape, final_strides)
     }
   }
+}
+
+fn insert_stride(strides: List(Int), axis: Int, stride: Int) -> List(Int) {
+  let #(before, after) = list.split(strides, axis)
+  list.flatten([before, [stride], after])
 }
 
 /// Remove dimension at specific axis if it's 1
@@ -1702,17 +1840,17 @@ pub fn squeeze_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
       case d == 1 {
         False -> Error(InvalidShape("Dimension at axis is not 1"))
         True -> {
-          let new_shape =
-            t.shape
-            |> list.index_map(fn(dim, i) { #(dim, i) })
-            |> list.filter(fn(pair) { pair.1 != axis })
-            |> list.map(fn(pair) { pair.0 })
+          let new_shape = remove_at_index(t.shape, axis)
           case t {
+            Tensor(data, _) -> Ok(Tensor(data: data, shape: new_shape))
             NativeTensor(ref, _) -> Ok(NativeTensor(ref: ref, shape: new_shape))
-            _ -> {
-              let data = get_data(t)
-              Ok(Tensor(data: data, shape: new_shape))
-            }
+            StridedTensor(storage, _, strides, offset) ->
+              Ok(StridedTensor(
+                storage: storage,
+                shape: new_shape,
+                strides: remove_at_index(strides, axis),
+                offset: offset,
+              ))
           }
         }
       }
@@ -1731,10 +1869,19 @@ pub fn unsqueeze(t: Tensor, axis: Int) -> Tensor {
   let #(before, after) = list.split(t.shape, insert_at)
   let new_shape = list.flatten([before, [1], after])
   case t {
+    Tensor(data, _) -> Tensor(data: data, shape: new_shape)
     NativeTensor(ref, _) -> NativeTensor(ref: ref, shape: new_shape)
-    _ -> {
-      let data = get_data(t)
-      Tensor(data: data, shape: new_shape)
+    StridedTensor(storage, shape, strides, offset) -> {
+      let new_strides = case strides == compute_strides(shape) {
+        True -> compute_strides(new_shape)
+        False -> insert_stride(strides, insert_at, 0)
+      }
+      StridedTensor(
+        storage: storage,
+        shape: new_shape,
+        strides: new_strides,
+        offset: offset,
+      )
     }
   }
 }
