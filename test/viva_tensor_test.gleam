@@ -109,6 +109,13 @@ pub fn div_test() {
   }
 }
 
+pub fn div_shape_mismatch_test() {
+  let a = t.from_list([10.0, 20.0])
+  let b = t.from_list([2.0])
+
+  t.div(a, b) |> should.be_error()
+}
+
 pub fn scale_test() {
   let a = t.from_list([1.0, 2.0, 3.0])
   let s = t.scale(a, 2.0)

@@ -486,6 +486,13 @@ fn mul_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
 
 /// Element-wise division
 pub fn div(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  case a.shape == b.shape {
+    True -> div_dense(a, b)
+    False -> Error(ShapeMismatch(expected: a.shape, got: b.shape))
+  }
+}
+
+fn div_dense(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   map2(a, b, fn(x, y) { x /. y })
 }
 
@@ -687,14 +694,17 @@ fn indexed_elementwise(
   b: Tensor,
   f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
-  let data =
+  let data_result =
     list.range(0, size(a) - 1)
-    |> list.map(fn(i) {
-      let x = get_element_or_zero(a, i)
-      let y = get_element_or_zero(b, i)
-      f(x, y)
+    |> list.fold(Ok([]), fn(acc, i) {
+      use values <- result.try(acc)
+      use x <- result.try(get_fast(a, i))
+      use y <- result.try(get_fast(b, i))
+      Ok([f(x, y), ..values])
     })
-  Ok(Tensor(data: data, shape: a.shape))
+
+  use data <- result.try(data_result)
+  Ok(Tensor(data: list.reverse(data), shape: a.shape))
 }
 
 fn get_element_or_zero(t: Tensor, index: Int) -> Float {
