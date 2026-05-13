@@ -30,6 +30,16 @@ Redistribution and use in source and binary forms, with or without modification,
 are permitted under the PyTorch license terms, including retaining the copyright
 notice, conditions, and disclaimer in redistributed source or binary materials.
 
+## gleam_community_maths
+
+`gleam_community_maths` is distributed under the Apache License 2.0.
+
+Copyright 2023 Gleam Community Contributors.
+
+The package is used as a dependency for maintained scalar math and statistics
+helpers such as mean, percentile, logarithm, and cosine similarity. No source
+code is copied into this repository.
+
 ## Project Policy
 
 - Prefer clean-room reimplementation of APIs, algorithms, and test strategy when
