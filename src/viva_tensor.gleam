@@ -35,6 +35,7 @@ import viva_tensor/layout as tensor_layout
 import viva_tensor/native/cuda
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/losses as nn_losses
+import viva_tensor/nn/norm as nn_norm
 import viva_tensor/nn/optim as nn_optim
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
@@ -204,6 +205,22 @@ pub type HadamardPreprocess =
 /// Configuration for two-dimensional convolution operations.
 pub type Conv2dConfig =
   tensor.Conv2dConfig
+
+/// Layer normalization layer (normalizes along the last dimension).
+pub type LayerNorm =
+  nn_norm.LayerNorm
+
+/// Root-mean-square normalization layer.
+pub type RmsNorm =
+  nn_norm.RmsNorm
+
+/// 1D batch normalization layer.
+pub type BatchNorm1d =
+  nn_norm.BatchNorm1d
+
+/// Group normalization layer.
+pub type GroupNorm =
+  nn_norm.GroupNorm
 
 // --- Constructors -----------------------------------------------------------
 
@@ -1877,6 +1894,76 @@ pub fn transpose_strided(t: Tensor) -> Result(Tensor, TensorError) {
 /// Check if contiguous
 pub fn is_contiguous(t: Tensor) -> Bool {
   tensor.is_contiguous(t)
+}
+
+// --- NN Normalization Layers -----------------------------------------------
+
+/// Initialize a `LayerNorm` with default `eps = 1.0e-5`.
+pub fn layer_norm_init(num_features: Int) -> LayerNorm {
+  nn_norm.layer_norm_init(num_features)
+}
+
+/// Initialize a `LayerNorm` with custom `eps`.
+pub fn layer_norm_init_with_eps(num_features: Int, eps: Float) -> LayerNorm {
+  nn_norm.layer_norm_init_with_eps(num_features, eps)
+}
+
+/// Forward pass for `LayerNorm` — normalizes along the last dimension.
+pub fn layer_norm_forward(
+  layer: LayerNorm,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_norm.layer_norm_forward(layer, input)
+}
+
+/// Initialize an `RmsNorm` with default `eps = 1.0e-6`.
+pub fn rms_norm_init(num_features: Int) -> RmsNorm {
+  nn_norm.rms_norm_init(num_features)
+}
+
+/// Initialize an `RmsNorm` with custom `eps`.
+pub fn rms_norm_init_with_eps(num_features: Int, eps: Float) -> RmsNorm {
+  nn_norm.rms_norm_init_with_eps(num_features, eps)
+}
+
+/// Forward pass for `RmsNorm` — RMS normalize along the last dimension.
+pub fn rms_norm_forward(
+  layer: RmsNorm,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_norm.rms_norm_forward(layer, input)
+}
+
+/// Initialize a `BatchNorm1d` with default `momentum = 0.1`, `eps = 1.0e-5`.
+pub fn batch_norm_1d_init(num_features: Int) -> BatchNorm1d {
+  nn_norm.batch_norm_1d_init(num_features)
+}
+
+/// Forward pass for `BatchNorm1d`.
+///
+/// In training mode, updates running stats via EMA and returns the new layer
+/// alongside the normalized output. In eval mode, uses running stats and
+/// returns the layer unchanged.
+pub fn batch_norm_1d_forward(
+  layer: BatchNorm1d,
+  input: Tensor,
+  training: Bool,
+) -> Result(#(BatchNorm1d, Tensor), TensorError) {
+  nn_norm.batch_norm_1d_forward(layer, input, training)
+}
+
+/// Initialize a `GroupNorm` with `num_groups` groups over `num_channels` channels.
+pub fn group_norm_init(num_groups: Int, num_channels: Int) -> GroupNorm {
+  nn_norm.group_norm_init(num_groups, num_channels)
+}
+
+/// Forward pass for `GroupNorm` — supports `[batch, channels]` and
+/// `[batch, channels, spatial]` inputs.
+pub fn group_norm_forward(
+  layer: GroupNorm,
+  input: Tensor,
+) -> Result(Tensor, TensorError) {
+  nn_norm.group_norm_forward(layer, input)
 }
 
 // --- CNN Ops ----------------------------------------------------------------
