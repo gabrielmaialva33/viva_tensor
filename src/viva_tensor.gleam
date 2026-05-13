@@ -420,6 +420,52 @@ pub fn mean(t: Tensor) -> Float {
   tensor.mean(t)
 }
 
+/// Sum along one axis.
+pub fn sum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.sum_axis(t, axis)
+}
+
+/// Sum along one axis, preserving the reduced dimension as size 1.
+pub fn sum_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.sum_axis_keepdims(t, axis)
+}
+
+/// Sum along one axis, preserving materialization failures.
+pub fn try_sum_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_sum_axis(t, axis)
+}
+
+/// Sum along one axis with keepdims, preserving materialization failures.
+pub fn try_sum_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_sum_axis_keepdims(t, axis)
+}
+
+/// Mean along one axis.
+pub fn mean_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.mean_axis(t, axis)
+}
+
+/// Mean along one axis, preserving the reduced dimension as size 1.
+pub fn mean_axis_keepdims(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.mean_axis_keepdims(t, axis)
+}
+
+/// Mean along one axis, preserving materialization failures.
+pub fn try_mean_axis(t: Tensor, axis: Int) -> Result(Tensor, TensorError) {
+  tensor.try_mean_axis(t, axis)
+}
+
+/// Mean along one axis with keepdims, preserving materialization failures.
+pub fn try_mean_axis_keepdims(
+  t: Tensor,
+  axis: Int,
+) -> Result(Tensor, TensorError) {
+  tensor.try_mean_axis_keepdims(t, axis)
+}
+
 /// Maximum value
 pub fn max(t: Tensor) -> Float {
   tensor.max(t)

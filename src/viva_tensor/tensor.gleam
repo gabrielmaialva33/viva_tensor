@@ -919,64 +919,111 @@ pub fn std(t: Tensor) -> Float {
   ffi.sqrt(variance(t))
 }
 
-/// Sum along a specific axis
-/// For a [2, 3] tensor, sum_axis(_, 0) gives [3], sum_axis(_, 1) gives [2]
+/// Sum along a specific axis, preserving materialization failures.
+/// For a [2, 3] tensor, sum_axis(_, 0) gives [3], sum_axis(_, 1) gives [2].
+pub fn try_sum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  sum_axis_with_keepdims(t, axis_idx, False)
+}
+
+/// Sum along a specific axis.
 pub fn sum_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_sum_axis(t, axis_idx)
+}
+
+/// Sum along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_sum_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  sum_axis_with_keepdims(t, axis_idx, True)
+}
+
+/// Sum along a specific axis while keeping the reduced dimension as size 1.
+pub fn sum_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_sum_axis_keepdims(t, axis_idx)
+}
+
+fn sum_axis_with_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+  keepdims: Bool,
+) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
     False -> Error(DimensionError("Invalid axis index"))
     True -> {
       case t.shape {
         [] -> Error(DimensionError("Cannot reduce scalar"))
-        [_] ->
-          // 1D: reduce to scalar wrapped in [1]
-          Ok(Tensor(data: [sum(t)], shape: [1]))
         _ -> {
-          // General case: reduce along axis
-          let axis_size = case list.drop(t.shape, axis_idx) |> list.first {
-            Ok(s) -> s
-            Error(_) -> 1
-          }
-          let new_shape = remove_at_index(t.shape, axis_idx)
+          use axis_size <- result.try(axis_size(t.shape, axis_idx))
+          use data <- result.try(try_to_list(t))
+
+          let new_shape = reduced_shape(t.shape, axis_idx, keepdims)
           let new_size = list.fold(new_shape, 1, fn(acc, d) { acc * d })
-          let data = get_data(t)
 
-          let result =
-            list.range(0, new_size - 1)
-            |> list.map(fn(out_idx) {
-              // Sum over all values at this position along the axis
-              list.range(0, axis_size - 1)
-              |> list.fold(0.0, fn(acc, axis_pos) {
-                let in_idx =
-                  compute_index_with_axis(t.shape, out_idx, axis_idx, axis_pos)
-                let val = case list.drop(data, in_idx) |> list.first {
-                  Ok(v) -> v
-                  Error(_) -> 0.0
-                }
-                acc +. val
-              })
-            })
-
-          Ok(Tensor(data: result, shape: new_shape))
+          case new_size <= 0 {
+            True -> Ok(Tensor(data: [], shape: new_shape))
+            False ->
+              reduce_sum_axis_data(
+                data,
+                t.shape,
+                new_shape,
+                axis_idx,
+                axis_size,
+              )
+          }
         }
       }
     }
   }
 }
 
-/// Mean along a specific axis
+/// Mean along a specific axis, preserving materialization failures.
+pub fn try_mean_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  mean_axis_with_keepdims(t, axis_idx, False)
+}
+
+/// Mean along a specific axis.
 pub fn mean_axis(t: Tensor, axis_idx: Int) -> Result(Tensor, TensorError) {
+  try_mean_axis(t, axis_idx)
+}
+
+/// Mean along a specific axis while keeping the reduced dimension as size 1.
+pub fn try_mean_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  mean_axis_with_keepdims(t, axis_idx, True)
+}
+
+/// Mean along a specific axis while keeping the reduced dimension as size 1.
+pub fn mean_axis_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+) -> Result(Tensor, TensorError) {
+  try_mean_axis_keepdims(t, axis_idx)
+}
+
+fn mean_axis_with_keepdims(
+  t: Tensor,
+  axis_idx: Int,
+  keepdims: Bool,
+) -> Result(Tensor, TensorError) {
   let r = rank(t)
   case axis_idx >= 0 && axis_idx < r {
     False -> Error(DimensionError("Invalid axis index"))
     True -> {
-      let axis_size = case list.drop(t.shape, axis_idx) |> list.first {
-        Ok(s) -> s
-        Error(_) -> 1
-      }
-      case sum_axis(t, axis_idx) {
-        Error(e) -> Error(e)
-        Ok(summed) -> Ok(scale(summed, 1.0 /. int.to_float(axis_size)))
+      use axis_size <- result.try(axis_size(t.shape, axis_idx))
+      case axis_size <= 0 {
+        True -> Error(DimensionError("Cannot compute mean along empty axis"))
+        False ->
+          case sum_axis_with_keepdims(t, axis_idx, keepdims) {
+            Error(e) -> Error(e)
+            Ok(summed) -> Ok(scale(summed, 1.0 /. int.to_float(axis_size)))
+          }
       }
     }
   }
@@ -1067,45 +1114,112 @@ fn remove_at_index(lst: List(a), idx: Int) -> List(a) {
   |> list.map(fn(pair) { pair.0 })
 }
 
-fn compute_index_with_axis(
-  shape: List(Int),
+fn axis_size(shape: List(Int), axis_idx: Int) -> Result(Int, TensorError) {
+  list_at_int(shape, axis_idx)
+  |> result.map_error(fn(_) { DimensionError("Invalid axis index") })
+}
+
+fn reduced_shape(shape: List(Int), axis_idx: Int, keepdims: Bool) -> List(Int) {
+  case keepdims {
+    True ->
+      shape
+      |> list.index_map(fn(dim, idx) {
+        case idx == axis_idx {
+          True -> 1
+          False -> dim
+        }
+      })
+    False -> remove_at_index(shape, axis_idx)
+  }
+}
+
+fn reduce_sum_axis_data(
+  data: List(Float),
+  input_shape: List(Int),
+  output_shape: List(Int),
+  axis_idx: Int,
+  axis_size: Int,
+) -> Result(Tensor, TensorError) {
+  case axis_size <= 0 {
+    True -> {
+      let output_size = list.fold(output_shape, 1, fn(acc, dim) { acc * dim })
+      Ok(Tensor(data: list.repeat(0.0, output_size), shape: output_shape))
+    }
+    False -> {
+      let output_size = list.fold(output_shape, 1, fn(acc, dim) { acc * dim })
+      list.range(0, output_size - 1)
+      |> list.fold(Ok([]), fn(acc, out_idx) {
+        use values <- result.try(acc)
+        use value <- result.try(sum_axis_output(
+          data,
+          input_shape,
+          output_shape,
+          out_idx,
+          axis_idx,
+          axis_size,
+        ))
+        Ok([value, ..values])
+      })
+      |> result.map(fn(values) {
+        Tensor(data: list.reverse(values), shape: output_shape)
+      })
+    }
+  }
+}
+
+fn sum_axis_output(
+  data: List(Float),
+  input_shape: List(Int),
+  output_shape: List(Int),
   out_idx: Int,
   axis_idx: Int,
-  axis_pos: Int,
-) -> Int {
-  let strides = compute_strides(shape)
-  let _r = list.length(shape)
+  axis_size: Int,
+) -> Result(Float, TensorError) {
+  let output_coords = flat_to_multi(out_idx, output_shape)
+  list.range(0, axis_size - 1)
+  |> list.fold(Ok(0.0), fn(acc, axis_pos) {
+    use total <- result.try(acc)
+    let input_coords =
+      insert_reduced_axis(
+        output_coords,
+        axis_idx,
+        axis_pos,
+        output_shape,
+        input_shape,
+      )
 
-  // Convert out_idx to coordinates (without axis dimension)
-  let shape_without_axis = remove_at_index(shape, axis_idx)
-  let strides_without_axis = compute_strides(shape_without_axis)
-
-  let out_coords =
-    list.range(0, list.length(shape_without_axis) - 1)
-    |> list.map(fn(i) {
-      let stride = case list.drop(strides_without_axis, i) |> list.first {
-        Ok(s) -> s
-        Error(_) -> 1
-      }
-      { out_idx / stride }
-      % {
-        case list.drop(shape_without_axis, i) |> list.first {
-          Ok(d) -> d
-          Error(_) -> 1
-        }
-      }
-    })
-
-  // Insert axis_pos at axis_idx position
-  let #(before, after) = list.split(out_coords, axis_idx)
-  let full_coords = list.flatten([before, [axis_pos], after])
-
-  // Convert to flat index
-  list.zip(full_coords, strides)
-  |> list.fold(0, fn(acc, pair) {
-    let #(coord, stride) = pair
-    acc + coord * stride
+    let input_idx = multi_to_flat(input_coords, input_shape)
+    use value <- result.try(
+      list_at_float(data, input_idx)
+      |> result.map_error(fn(_) {
+        IndexOutOfBounds(input_idx, list.length(data))
+      }),
+    )
+    Ok(total +. value)
   })
+}
+
+fn insert_reduced_axis(
+  output_coords: List(Int),
+  axis_idx: Int,
+  axis_pos: Int,
+  output_shape: List(Int),
+  input_shape: List(Int),
+) -> List(Int) {
+  case list.length(output_shape) == list.length(input_shape) {
+    True ->
+      output_coords
+      |> list.index_map(fn(coord, idx) {
+        case idx == axis_idx {
+          True -> axis_pos
+          False -> coord
+        }
+      })
+    False -> {
+      let #(before, after) = list.split(output_coords, axis_idx)
+      list.flatten([before, [axis_pos], after])
+    }
+  }
 }
 
 // --- Matrix Operations ---
