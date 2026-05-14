@@ -21,7 +21,9 @@ pub fn main() {
   io.println(
     "\n╔══════════════════════════════════════════════════════════════════╗",
   )
-  io.println("║   SHOWDOWN: viva_tensor vs PyTorch vs NumPy — RTX 4090 + 24-core ║")
+  io.println(
+    "║   SHOWDOWN: viva_tensor vs PyTorch vs NumPy — RTX 4090 + 24-core ║",
+  )
   io.println(
     "╚══════════════════════════════════════════════════════════════════╝\n",
   )
@@ -41,17 +43,27 @@ pub fn main() {
       entries
     }
     Error(reason) -> {
-      io.println("WARN: no PyTorch results (" <> reason <> "). Viva-only mode.\n")
+      io.println(
+        "WARN: no PyTorch results (" <> reason <> "). Viva-only mode.\n",
+      )
       []
     }
   }
 
   list.each(shapes, fn(n) {
-    io.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    io.println(
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    )
     io.println("  " <> int.to_string(n) <> " × " <> int.to_string(n) <> " GEMM")
-    io.println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-    io.println("    backend                                        TFLOPS    ms/iter")
-    io.println("    ────────────────────────────────────────────  ────────  ─────────")
+    io.println(
+      "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━",
+    )
+    io.println(
+      "    backend                                        TFLOPS    ms/iter",
+    )
+    io.println(
+      "    ────────────────────────────────────────────  ────────  ─────────",
+    )
 
     let viva_rows = collect_viva_rows(n, iters)
     let pytorch_rows =
@@ -103,9 +115,7 @@ pub fn main() {
   io.println(
     "Notes: viva_tensor numbers are kernel-only (cudaEvent); PyTorch and",
   )
-  io.println(
-    "       NumPy numbers are wall-clock (perf_counter / cudaEvent).",
-  )
+  io.println("       NumPy numbers are wall-clock (perf_counter / cudaEvent).")
   io.println(
     "       viva CUTLASS paths bypass the GeForce FP32-accum cap that limits",
   )
@@ -179,7 +189,12 @@ fn run_us(
 // MKL CPU FP32 bench via existing NIF (cuda_gemm.c calls cblas_dgemm directly)
 // =============================================================================
 
-fn mkl_dgemm_bench(_m: Int, _n: Int, _k: Int, _iters: Int) -> Result(Int, String) {
+fn mkl_dgemm_bench(
+  _m: Int,
+  _n: Int,
+  _k: Int,
+  _iters: Int,
+) -> Result(Int, String) {
   // viva_tensor doesn't expose a self-contained MKL DGEMM bench yet; the
   // best proxy is the cublaslt_fp16_bench wall-clock minus GPU sync, but
   // that's apples-to-oranges. Skip MKL CPU row in showdown for now.
@@ -223,7 +238,10 @@ fn parse_term(line: String) -> Result(#(String, Int, Float, Float), Nil) {
     [path, n_str, tflops_str, ms_str] ->
       case int.parse(string.trim(n_str)) {
         Ok(n) ->
-          case float.parse(string.trim(tflops_str)), float.parse(string.trim(ms_str)) {
+          case
+            float.parse(string.trim(tflops_str)),
+            float.parse(string.trim(ms_str))
+          {
             Ok(t), Ok(m) -> Ok(#(string.trim(path), n, t, m))
             _, _ -> Error(Nil)
           }
