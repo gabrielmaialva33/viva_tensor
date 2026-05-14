@@ -60,8 +60,14 @@ pub fn main() {
     run_backend("cuSPARSELt INT8 2:4 sparse (peak 1320 TOPS)  ", n, iters, fn() {
       cusparselt_int8_sparse_bench(n, n, n, iters, 0)
     })
+    // cfg=28 (SparseUnivNS_0) wins on 4096² and 8192², cfg=36 wins on 2048².
+    // See dev/viva_tensor/bench/autotune.gleam for the full sweep.
+    let int4_cfg = case n {
+      2048 -> 36
+      _ -> 28
+    }
     run_backend("CUTLASS INT4 2:4 sparse    (peak 2640 TOPS)  ", n, iters, fn() {
-      cutlass_int4_sparse_bench(n, n, n, iters, 10, 1)
+      cutlass_int4_sparse_bench(n, n, n, iters, int4_cfg, 1)
     })
     io.println("")
   })
