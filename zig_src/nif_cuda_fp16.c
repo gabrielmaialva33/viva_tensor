@@ -780,6 +780,26 @@ ERL_NIF_TERM cuda_axpy_graph_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
 }
 
+/** cublaslt_fp8_algo_sweep_nif(M, N, K, Iters, MaxAlgos) -> {ok, BestUs} */
+ERL_NIF_TERM cublaslt_fp8_algo_sweep_nif(ErlNifEnv *env, int argc,
+                                                  const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int m, n, k, iters, max_algos;
+  if (!enif_get_int(env, argv[0], &m) ||
+      !enif_get_int(env, argv[1], &n) ||
+      !enif_get_int(env, argv[2], &k) ||
+      !enif_get_int(env, argv[3], &iters) ||
+      !enif_get_int(env, argv[4], &max_algos))
+    return make_error(env, "invalid_args");
+  int us = cublaslt_fp8_algo_sweep(m, n, k, iters, max_algos);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cublaslt_fp8_algo_sweep_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
+}
+
 /** nvfp4_fused_gemm_bench_nif(M, N, K, Iters) -> {ok, ElapsedUs}
  *  Single-kernel dequant + GEMM. FP4 intermediate stays in registers. */
 ERL_NIF_TERM nvfp4_fused_gemm_bench_nif(ErlNifEnv *env, int argc,

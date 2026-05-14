@@ -57,6 +57,9 @@ pub fn main() {
     run_backend("CUTLASS FP8 + FP16 accum   (peak  660 TFLOPS)", n, iters, fn() {
       cutlass_fp8_bench(n, n, n, iters, 0)
     })
+    run_backend("cublasLt FP8 algo-sweep    (capped  330)     ", n, iters, fn() {
+      cublaslt_fp8_algo_sweep(n, n, n, iters, 16)
+    })
     run_backend("CUTLASS FP8 + FP32 accum   (peak  330 TFLOPS)", n, iters, fn() {
       cutlass_fp8_bench(n, n, n, iters, 1)
     })
@@ -194,6 +197,15 @@ fn cublaslt_fp16_fused_bench(
 
 @external(erlang, "viva_tensor_zig", "cublaslt_fp16_algo_sweep")
 fn cublaslt_fp16_algo_sweep(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  max_algos: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cublaslt_fp8_algo_sweep")
+fn cublaslt_fp8_algo_sweep(
   m: Int,
   n: Int,
   k: Int,

@@ -319,6 +319,7 @@ static ErlNifFunc nif_funcs[] = {
     {"cutlass_fp8_concurrent_bench", 4, cutlass_fp8_concurrent_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cublaslt_fp16_algo_sweep", 5, cublaslt_fp16_algo_sweep_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nvfp4_fused_gemm_bench", 4, nvfp4_fused_gemm_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cublaslt_fp8_algo_sweep", 5, cublaslt_fp8_algo_sweep_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench", 5, cutlass_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
