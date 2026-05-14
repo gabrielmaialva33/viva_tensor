@@ -19,9 +19,15 @@ import gleam/order
 import gleam/result
 
 pub fn main() {
-  io.println("\n╔══════════════════════════════════════════════════════════════════╗")
-  io.println("║   viva_tensor sparse autotuner — RTX 4090                        ║")
-  io.println("╚══════════════════════════════════════════════════════════════════╝\n")
+  io.println(
+    "\n╔══════════════════════════════════════════════════════════════════╗",
+  )
+  io.println(
+    "║   viva_tensor sparse autotuner — RTX 4090                        ║",
+  )
+  io.println(
+    "╚══════════════════════════════════════════════════════════════════╝\n",
+  )
 
   let _ = is_loaded()
   io.println("NIF info: " <> backend_info() <> "\n")
