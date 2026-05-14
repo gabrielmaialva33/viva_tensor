@@ -60,6 +60,16 @@ pub fn main() {
     run_backend("cuSPARSELt INT8 2:4 sparse (peak 1320 TOPS)  ", n, iters, fn() {
       cusparselt_int8_sparse_bench(n, n, n, iters, 0)
     })
+    // Best CUTLASS INT8 configs from autotune: cfg=28 universal, split_k=2 on
+    // 2048² (small enough that split-K helps), split_k=1 elsewhere.
+    let int8_split = case n {
+      2048 -> 2
+      _ -> 1
+    }
+    run_backend("CUTLASS INT8 2:4 sparse    (peak 1320 TOPS)  ", n, iters, fn() {
+      cutlass_int8_sparse_bench_ex(n, n, n, iters, 28, int8_split)
+    })
+
     // cfg=28 (SparseUnivNS_0) wins on 4096² and 8192², cfg=36 wins on 2048².
     // See dev/viva_tensor/bench/autotune.gleam for the full sweep.
     let int4_cfg = case n {
@@ -181,6 +191,16 @@ fn cusparselt_int8_sparse_bench(
 
 @external(erlang, "viva_tensor_zig", "cutlass_int4_sparse_bench")
 fn cutlass_int4_sparse_bench(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  config: Int,
+  split_k: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cutlass_int8_sparse_bench_ex")
+fn cutlass_int8_sparse_bench_ex(
   m: Int,
   n: Int,
   k: Int,

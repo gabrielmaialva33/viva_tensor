@@ -854,19 +854,20 @@ ERL_NIF_TERM cutlass_int8_sparse_bench_nif(ErlNifEnv *env, int argc,
     default: return make_error(env, "invalid_config");
   }
 
-  if (result != 0) {
+  /* After the cudaEvent timing patch in cuda_sparse_int8_cutlass.cu, success
+   * returns elapsed microseconds. Negative = error code. */
+  if (result < 0) {
     char errbuf[64];
     snprintf(errbuf, sizeof(errbuf), "cutlass_int8_sparse_failed_%d", result);
     return make_error(env, errbuf);
   }
 
-  extern void cuda_explicit_sync(void);
-  cuda_explicit_sync();
-
-  return enif_make_atom(env, "ok");
+  return enif_make_tuple2(env,
+    enif_make_atom(env, "ok"),
+    enif_make_int(env, result));
 }
 
-/** cutlass_int8_sparse_bench_ex_nif(M, N, K, Iters, Config, SplitK) -> ok
+/** cutlass_int8_sparse_bench_ex_nif(M, N, K, Iters, Config, SplitK) -> {ok, ElapsedUs}
  *  Extended CUTLASS INT8 2:4 Sparse GEMM with split-K support.
  *  Config: 0=128x128x128/3stg, 1=128x128x256/2stg, 2=128x256x128/2stg,
  *          3=256x128x128/2stg, 4=64x128x128/3stg, 5=128x128x128/4stg
@@ -884,18 +885,19 @@ ERL_NIF_TERM cutlass_int8_sparse_bench_ex_nif(ErlNifEnv *env, int argc,
       !enif_get_int(env, argv[5], &split_k))
     return make_error(env, "invalid_args");
 
+  /* After the timing patch in cuda_sparse_int8_cutlass.cu, success returns
+   * elapsed microseconds (kernel-only via cudaEvent). Negative = error code. */
   int result = cutlass_int8_sparse_gemm_bench_ex(m, n, k, iters, config, split_k);
 
-  if (result != 0) {
+  if (result < 0) {
     char errbuf[64];
     snprintf(errbuf, sizeof(errbuf), "cutlass_int8_sparse_ex_failed_%d", result);
     return make_error(env, errbuf);
   }
 
-  extern void cuda_explicit_sync(void);
-  cuda_explicit_sync();
-
-  return enif_make_atom(env, "ok");
+  return enif_make_tuple2(env,
+    enif_make_atom(env, "ok"),
+    enif_make_int(env, result));
 }
 
 /** cusparselt_int8_sparse_bench_nif(M, N, K, Iters, Mode) -> {ok, ElapsedUs}

@@ -386,19 +386,32 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     }
     cudaDeviceSynchronize();
 
-    /* Bench loop */
+    /* Timed bench loop via CUDA events. Returns elapsed microseconds. */
+    cudaEvent_t start_ev, stop_ev;
+    cudaEventCreate(&start_ev);
+    cudaEventCreate(&stop_ev);
+    cudaEventRecord(start_ev);
+
     for (int i = 0; i < iters; i++) {
         status = gemm_op();
         if (status != cutlass::Status::kSuccess) {
+            cudaEventDestroy(start_ev); cudaEventDestroy(stop_ev);
             cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
             if (workspace) cudaFree(workspace);
             return -5;
         }
     }
 
+    cudaEventRecord(stop_ev);
+    cudaEventSynchronize(stop_ev);
+    float elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&elapsed_ms, start_ev, stop_ev);
+    cudaEventDestroy(start_ev);
+    cudaEventDestroy(stop_ev);
+
     cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
     if (workspace) cudaFree(workspace);
-    return 0;
+    return (int)(elapsed_ms * 1000.0f);
 }
 
 /* =========================================================================
@@ -499,19 +512,32 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     }
     cudaDeviceSynchronize();
 
-    /* Bench loop */
+    /* Timed bench loop via CUDA events. Returns elapsed microseconds. */
+    cudaEvent_t start_ev, stop_ev;
+    cudaEventCreate(&start_ev);
+    cudaEventCreate(&stop_ev);
+    cudaEventRecord(start_ev);
+
     for (int i = 0; i < iters; i++) {
         status = gemm_op();
         if (status != cutlass::Status::kSuccess) {
+            cudaEventDestroy(start_ev); cudaEventDestroy(stop_ev);
             cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
             if (workspace) cudaFree(workspace);
             return -5;
         }
     }
 
+    cudaEventRecord(stop_ev);
+    cudaEventSynchronize(stop_ev);
+    float elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&elapsed_ms, start_ev, stop_ev);
+    cudaEventDestroy(start_ev);
+    cudaEventDestroy(stop_ev);
+
     cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
     if (workspace) cudaFree(workspace);
-    return 0;
+    return (int)(elapsed_ms * 1000.0f);  /* microseconds */
 }
 
 /* =========================================================================

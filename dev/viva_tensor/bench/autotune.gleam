@@ -42,6 +42,7 @@ pub fn main() {
     let flops = 2.0 *. int_to_float(n * n * n * iters)
 
     sweep_int4(n, iters, flops)
+    sweep_int8_cutlass(n, iters, flops)
     sweep_cusparselt(n, iters, flops)
 
     io.println("")
@@ -71,6 +72,28 @@ fn sweep_int4(n: Int, iters: Int, flops: Float) -> Nil {
     })
     |> sort_by_tflops()
   print_top("INT4", results, 3)
+}
+
+// =============================================================================
+// CUTLASS INT8 2:4 sparse — configs × split-K (now timed via cudaEvent)
+// =============================================================================
+
+fn sweep_int8_cutlass(n: Int, iters: Int, flops: Float) -> Nil {
+  let configs = [10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28]
+  let split_ks = [1, 2]
+  io.println("├─ CUTLASS INT8 2:4 sparse (sweep configs × split-K)")
+  let results =
+    list.flat_map(configs, fn(cfg) {
+      list.filter_map(split_ks, fn(sk) {
+        case cutlass_int8_sparse_bench_ex(n, n, n, iters, cfg, sk) {
+          Ok(us) if us > 0 ->
+            Ok(#(cfg, sk, us, flops /. int_to_float(us) /. 1.0e6))
+          _ -> Error(Nil)
+        }
+      })
+    })
+    |> sort_by_tflops()
+  print_top("INT8 CUTLASS", results, 3)
 }
 
 // =============================================================================
@@ -177,6 +200,16 @@ fn backend_info() -> String
 
 @external(erlang, "viva_tensor_zig", "cutlass_int4_sparse_bench")
 fn cutlass_int4_sparse_bench(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  config: Int,
+  split_k: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cutlass_int8_sparse_bench_ex")
+fn cutlass_int8_sparse_bench_ex(
   m: Int,
   n: Int,
   k: Int,
