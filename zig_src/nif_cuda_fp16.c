@@ -780,6 +780,24 @@ ERL_NIF_TERM cuda_axpy_graph_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
 }
 
+/** nvfp4_dequant_bench_nif(N, Iters) -> {ok, ElapsedUs}
+ *  PoC: dequantize N FP4 values (packed nibbles) to FP16. Bandwidth meter. */
+ERL_NIF_TERM nvfp4_dequant_bench_nif(ErlNifEnv *env, int argc,
+                                              const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int n, iters;
+  if (!enif_get_int(env, argv[0], &n) ||
+      !enif_get_int(env, argv[1], &iters))
+    return make_error(env, "invalid_args");
+  int us = nvfp4_dequant_bench(n, iters);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "nvfp4_dequant_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
+}
+
 /** cublaslt_fp16_fused_bench_nif(M, N, K, Iters, Epilogue) -> {ok, ElapsedUs}
  *  cublasLt FP16 GEMM with epilogue fusion (bias/GELU/bias+GELU). */
 ERL_NIF_TERM cublaslt_fp16_fused_bench_nif(ErlNifEnv *env, int argc,

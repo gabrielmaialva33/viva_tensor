@@ -549,6 +549,8 @@ extern int cuda_axpy_loop_bench(int n, int iters);
 extern int cuda_axpy_graph_bench(int n, int iters);
 /* cublasLt FP16 GEMM with epilogue fusion (BIAS / GELU / BIAS+GELU). */
 extern int cublaslt_fp16_fused_bench(int M, int N, int K, int iters, int epilogue);
+/* NVFP4 emulation: dequantize FP4 packed -> FP16. PoC: bench only. */
+extern int nvfp4_dequant_bench(int n_values, int iters);
 extern int cutlass_int8_sparse_gemm_bench(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_b(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_c(int M, int N, int K, int iters);
@@ -737,6 +739,7 @@ NIF_FUNC_DECL(cublaslt_fp16_bench_nif);
 NIF_FUNC_DECL(cuda_axpy_loop_bench_nif);
 NIF_FUNC_DECL(cuda_axpy_graph_bench_nif);
 NIF_FUNC_DECL(cublaslt_fp16_fused_bench_nif);
+NIF_FUNC_DECL(nvfp4_dequant_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_ex_nif);
 NIF_FUNC_DECL(cusparselt_int8_sparse_bench_nif);
