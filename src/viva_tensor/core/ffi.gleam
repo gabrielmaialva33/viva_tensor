@@ -396,6 +396,16 @@ pub fn zig_is_loaded() -> Bool {
   zig_is_loaded_ffi()
 }
 
+/// Check if the loaded NIF was built with CUDA backends linked in.
+///
+/// Returns `False` when the NIF is absent or was built with `-Dcuda=false`.
+/// Callers that depend on CUDA-only entry points (e.g. `ct_from_list`,
+/// `nt_matmul_cuda_fp32`) should gate behind this check, not just
+/// `zig_is_loaded()`.
+pub fn cuda_available() -> Bool {
+  cuda_available_ffi()
+}
+
 /// Get Zig backend info for debugging.
 ///
 /// Returns SIMD capability info: "Zig SIMD (AVX2)" or "Zig SIMD (NEON)" etc.
@@ -1195,6 +1205,9 @@ fn nt_gelu_exact_ffi(ref: NativeTensorRef) -> Result(NativeTensorRef, String)
 // Zig NIF FFI bindings
 @external(erlang, "viva_tensor_zig", "is_loaded")
 fn zig_is_loaded_ffi() -> Bool
+
+@external(erlang, "viva_tensor_zig", "cuda_available")
+fn cuda_available_ffi() -> Bool
 
 @external(erlang, "viva_tensor_zig", "backend_info")
 fn zig_backend_info_ffi() -> String

@@ -139,7 +139,7 @@ pub type LinearLayer {
 
 /// Create an RTX 4090 FP16 workspace.
 pub fn gpu_workspace() -> Result(GpuWorkspace, tensor.TensorError) {
-  case ffi.zig_is_loaded() && ffi.ct16_available() {
+  case ffi.cuda_available() && ffi.ct16_available() {
     True -> Ok(GpuWorkspace(backend: Rtx4090Fp16))
     False -> Error(DimensionError("CUDA FP16 backend is not available"))
   }
@@ -289,7 +289,7 @@ pub fn to_accelerated(
 pub fn to_rtx4090_fp16(
   t: tensor.Tensor,
 ) -> Result(AcceleratedTensor, tensor.TensorError) {
-  case ffi.zig_is_loaded() && ffi.ct16_available() {
+  case ffi.cuda_available() && ffi.ct16_available() {
     False -> Error(DimensionError("CUDA FP16 backend is not available"))
     True ->
       ffi.ct16_from_list(tensor.to_list(t), tensor.shape(t))
@@ -304,7 +304,7 @@ pub fn to_rtx4090_fp16(
 pub fn to_rtx4090_fp32(
   t: tensor.Tensor,
 ) -> Result(AcceleratedTensor, tensor.TensorError) {
-  case ffi.zig_is_loaded() {
+  case ffi.cuda_available() {
     False -> Error(DimensionError("CUDA FP32 backend is not available"))
     True ->
       ffi.ct_from_list(tensor.to_list(t), tensor.shape(t))
@@ -673,7 +673,7 @@ fn try_rtx4090_fp16(
   n: Int,
   k: Int,
 ) -> Result(AcceleratedTensor, Nil) {
-  case ffi.zig_is_loaded() && ffi.ct16_available() {
+  case ffi.cuda_available() && ffi.ct16_available() {
     False -> Error(Nil)
     True -> {
       use a_gpu <- result.try(
@@ -700,7 +700,7 @@ fn try_rtx4090_fp32(
   n: Int,
   k: Int,
 ) -> Result(AcceleratedTensor, Nil) {
-  case ffi.zig_is_loaded() {
+  case ffi.cuda_available() {
     False -> Error(Nil)
     True -> {
       use a_gpu <- result.try(
