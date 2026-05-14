@@ -14,6 +14,7 @@
     simd_available/0,
     backend_info/0,
     is_loaded/0,
+    cuda_available/0,
     cpu_topology/0
 ]).
 
@@ -229,6 +230,17 @@ backend_info() ->
 simd_available() ->
     case is_loaded() of
         true -> nif_simd_available();
+        false -> false
+    end.
+
+%% CUDA backend availability (false when NIF built with -Dcuda=false).
+cuda_available() ->
+    case is_loaded() of
+        true ->
+            try nif_cuda_available()
+            catch error:nif_error:_ -> false;
+                  error:undef:_     -> false
+            end;
         false -> false
     end.
 

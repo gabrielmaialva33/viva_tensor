@@ -140,6 +140,19 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
   return 0;
 }
 
+/* Reports whether this NIF was built with CUDA backends linked in.
+ * Returns false when compiled with -DVIVA_NO_CUDA (CPU-only build). */
+static ERL_NIF_TERM nif_cuda_available(ErlNifEnv *env, int argc,
+                                       const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  (void)argv;
+#if defined(VIVA_NO_CUDA) || defined(_WIN32)
+  return enif_make_atom(env, "false");
+#else
+  return enif_make_atom(env, "true");
+#endif
+}
+
 static ErlNifFunc nif_funcs[] = {
     /* Legacy list-based API */
     {"nif_simd_dot", 2, nif_simd_dot, 0},
@@ -150,6 +163,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nif_simd_matmul", 5, nif_simd_matmul, 0},
     {"nif_simd_available", 0, nif_simd_available, 0},
     {"nif_backend_info", 0, nif_backend_info, 0},
+    {"nif_cuda_available", 0, nif_cuda_available, 0},
     {"cpu_topology", 0, nif_cpu_topology, 0},
 
     /* NIF Resource API — constructors */
