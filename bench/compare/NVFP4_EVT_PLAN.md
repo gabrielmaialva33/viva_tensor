@@ -26,8 +26,8 @@ SMEM or HBM**.
 ## Reference shapes (NVFP4 on Ada SM89)
 
 - Tile shape: 128 × 128 × 64 (M × N × K)
-- Warp shape:  64 ×  64 × 64
-- MMA shape:   16 ×   8 × 16 (`mma.sync.aligned.m16n8k16.f16.f16.f16.f16`)
+- Warp shape:  64 × 64 × 64
+- MMA shape:   16 × 8 × 16 (`mma.sync.aligned.m16n8k16.f16.f16.f16.f16`)
 - Stages: 3 (pipelined cp.async loads)
 
 K dimension is doubled in the *A loader prologue* because each byte of

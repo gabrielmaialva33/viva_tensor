@@ -77,6 +77,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv*, int argc, const ERL_NIF_TERM arg
 ```
 
 Each:
+
 1. Reads the input weight tensor (FP16/FP32 host memory).
 2. Computes scales (per-tensor for FP8, per-channel for INT8/INT4).
 3. Quantizes element-wise.
@@ -109,6 +110,7 @@ ERL_NIF_TERM nt_linear_swiglu_fp8(env, argc, argv);
 ```
 
 Internally launches:
+
 1. GEMM with `gate_weight` → `gate_out`
 2. GEMM with `up_weight` → `up_out`
 3. Element-wise `silu(gate_out) * up_out` (custom kernel)
@@ -128,6 +130,7 @@ each function body. Replace with `@external(erlang, "viva_tensor_zig",
 ### 6. Numerical validation suite
 
 `test/inference_numerical_test.gleam`:
+
 - Reference matmul in FP32 on CPU.
 - Prepack the same weight in FP8 / INT8-sparse / INT4-sparse.
 - Run `linear_fp8` / `linear_int8_sparse` / `linear_int4_sparse`.
@@ -136,14 +139,14 @@ each function body. Replace with `@external(erlang, "viva_tensor_zig",
 
 ## Effort estimate
 
-Item | Lines of code | Hours
----- | ---- | ----
-1. Resource type | ~80 (C) | 1-2
-2. Prepack NIFs × 3 | ~600 (C) | 6-8 (quant math is the bulk)
-3. Linear NIFs × 3 | ~400 (C) | 3-4
-4. SwiGLU NIF | ~200 (C/CUDA) | 2-3
-5. Gleam stub wiring | ~50 lines | 1
-6. Numerical tests | ~200 lines | 2
+ Item                 | Lines of code | Hours                        
+----------------------|---------------|------------------------------
+ 1. Resource type     | ~80 (C)       | 1-2                          
+ 2. Prepack NIFs × 3  | ~600 (C)      | 6-8 (quant math is the bulk) 
+ 3. Linear NIFs × 3   | ~400 (C)      | 3-4                          
+ 4. SwiGLU NIF        | ~200 (C/CUDA) | 2-3                          
+ 5. Gleam stub wiring | ~50 lines     | 1                            
+ 6. Numerical tests   | ~200 lines    | 2                            
 
 Total: ~1500 lines, 15-20 hours of focused work.
 
@@ -151,8 +154,9 @@ Total: ~1500 lines, 15-20 hours of focused work.
 
 The opaque types lock the user-facing contract. Once the NIFs land, no
 caller has to change a single line — the same `t.prepack_fp8_weight(w)`
+
 + `t.linear_fp8(input, w, None)` calls just start returning real
-results instead of `DimensionError("nif_not_implemented")`.
+  results instead of `DimensionError("nif_not_implemented")`.
 
 Inference frameworks (vivino, transformers-style) can build against
 this surface today and have a runnable test suite for the shape /

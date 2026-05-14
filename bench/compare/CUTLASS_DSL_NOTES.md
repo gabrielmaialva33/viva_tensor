@@ -67,9 +67,10 @@ plan.run(d_a, d_b, d_c)  # microseconds
 
 4. **Wire JIT through NIF**: BEAM side calls `nt_jit_gemm_fp8(M, N, K,
    epilogue, ...)` which:
-   - Looks up cached `.cubin` for the shape.
-   - On miss, spawns Python/CuTeDSL subprocess to generate + cache it.
-   - Loads `.cubin` via CUDA driver API, launches kernel.
+
+- Looks up cached `.cubin` for the shape.
+- On miss, spawns Python/CuTeDSL subprocess to generate + cache it.
+- Loads `.cubin` via CUDA driver API, launches kernel.
 
 5. **Autotune via DSL**: the current `autotune.gleam` sweeps fixed
    config IDs. CuTeDSL lets us sweep over `(tile_shape, stages,
@@ -88,6 +89,7 @@ plan.run(d_a, d_b, d_c)  # microseconds
 ## Decision
 
 Hold for now. Revisit when:
+
 - We need a kernel that's not in our current matrix (e.g. NVFP4 fused
   GEMM, attention with custom mask, MoE expert dispatch).
 - CUTLASS 4 ships a stable Ada SM89 examples directory we can crib from.
