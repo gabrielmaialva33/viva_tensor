@@ -15,9 +15,15 @@ import gleam/io
 import gleam/list
 
 pub fn main() {
-  io.println("\n╔══════════════════════════════════════════════════════════════════╗")
-  io.println("║          viva_tensor RTX 4090 — Tensor Core peak tour            ║")
-  io.println("╚══════════════════════════════════════════════════════════════════╝\n")
+  io.println(
+    "\n╔══════════════════════════════════════════════════════════════════╗",
+  )
+  io.println(
+    "║          viva_tensor RTX 4090 — Tensor Core peak tour            ║",
+  )
+  io.println(
+    "╚══════════════════════════════════════════════════════════════════╝\n",
+  )
 
   let _ = is_loaded()
   io.println("NIF info: " <> backend_info())

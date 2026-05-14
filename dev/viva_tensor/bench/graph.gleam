@@ -24,9 +24,15 @@ import gleam/io
 import gleam/list
 
 pub fn main() {
-  io.println("\n╔══════════════════════════════════════════════════════════════════╗")
-  io.println("║       CUDA Graphs vs loop — kernel launch overhead               ║")
-  io.println("╚══════════════════════════════════════════════════════════════════╝\n")
+  io.println(
+    "\n╔══════════════════════════════════════════════════════════════════╗",
+  )
+  io.println(
+    "║       CUDA Graphs vs loop — kernel launch overhead               ║",
+  )
+  io.println(
+    "╚══════════════════════════════════════════════════════════════════╝\n",
+  )
 
   let _ = is_loaded()
   io.println("NIF info: " <> backend_info())
@@ -36,9 +42,7 @@ pub fn main() {
   let sizes = [1024, 16_384, 262_144, 4_194_304, 67_108_864]
   let iters = 500
 
-  io.println(
-    "iters per row = " <> int.to_string(iters),
-  )
+  io.println("iters per row = " <> int.to_string(iters))
   io.println("")
   io.println(
     "vector size   │  loop µs    graph µs   │ speedup  µs/launch loop  µs/launch graph",

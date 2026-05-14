@@ -16,9 +16,9 @@ import gleam/result
 import gleam_community/maths
 import viva_tensor/core/einsum as einsum_kernel
 import viva_tensor/core/error.{
-  AxisOutOfBounds, BackendMismatch, BroadcastError, DimensionError,
-  IndexOutOfBounds, InvalidShape, NifNotLoaded, OperandShapeMismatch,
-  RankMismatch, ShapeMismatch, SliceArityMismatch,
+  AxisOutOfBounds, BroadcastError, DimensionError, IndexOutOfBounds,
+  InvalidShape, NifNotLoaded, OperandShapeMismatch, RankMismatch, ShapeMismatch,
+  SliceArityMismatch,
 }
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
