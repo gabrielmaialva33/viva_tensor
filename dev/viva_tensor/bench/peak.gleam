@@ -23,8 +23,8 @@ pub fn main() {
   io.println("NIF info: " <> backend_info())
   io.println("")
 
-  let sizes = [2048, 4096]
-  let iters = 30
+  let sizes = [2048, 4096, 8192]
+  let iters = 20
 
   list.each(sizes, fn(n) {
     io.println(

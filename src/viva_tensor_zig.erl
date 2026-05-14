@@ -114,6 +114,8 @@
     cutlass_fp8_f32acc_bench/4,        %% CUTLASS FP8 + FP32 accum bench -> 330 TOPS
     cutlass_fp8_bench/5,               %% Self-contained FP8 bench: returns {ok, ElapsedUs}
     cublaslt_fp16_bench/4,             %% Self-contained cublasLt FP16 + COMPUTE_16F bench
+    cuda_axpy_loop_bench/2,            %% N axpy kernels via N launches
+    cuda_axpy_graph_bench/2,           %% Same N kernels via cudaGraph replay
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
     cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
@@ -555,6 +557,8 @@ cutlass_fp8_f16acc_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded)
 cutlass_fp8_f32acc_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 cutlass_fp8_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).
 cublaslt_fp16_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cuda_axpy_loop_bench(_N, _Iters) -> erlang:nif_error(nif_not_loaded).
+cuda_axpy_graph_bench(_N, _Iters) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).

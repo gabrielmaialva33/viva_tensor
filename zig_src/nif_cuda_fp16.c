@@ -744,6 +744,42 @@ ERL_NIF_TERM cutlass_fp8_f32acc_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_atom(env, "ok");
 }
 
+/** cuda_axpy_loop_bench_nif(N, Iters) -> {ok, ElapsedUs}
+ *  Baseline: N axpy kernel launches via cudaLaunchKernel. */
+ERL_NIF_TERM cuda_axpy_loop_bench_nif(ErlNifEnv *env, int argc,
+                                               const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int n, iters;
+  if (!enif_get_int(env, argv[0], &n) ||
+      !enif_get_int(env, argv[1], &iters))
+    return make_error(env, "invalid_args");
+  int us = cuda_axpy_loop_bench(n, iters);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cuda_axpy_loop_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
+}
+
+/** cuda_axpy_graph_bench_nif(N, Iters) -> {ok, ElapsedUs}
+ *  Same N kernels captured into a cudaGraph + replayed. */
+ERL_NIF_TERM cuda_axpy_graph_bench_nif(ErlNifEnv *env, int argc,
+                                                const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int n, iters;
+  if (!enif_get_int(env, argv[0], &n) ||
+      !enif_get_int(env, argv[1], &iters))
+    return make_error(env, "invalid_args");
+  int us = cuda_axpy_graph_bench(n, iters);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cuda_axpy_graph_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
+}
+
 /** cublaslt_fp16_bench_nif(M, N, K, Iters) -> {ok, ElapsedUs}
  *  Self-contained cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core).
  */
