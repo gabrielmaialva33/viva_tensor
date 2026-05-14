@@ -780,6 +780,27 @@ ERL_NIF_TERM cuda_axpy_graph_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
 }
 
+/** cublaslt_fp16_fused_bench_nif(M, N, K, Iters, Epilogue) -> {ok, ElapsedUs}
+ *  cublasLt FP16 GEMM with epilogue fusion (bias/GELU/bias+GELU). */
+ERL_NIF_TERM cublaslt_fp16_fused_bench_nif(ErlNifEnv *env, int argc,
+                                                    const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int m, n, k, iters, ep;
+  if (!enif_get_int(env, argv[0], &m) ||
+      !enif_get_int(env, argv[1], &n) ||
+      !enif_get_int(env, argv[2], &k) ||
+      !enif_get_int(env, argv[3], &iters) ||
+      !enif_get_int(env, argv[4], &ep))
+    return make_error(env, "invalid_args");
+  int us = cublaslt_fp16_fused_bench(m, n, k, iters, ep);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cublaslt_fp16_fused_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_int(env, us));
+}
+
 /** cublaslt_fp16_bench_nif(M, N, K, Iters) -> {ok, ElapsedUs}
  *  Self-contained cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core).
  */

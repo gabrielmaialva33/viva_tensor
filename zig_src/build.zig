@@ -213,6 +213,8 @@ pub fn build(b: *std.Build) void {
             lib.root_module.addRPath(.{ .cwd_relative = cusparselt_path });
             lib.root_module.linkSystemLibrary("cusparseLt", .{});
             lib.root_module.linkSystemLibrary("cudart", .{});
+            lib.root_module.linkSystemLibrary("cublas", .{});
+            lib.root_module.linkSystemLibrary("cublasLt", .{});
             lib.root_module.linkSystemLibrary("stdc++", .{});
         }
 

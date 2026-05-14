@@ -313,6 +313,7 @@ static ErlNifFunc nif_funcs[] = {
     {"cublaslt_fp16_bench", 4, cublaslt_fp16_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cuda_axpy_loop_bench", 2, cuda_axpy_loop_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cuda_axpy_graph_bench", 2, cuda_axpy_graph_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cublaslt_fp16_fused_bench", 5, cublaslt_fp16_fused_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench", 5, cutlass_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},

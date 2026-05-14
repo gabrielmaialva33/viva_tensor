@@ -45,6 +45,12 @@ pub fn main() {
     run_backend("cublasLt FP16 + FP16 accum (peak  165 TFLOPS)", n, iters, fn() {
       cublaslt_fp16_bench(n, n, n, iters)
     })
+    run_backend("  ↳ + RELU+BIAS fused (free!)                ", n, iters, fn() {
+      cublaslt_fp16_fused_bench(n, n, n, iters, 6)
+    })
+    run_backend("  ↳ + GELU+BIAS fused (~30% SFU cost)        ", n, iters, fn() {
+      cublaslt_fp16_fused_bench(n, n, n, iters, 36)
+    })
     run_backend("CUTLASS FP8 + FP16 accum   (peak  660 TFLOPS)", n, iters, fn() {
       cutlass_fp8_bench(n, n, n, iters, 0)
     })
@@ -68,6 +74,16 @@ pub fn main() {
     }
     run_backend("CUTLASS INT8 2:4 sparse    (peak 1320 TOPS)  ", n, iters, fn() {
       cutlass_int8_sparse_bench_ex(n, n, n, iters, 28, int8_split)
+    })
+
+    // Auto-shape INT8 router: CUTLASS wins ≤4096, cuSPARSELt wins ≥8192.
+    // This row reports the winning backend per shape so callers see the
+    // best-case INT8 throughput viva_tensor can deliver.
+    run_backend("auto INT8 2:4 (CUTLASS≤4k, cuSPARSELt≥8k)  ", n, iters, fn() {
+      case n <= 4096 {
+        True -> cutlass_int8_sparse_bench_ex(n, n, n, iters, 28, int8_split)
+        False -> cusparselt_int8_sparse_bench(n, n, n, iters, 0)
+      }
     })
 
     // cfg=28 (SparseUnivNS_0) wins on 4096² and 8192², cfg=36 wins on 2048².
@@ -162,6 +178,15 @@ fn cublaslt_fp16_bench(
   n: Int,
   k: Int,
   iters: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cublaslt_fp16_fused_bench")
+fn cublaslt_fp16_fused_bench(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  epilogue: Int,
 ) -> Result(Int, String)
 
 @external(erlang, "viva_tensor_zig", "cusparselt_fp8_sparse_bench")
