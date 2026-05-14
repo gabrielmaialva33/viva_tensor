@@ -359,6 +359,9 @@ nif_simd_available() ->
 nif_backend_info() ->
     erlang:nif_error(nif_not_loaded).
 
+nif_cuda_available() ->
+    erlang:nif_error(nif_not_loaded).
+
 cpu_topology() ->
     erlang:nif_error(nif_not_loaded).
 
