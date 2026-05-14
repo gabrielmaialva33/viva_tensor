@@ -57,7 +57,9 @@ jobs:
       - name: Install Zig
         uses: mlugg/setup-zig@v1
         with:
-          version: 0.16.0
+          # 0.16.0 binaries were pulled from ziglang.org mirrors; pin to the
+          # latest stable 0.15.x which still has b.addLibrary used by build.zig.
+          version: 0.15.2
 
       - name: Install Intel MKL
         run: |
