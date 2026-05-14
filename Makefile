@@ -238,6 +238,22 @@ else
 	@$(LOG) "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_zig.so"
 endif
 
+## Build Zig NIF without CUDA (CPU/MKL + SIMD only)
+## Skips libcutlass_*.a, cuSPARSELt, and nif_cuda_* sources.
+## Use in CI or on hosts without CUDA toolkit / cutlass artifacts.
+zig-cpu:
+	@$(LOG) "$(YELLOW)[ZIG]$(NC) Building NIF (CPU-only: MKL + SIMD, no CUDA)..."
+	@$(MKDIR) priv
+	@cd zig_src && zig build -Derl_include=$(ERL_INCLUDE) -Dcuda=false -Doptimize=ReleaseFast
+ifeq ($(OS),Windows_NT)
+	@$(COPY) zig_src$(SEP)zig-out$(SEP)bin$(SEP)viva_tensor_zig.dll priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
+	@$(LOG) "$(GREEN)[OK]$(NC) NIF built (CPU-only): priv/viva_tensor_zig.dll"
+else
+	@$(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.dylib priv$(SEP)viva_tensor_zig.so 2>$(NULL) || \
+	 $(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.so priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
+	@$(LOG) "$(GREEN)[OK]$(NC) NIF built (CPU-only): priv/viva_tensor_zig.so"
+endif
+
 ## Clean Zig NIF artifacts
 zig-clean:
 	@$(LOG) "$(YELLOW)[CLEAN]$(NC) Cleaning NIF..."
