@@ -55,11 +55,17 @@ jobs:
           gleam-version: ${{ env.GLEAM_VERSION }}
 
       - name: Install Zig
-        uses: mlugg/setup-zig@v1
-        with:
-          # 0.16.0 binaries were pulled from ziglang.org mirrors; pin to the
-          # latest stable 0.15.x which still has b.addLibrary used by build.zig.
-          version: 0.15.2
+        # mlugg/setup-zig@v1 currently can't resolve versioned tarballs — it
+        # walks community mirrors that 404 then falls back to ziglang.org/builds
+        # which only hosts master. Skip the action and download the official
+        # 0.15.2 tarball directly. b.addLibrary in build.zig requires ≥ 0.15.
+        run: |
+          set -euo pipefail
+          ZIG_VERSION=0.15.2
+          ZIG_TARBALL="zig-x86_64-linux-${ZIG_VERSION}.tar.xz"
+          curl -fsSLO "https://ziglang.org/download/${ZIG_VERSION}/${ZIG_TARBALL}"
+          tar -xJf "${ZIG_TARBALL}"
+          echo "${GITHUB_WORKSPACE}/zig-x86_64-linux-${ZIG_VERSION}" >> "$GITHUB_PATH"
 
       - name: Install Intel MKL
         run: |
