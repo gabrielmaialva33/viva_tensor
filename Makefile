@@ -75,7 +75,7 @@ endif
 # =============================================================================
 
 .PHONY: all verify build test bench bench-regression bench-rtx metrics demo docs clean clean-workspace fmt fmt-check check help
-.PHONY: zig zig-clean zig-info build-all
+.PHONY: zig zig-cpu zig-cuda cutlass-libs zig-clean zig-info build-all
 .PHONY: bench-int8 bench-nf4 bench-awq bench-flash bench-sparse bench-all
 .PHONY: watch deps publish
 
@@ -223,6 +223,15 @@ endif
 ERL_ROOT := $(shell erl -noshell -eval 'io:format("~s", [code:root_dir()]).' -s init stop 2>$(NULL))
 ERL_INCLUDE := $(shell erl -noshell -eval 'io:format("~s/erts-~s/include", [code:root_dir(), erlang:system_info(version)]).' -s init stop 2>$(NULL))
 
+## CUDA / CUTLASS build settings (used by `cutlass-libs` and `zig-cuda`)
+NVCC ?= nvcc
+CUDA_ARCH ?= sm_89
+CUTLASS_INCLUDE ?= /usr/include
+CUSPARSELT_INCLUDE ?= /opt/cusparselt/include
+CUDA_INCLUDE ?= /usr/local/cuda/include
+NVCC_FLAGS := -O3 -std=c++17 -arch=$(CUDA_ARCH) -Xcompiler -fPIC \
+              -I$(CUTLASS_INCLUDE) -I$(CUSPARSELT_INCLUDE) -I$(CUDA_INCLUDE)
+
 ## Build Zig NIF (cross-platform: Windows/Linux/macOS)
 ## Includes: SIMD kernels, Intel MKL, CUDA, Apple Accelerate
 zig:
@@ -237,6 +246,32 @@ else
 	 $(COPY) zig_src$(SEP)zig-out$(SEP)lib$(SEP)libviva_tensor_zig.so priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
 	@$(LOG) "$(GREEN)[OK]$(NC) NIF built: priv/viva_tensor_zig.so"
 endif
+
+## Compile pre-baked CUTLASS / cuSPARSELt static libs needed by the full Zig NIF.
+## Outputs (in zig_src/):
+##   - libcutlass_fp8.a            (FP8 E4M3 GEMM, FP16 accum — 660 TOPS on Ada)
+##   - libcusparselt_int8.a        (cuSPARSELt INT8 + CUTLASS sparse INT8 GEMM)
+##   - libcutlass_int4_sparse.a    (CUTLASS sparse INT4 GEMM)
+## Requires: nvcc (CUDA toolkit), cutlass headers, cusparseLt headers.
+## Override with: make cutlass-libs CUDA_ARCH=sm_86 CUTLASS_INCLUDE=/path/cutlass/include
+cutlass-libs:
+	@$(LOG) "$(YELLOW)[NVCC]$(NC) Building CUTLASS static libs (arch=$(CUDA_ARCH))..."
+	@command -v $(NVCC) >$(NULL) 2>&1 || { \
+	  $(LOG) "$(RED)[ERR]$(NC) nvcc not found. Install CUDA toolkit or pass NVCC=/path/to/nvcc."; \
+	  exit 1; \
+	}
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_fp8_cutlass.cu          -o cuda_fp8_cutlass.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_sparse_int8_cutlass.cu  -o cuda_sparse_int8_cutlass.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_cusparselt_int8.cu      -o cuda_cusparselt_int8.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_int4_sparse_cutlass.cu  -o cuda_int4_sparse_cutlass.o
+	@cd zig_src && ar rcs libcutlass_fp8.a         cuda_fp8_cutlass.o
+	@cd zig_src && ar rcs libcusparselt_int8.a     cuda_sparse_int8_cutlass.o cuda_cusparselt_int8.o
+	@cd zig_src && ar rcs libcutlass_int4_sparse.a cuda_int4_sparse_cutlass.o
+	@$(LOG) "$(GREEN)[OK]$(NC) Built: zig_src/libcutlass_fp8.a, libcusparselt_int8.a, libcutlass_int4_sparse.a"
+
+## Build full Zig NIF with CUDA (RTX Tensor Cores enabled).
+## Compiles CUTLASS libs first, then links them into the NIF.
+zig-cuda: cutlass-libs zig
 
 ## Build Zig NIF without CUDA (CPU/MKL + SIMD only)
 ## Skips libcutlass_*.a, cuSPARSELt, and nif_cuda_* sources.
@@ -267,6 +302,7 @@ else
 	@$(RMDIR) zig_src$(SEP).zig-cache 2>$(NULL) || true
 	@$(RM) priv$(SEP)viva_tensor_zig.so 2>$(NULL) || true
 	@$(RM) priv$(SEP)viva_tensor_zig.dll 2>$(NULL) || true
+	@$(RM) zig_src$(SEP)*.o zig_src$(SEP)libcutlass_fp8.a zig_src$(SEP)libcusparselt_int8.a zig_src$(SEP)libcutlass_int4_sparse.a 2>$(NULL) || true
 endif
 	@$(LOG) "$(GREEN)[OK]$(NC) NIF cleaned!"
 
