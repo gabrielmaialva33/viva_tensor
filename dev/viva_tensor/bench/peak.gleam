@@ -51,6 +51,9 @@ pub fn main() {
     run_backend("  ↳ + GELU+BIAS fused (~30% SFU cost)        ", n, iters, fn() {
       cublaslt_fp16_fused_bench(n, n, n, iters, 36)
     })
+    run_backend("  ↳ algo-sweep best of 16                    ", n, iters, fn() {
+      cublaslt_fp16_algo_sweep(n, n, n, iters, 16)
+    })
     run_backend("CUTLASS FP8 + FP16 accum   (peak  660 TFLOPS)", n, iters, fn() {
       cutlass_fp8_bench(n, n, n, iters, 0)
     })
@@ -187,6 +190,15 @@ fn cublaslt_fp16_fused_bench(
   k: Int,
   iters: Int,
   epilogue: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cublaslt_fp16_algo_sweep")
+fn cublaslt_fp16_algo_sweep(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  max_algos: Int,
 ) -> Result(Int, String)
 
 @external(erlang, "viva_tensor_zig", "cusparselt_fp8_sparse_bench")

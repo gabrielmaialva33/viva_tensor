@@ -551,6 +551,13 @@ extern int cuda_axpy_graph_bench(int n, int iters);
 extern int cublaslt_fp16_fused_bench(int M, int N, int K, int iters, int epilogue);
 /* NVFP4 emulation: dequantize FP4 packed -> FP16. PoC: bench only. */
 extern int nvfp4_dequant_bench(int n_values, int iters);
+/* Serial vs concurrent FP8 GEMM throughput (multi-stream overlap probe). */
+extern int cutlass_fp8_serial_bench(int M, int N, int K, int iters);
+extern int cutlass_fp8_concurrent_bench(int M, int N, int K, int iters);
+/* cublasLt FP16 algorithm sweep — returns best µs over `max_algos` candidates. */
+extern int cublaslt_fp16_algo_sweep(int M, int N, int K, int iters, int max_algos);
+/* NVFP4 fused dequant + GEMM (single kernel, no FP16 spill to HBM). */
+extern int nvfp4_fused_gemm_bench(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_b(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_c(int M, int N, int K, int iters);
@@ -740,6 +747,10 @@ NIF_FUNC_DECL(cuda_axpy_loop_bench_nif);
 NIF_FUNC_DECL(cuda_axpy_graph_bench_nif);
 NIF_FUNC_DECL(cublaslt_fp16_fused_bench_nif);
 NIF_FUNC_DECL(nvfp4_dequant_bench_nif);
+NIF_FUNC_DECL(cutlass_fp8_serial_bench_nif);
+NIF_FUNC_DECL(cutlass_fp8_concurrent_bench_nif);
+NIF_FUNC_DECL(cublaslt_fp16_algo_sweep_nif);
+NIF_FUNC_DECL(nvfp4_fused_gemm_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_ex_nif);
 NIF_FUNC_DECL(cusparselt_int8_sparse_bench_nif);

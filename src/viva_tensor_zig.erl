@@ -118,6 +118,10 @@
     cuda_axpy_graph_bench/2,           %% Same N kernels via cudaGraph replay
     cublaslt_fp16_fused_bench/5,       %% cublasLt FP16 + epilogue (BIAS/GELU)
     nvfp4_dequant_bench/2,             %% NVFP4 dequant kernel bandwidth meter
+    cutlass_fp8_serial_bench/4,        %% N FP8 GEMMs serial (one stream)
+    cutlass_fp8_concurrent_bench/4,    %% N FP8 GEMMs concurrent (2 streams)
+    cublaslt_fp16_algo_sweep/5,        %% cublasLt FP16 algorithm sweep
+    nvfp4_fused_gemm_bench/4,          %% NVFP4 dequant+GEMM single kernel
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
     cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
@@ -563,6 +567,10 @@ cuda_axpy_loop_bench(_N, _Iters) -> erlang:nif_error(nif_not_loaded).
 cuda_axpy_graph_bench(_N, _Iters) -> erlang:nif_error(nif_not_loaded).
 cublaslt_fp16_fused_bench(_M, _N, _K, _Iters, _Ep) -> erlang:nif_error(nif_not_loaded).
 nvfp4_dequant_bench(_N, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_fp8_serial_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cutlass_fp8_concurrent_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
+cublaslt_fp16_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_not_loaded).
+nvfp4_fused_gemm_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).

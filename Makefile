@@ -268,7 +268,10 @@ cutlass-libs:
 	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_graph_bench.cu         -o cuda_graph_bench.o
 	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_fp16_fused_bench.cu    -o cuda_fp16_fused_bench.o
 	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_nvfp4_emu.cu           -o cuda_nvfp4_emu.o
-	@cd zig_src && ar rcs libcutlass_fp8.a         cuda_fp8_cutlass.o cuda_fp16_bench.o cuda_graph_bench.o cuda_fp16_fused_bench.o cuda_nvfp4_emu.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_multistream_bench.cu   -o cuda_multistream_bench.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_cublaslt_algo_sweep.cu -o cuda_cublaslt_algo_sweep.o
+	@cd zig_src && $(NVCC) $(NVCC_FLAGS) -c cuda_nvfp4_fused.cu         -o cuda_nvfp4_fused.o
+	@cd zig_src && ar rcs libcutlass_fp8.a         cuda_fp8_cutlass.o cuda_fp16_bench.o cuda_graph_bench.o cuda_fp16_fused_bench.o cuda_nvfp4_emu.o cuda_multistream_bench.o cuda_cublaslt_algo_sweep.o cuda_nvfp4_fused.o
 	@cd zig_src && ar rcs libcusparselt_int8.a     cuda_sparse_int8_cutlass.o cuda_cusparselt_int8.o
 	@cd zig_src && ar rcs libcutlass_int4_sparse.a cuda_int4_sparse_cutlass.o
 	@$(LOG) "$(GREEN)[OK]$(NC) Built: zig_src/libcutlass_fp8.a, libcusparselt_int8.a, libcutlass_int4_sparse.a"
