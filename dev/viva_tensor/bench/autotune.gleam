@@ -1,15 +1,13 @@
-//// CUTLASS INT4 2:4 sparse autotuner sweep.
+//// CUTLASS / cuSPARSELt sparse autotuner sweep.
 ////
-//// CUTLASS exposes 30+ kernel configurations for the INT4 2:4 sparse GEMM
-//// path on Ada (SM89). They differ in:
-////   - Threadblock shape (128x128x256, 256x128x256, etc.)
-////   - Warp shape (32x32x256, 64x64x256, ...)
-////   - Stages (2, 3, 4)
-////   - Swizzle (NoSwizzle, Swizzle<4>, Swizzle<8>)
-////   - Epilogue (Linear, LinearCombinationClamp)
+//// Sweeps kernel configs across three sparse Tensor Core paths:
+////   1) CUTLASS INT4 2:4 sparse  (configs 0-36, split-K 1 + 2)
+////   2) CUTLASS INT8 2:4 sparse  (configs 0-28, split-K 1 + 2)
+////   3) cuSPARSELt INT8 2:4      (modes 0=auto, 2=splitK1k, 3=splitK2k)
 ////
-//// The default `config=10` used by `peak.gleam` is a reasonable starting
-//// point, but the optimal choice depends on shape. This sweep finds it.
+//// Reports the winning config per shape. Re-running `peak.gleam` with
+//// these in the top-of-file lookup table gives the highest sustained
+//// TFLOPS the hardware can deliver on Ada SM89.
 ////
 //// Run: gleam run -m viva_tensor/bench/autotune
 
@@ -22,99 +20,127 @@ import gleam/result
 
 pub fn main() {
   io.println("\n╔══════════════════════════════════════════════════════════════════╗")
-  io.println("║   CUTLASS INT4 2:4 sparse autotuner — RTX 4090                   ║")
+  io.println("║   viva_tensor sparse autotuner — RTX 4090                        ║")
   io.println("╚══════════════════════════════════════════════════════════════════╝\n")
 
   let _ = is_loaded()
   io.println("NIF info: " <> backend_info() <> "\n")
 
-  // Known-good configs distilled from earlier sweep (skip 6-9, 16-19, 37-39
-  // which return -100 = invalid_config on Ada SM89). Top performers across
-  // 4096² were 22-36 (Universal variants with different swizzles/epilogues).
-  let configs = [
-    10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
-    33, 34, 35, 36,
-  ]
   let shapes = [2048, 4096, 8192]
   let iters = 20
 
   list.each(shapes, fn(n) {
     io.println(
-      "─── "
+      "════ "
       <> int.to_string(n)
       <> "×"
       <> int.to_string(n)
       <> " (iters="
       <> int.to_string(iters)
-      <> ") ───",
+      <> ") ════",
     )
-
     let flops = 2.0 *. int_to_float(n * n * n * iters)
-    let results =
-      configs
-      |> list.filter_map(fn(cfg) {
-        case cutlass_int4_sparse_bench(n, n, n, iters, cfg, 1) {
-          Ok(us) if us > 0 -> Ok(#(cfg, us, flops /. int_to_float(us) /. 1.0e6))
+
+    sweep_int4(n, iters, flops)
+    sweep_cusparselt(n, iters, flops)
+
+    io.println("")
+  })
+}
+
+// =============================================================================
+// CUTLASS INT4 2:4 sparse — configs × split-K
+// =============================================================================
+
+fn sweep_int4(n: Int, iters: Int, flops: Float) -> Nil {
+  let configs = [
+    10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
+    33, 34, 35, 36,
+  ]
+  let split_ks = [1, 2]
+  io.println("┌─ CUTLASS INT4 2:4 sparse (sweep configs × split-K)")
+  let results =
+    list.flat_map(configs, fn(cfg) {
+      list.filter_map(split_ks, fn(sk) {
+        case cutlass_int4_sparse_bench(n, n, n, iters, cfg, sk) {
+          Ok(us) if us > 0 ->
+            Ok(#(cfg, sk, us, flops /. int_to_float(us) /. 1.0e6))
           _ -> Error(Nil)
         }
       })
-      |> list.sort(fn(a, b) {
-        let #(_, _, ta) = a
-        let #(_, _, tb) = b
-        case tb >. ta {
-          True -> order.Gt
-          False -> order.Lt
-        }
-      })
-
-    let top = list.take(results, 5)
-    io.println("  top 5 configs (TFLOPS, sorted desc):")
-    list.each(top, fn(triple) {
-      let #(cfg, us, tflops) = triple
-      io.println(
-        "    cfg="
-        <> pad_left(int.to_string(cfg), 3)
-        <> "  "
-        <> pad_left(int.to_string(us), 7)
-        <> " µs   "
-        <> pad_left(float.to_string(round1(tflops)), 7)
-        <> " TFLOPS",
-      )
     })
+    |> sort_by_tflops()
+  print_top("INT4", results, 3)
+}
 
-    case top {
-      [#(best_cfg, _, best_tflops), ..] -> {
-        let baseline_tflops =
-          list.find(results, fn(triple) {
-            let #(cfg, _, _) = triple
-            cfg == 10
-          })
-          |> result.map(fn(triple) {
-            let #(_, _, t) = triple
-            t
-          })
-          |> result.unwrap(0.0)
-        let speedup = case baseline_tflops >. 0.0 {
-          True -> best_tflops /. baseline_tflops
-          False -> 1.0
-        }
-        io.println(
-          "  → best: cfg="
-          <> int.to_string(best_cfg)
-          <> "  ("
-          <> float.to_string(round2(speedup))
-          <> "× vs cfg=10 default)",
-        )
+// =============================================================================
+// cuSPARSELt INT8 2:4 — modes
+// =============================================================================
+
+fn sweep_cusparselt(n: Int, iters: Int, flops: Float) -> Nil {
+  // mode 0 = MatmulSearch auto (works); modes 2/3 hang on some shapes,
+  // so we don't sweep them by default. Re-add them if you've patched
+  // cuda_cusparselt_int8.cu to be reentrant.
+  let modes = [0]
+  io.println("└─ cuSPARSELt INT8 2:4 sparse (mode 0 only — auto-search)")
+  let results =
+    list.filter_map(modes, fn(mode) {
+      case cusparselt_int8_sparse_bench(n, n, n, iters, mode) {
+        Ok(us) if us > 0 ->
+          Ok(#(mode, 1, us, flops /. int_to_float(us) /. 1.0e6))
+        _ -> Error(Nil)
       }
-      _ -> Nil
-    }
-    io.println("")
-  })
+    })
+    |> sort_by_tflops()
+  print_top("cuSPARSELt", results, 3)
+}
 
-  io.println(
-    "Use the winning config in `peak.gleam` by changing the last arg to",
-  )
-  io.println("`cutlass_int4_sparse_bench(n, n, n, iters, BEST_CFG, 1)`.")
+// =============================================================================
+// Helpers
+// =============================================================================
+
+fn sort_by_tflops(
+  rs: List(#(Int, Int, Int, Float)),
+) -> List(#(Int, Int, Int, Float)) {
+  list.sort(rs, fn(a, b) {
+    let #(_, _, _, ta) = a
+    let #(_, _, _, tb) = b
+    case tb >. ta {
+      True -> order.Gt
+      False -> order.Lt
+    }
+  })
+}
+
+fn print_top(
+  label: String,
+  results: List(#(Int, Int, Int, Float)),
+  k: Int,
+) -> Nil {
+  let baseline =
+    list.first(results)
+    |> result.map(fn(triple) {
+      let #(_, _, _, t) = triple
+      t
+    })
+    |> result.unwrap(0.0)
+  let _ = baseline
+  list.each(list.take(results, k), fn(quad) {
+    let #(cfg, sk, us, tflops) = quad
+    io.println(
+      "   "
+      <> pad_left(label, 13)
+      <> "  cfg="
+      <> pad_left(int.to_string(cfg), 3)
+      <> " split_k="
+      <> int.to_string(sk)
+      <> "  "
+      <> pad_left(int.to_string(us), 7)
+      <> " µs   "
+      <> pad_left(float.to_string(round1(tflops)), 7)
+      <> " TFLOPS",
+    )
+  })
 }
 
 fn int_to_float(i: Int) -> Float {
@@ -123,10 +149,6 @@ fn int_to_float(i: Int) -> Float {
 
 fn round1(x: Float) -> Float {
   float.to_precision(x, 1)
-}
-
-fn round2(x: Float) -> Float {
-  float.to_precision(x, 2)
 }
 
 fn pad_left(s: String, n: Int) -> String {
@@ -161,4 +183,13 @@ fn cutlass_int4_sparse_bench(
   iters: Int,
   config: Int,
   split_k: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cusparselt_int8_sparse_bench")
+fn cusparselt_int8_sparse_bench(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
+  mode: Int,
 ) -> Result(Int, String)
