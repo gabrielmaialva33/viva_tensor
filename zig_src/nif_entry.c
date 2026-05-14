@@ -111,7 +111,7 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
   if (!HDC_RESOURCE)
     return -1;
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
   /* CudaTensor — persistent FP32 GPU memory */
   CUDA_TENSOR_RESOURCE = enif_open_resource_type(
       env, NULL, "CudaTensor", cuda_tensor_destructor, ERL_NIF_RT_CREATE, NULL);
@@ -196,7 +196,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_matmul_blas", 5, nt_matmul_blas, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_inplace", 6, nt_matmul_inplace, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_cuda", 5, nt_matmul_cuda, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
     {"nt_matmul_cuda_fp32", 5, nt_matmul_cuda_fp32, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_int8_tc", 5, nt_matmul_int8_tc, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_int8_tc_available", 0, nt_int8_tc_available, 0},
@@ -268,7 +268,7 @@ static ErlNifFunc nif_funcs[] = {
     {"hdc_permute", 2, hdc_permute_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"hdc_dim", 1, hdc_dim_nif, 0},
 
-#ifndef _WIN32
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
     /* CudaTensor (FP32 GPU) */
     {"ct_from_list", 2, ct_from_list, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"ct_to_list", 1, ct_to_list, ERL_NIF_DIRTY_JOB_CPU_BOUND},
