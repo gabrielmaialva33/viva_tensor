@@ -744,6 +744,30 @@ ERL_NIF_TERM cutlass_fp8_f32acc_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_atom(env, "ok");
 }
 
+/** cublaslt_fp16_bench_nif(M, N, K, Iters) -> {ok, ElapsedUs}
+ *  Self-contained cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core).
+ */
+ERL_NIF_TERM cublaslt_fp16_bench_nif(ErlNifEnv *env, int argc,
+                                              const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int m, n, k, iters;
+  if (!enif_get_int(env, argv[0], &m) ||
+      !enif_get_int(env, argv[1], &n) ||
+      !enif_get_int(env, argv[2], &k) ||
+      !enif_get_int(env, argv[3], &iters))
+    return make_error(env, "invalid_args");
+
+  int us = cublaslt_fp16_bench(m, n, k, iters);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cublaslt_fp16_bench_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env,
+    enif_make_atom(env, "ok"),
+    enif_make_int(env, us));
+}
+
 /** cutlass_fp8_bench_nif(M, N, K, Iters, Mode) -> {ok, ElapsedUs}
  *  Self-contained FP8 E4M3 GEMM bench with CUDA-event timing.
  *  Mode: 0 = FP16 accum (660 TOPS path), 1 = FP32 accum (330 TOPS path).

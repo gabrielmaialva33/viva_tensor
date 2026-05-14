@@ -36,6 +36,9 @@ pub fn main() {
       <> int.to_string(iters)
       <> ") ──",
     )
+    run_backend("cublasLt FP16 + FP16 accum (peak  165 TFLOPS)", n, iters, fn() {
+      cublaslt_fp16_bench(n, n, n, iters)
+    })
     run_backend("CUTLASS FP8 + FP16 accum   (peak  660 TFLOPS)", n, iters, fn() {
       cutlass_fp8_bench(n, n, n, iters, 0)
     })
@@ -129,6 +132,14 @@ fn cutlass_fp8_bench(
   k: Int,
   iters: Int,
   mode: Int,
+) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "cublaslt_fp16_bench")
+fn cublaslt_fp16_bench(
+  m: Int,
+  n: Int,
+  k: Int,
+  iters: Int,
 ) -> Result(Int, String)
 
 @external(erlang, "viva_tensor_zig", "cusparselt_fp8_sparse_bench")

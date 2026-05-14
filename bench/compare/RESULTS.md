@@ -43,14 +43,12 @@
 
 | Backend | TFLOPS | ms/iter | Path |
 |---|---:|---:|---|
-| PyTorch GPU FP16 | **102.6** | 1.34 | cuBLAS HGEMM Tensor Core |
+| PyTorch GPU FP16 | 102.6 | 1.34 | cuBLAS HGEMM Tensor Core |
 | PyTorch GPU BF16 | **149.3** | 0.92 | cuBLAS Tensor Core |
-| viva_tensor RTX FP16 (matmul_into) | ~50 (1024²), ~16 (4096²) | varies | cuBLAS HGEMM via NIF |
+| **viva_tensor cublasLt FP16 + COMPUTE_16F** | **102.2** | 1.34 | cublasLt FP16 accum |
+| viva_tensor legacy `nt_matmul_fp16_tc` | ~16 | varies | cuBLAS HGEMM + FP32 accum (half-rate nerf) |
 
-> PyTorch wins clearly on FP16. The viva_tensor cuBLAS HGEMM path needs to:
-> - Use cublasLt with TensorOp-friendly layouts
-> - Activate `CUBLAS_COMPUTE_16F` (FP16 accum) instead of FP32 accum
-> - Tune for larger problem sizes — current path is tuned for 1024²
+> **FP16 dense: tied with PyTorch** (102.2 vs 102.6 TFLOPS) after switching the cublasLt path to `CUBLAS_COMPUTE_16F` + FP16 alpha/beta. This unlocks the full-rate 165 TFLOPS Tensor Core MMA instead of the half-rate FP32-accum path. BF16 path still uses FP32 accum on GeForce — adding a `cublaslt_bf16_bench` with COMPUTE_16BF when NVIDIA exposes one would close the BF16 gap too.
 
 ### FP8 E4M3 — GPU
 
