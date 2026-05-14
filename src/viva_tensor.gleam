@@ -47,6 +47,7 @@ import viva_tensor/models/gpt as models_gpt
 import viva_tensor/models/llama as models_llama
 import viva_tensor/models/t5 as models_t5
 import viva_tensor/native/cuda
+import viva_tensor/native/inference as native_inference
 import viva_tensor/native/tflops as tflops_mod
 import viva_tensor/nn/activations as nn_activations
 import viva_tensor/nn/attention as nn_attention
@@ -5220,4 +5221,91 @@ pub fn greedy_generate(
     model_fn,
     stop_token,
   )
+}
+
+// --- Inference API (re-export) ----------------------------------------------
+//
+// High-level inference primitives layered on top of the championship
+// CUTLASS / cuSPARSELt kernels. Prepack a weight once, run linear forward
+// many times. See `src/viva_tensor/native/inference.gleam` for the
+// detailed contract on each function.
+
+/// FP8 E4M3 prepacked weight handle.
+pub type PackedWeightFp8 =
+  native_inference.PackedWeightFp8
+
+/// INT8 2:4 structured-sparse prepacked weight handle.
+pub type PackedWeightInt8Sparse =
+  native_inference.PackedWeightInt8Sparse
+
+/// INT4 2:4 structured-sparse prepacked weight handle.
+pub type PackedWeightInt4Sparse =
+  native_inference.PackedWeightInt4Sparse
+
+/// Quantize + lay out a dense weight for the CUTLASS FP8 GEMM path.
+pub fn prepack_fp8_weight(
+  weight: Tensor,
+) -> Result(PackedWeightFp8, TensorError) {
+  native_inference.prepack_fp8_weight(weight)
+}
+
+/// Quantize + 2:4-prune a weight into the INT8 sparse layout.
+pub fn prepack_int8_sparse_24_weight(
+  weight: Tensor,
+) -> Result(PackedWeightInt8Sparse, TensorError) {
+  native_inference.prepack_int8_sparse_24_weight(weight)
+}
+
+/// Quantize + 2:4-prune a weight into the INT4 sparse layout (the
+/// highest-TFLOPS inference path on Ada SM89).
+pub fn prepack_int4_sparse_24_weight(
+  weight: Tensor,
+) -> Result(PackedWeightInt4Sparse, TensorError) {
+  native_inference.prepack_int4_sparse_24_weight(weight)
+}
+
+/// FP8 linear: `input @ weight + bias?`.
+pub fn linear_fp8(
+  input: Tensor,
+  weight: PackedWeightFp8,
+  bias: option.Option(Tensor),
+) -> Result(Tensor, TensorError) {
+  native_inference.linear_fp8(input, weight, bias)
+}
+
+/// INT4 2:4 sparse linear: `input @ weight + bias?`.
+pub fn linear_int4_sparse(
+  input: Tensor,
+  weight: PackedWeightInt4Sparse,
+  bias: option.Option(Tensor),
+) -> Result(Tensor, TensorError) {
+  native_inference.linear_int4_sparse(input, weight, bias)
+}
+
+/// INT8 2:4 sparse linear with auto-shape backend dispatch.
+pub fn linear_int8_sparse(
+  input: Tensor,
+  weight: PackedWeightInt8Sparse,
+  bias: option.Option(Tensor),
+) -> Result(Tensor, TensorError) {
+  native_inference.linear_int8_sparse(input, weight, bias)
+}
+
+/// FP8 linear fused with bias + GELU activation (cuBLASLt epilogue=36).
+pub fn linear_gelu_fp8(
+  input: Tensor,
+  weight: PackedWeightFp8,
+  bias: option.Option(Tensor),
+) -> Result(Tensor, TensorError) {
+  native_inference.linear_gelu_fp8(input, weight, bias)
+}
+
+/// FP8 SwiGLU block: `silu(input @ gate) * (input @ up)` (+ optional bias).
+pub fn linear_swiglu_fp8(
+  input: Tensor,
+  gate_weight: PackedWeightFp8,
+  up_weight: PackedWeightFp8,
+  bias: option.Option(Tensor),
+) -> Result(Tensor, TensorError) {
+  native_inference.linear_swiglu_fp8(input, gate_weight, up_weight, bias)
 }
