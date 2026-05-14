@@ -95,33 +95,46 @@ def main():
     print(f"CPU threads (torch): {torch.get_num_threads()}")
     print()
 
+    results = []  # (path, n, tflops, ms_per_iter)
+
     for n in SIZES:
         print(f"── {n}×{n} (iters={ITERS}) ──")
 
-        # CPU path
         tflops, ms = bench_numpy(n, np.float32)
         fmt("NumPy CPU FP32 (BLAS auto-detect)", n, tflops, ms)
+        results.append(("numpy_cpu_fp32", n, tflops, ms))
 
         tflops, ms = bench_torch_cpu(n, torch.float32)
         fmt("PyTorch CPU FP32 (oneDNN/MKL)", n, tflops, ms)
+        results.append(("torch_cpu_fp32", n, tflops, ms))
 
-        # GPU paths
         tflops, ms = bench_torch_cuda(n, torch.float32)
         fmt("PyTorch GPU FP32 (cuBLAS)", n, tflops, ms)
+        results.append(("torch_gpu_fp32", n, tflops, ms))
 
         tflops, ms = bench_torch_cuda(n, torch.float16)
         fmt("PyTorch GPU FP16 (cuBLAS Tensor Core)", n, tflops, ms)
+        results.append(("torch_gpu_fp16", n, tflops, ms))
 
         tflops, ms = bench_torch_cuda(n, torch.bfloat16)
         fmt("PyTorch GPU BF16 (cuBLAS Tensor Core)", n, tflops, ms)
+        results.append(("torch_gpu_bf16", n, tflops, ms))
 
         try:
             tflops, ms = bench_torch_cuda_fp8(n)
             fmt("PyTorch GPU FP8 E4M3 (_scaled_mm)", n, tflops, ms)
+            results.append(("torch_gpu_fp8", n, tflops, ms))
         except Exception as exc:
             print(f"  PyTorch GPU FP8 E4M3                          skipped: {exc}")
 
         print()
+
+    # Dump as Erlang term file for the Gleam showdown to consume.
+    out_path = "bench/compare/pytorch_results.term"
+    with open(out_path, "w") as f:
+        for path, n, tflops, ms in results:
+            f.write(f'{{"{path}", {n}, {tflops:.2f}, {ms:.4f}}}.\n')
+    print(f"✓ wrote {len(results)} entries to {out_path}")
 
 
 if __name__ == "__main__":
