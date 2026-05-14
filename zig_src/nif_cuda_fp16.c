@@ -744,6 +744,32 @@ ERL_NIF_TERM cutlass_fp8_f32acc_bench_nif(ErlNifEnv *env, int argc,
   return enif_make_atom(env, "ok");
 }
 
+/** cutlass_fp8_bench_nif(M, N, K, Iters, Mode) -> {ok, ElapsedUs}
+ *  Self-contained FP8 E4M3 GEMM bench with CUDA-event timing.
+ *  Mode: 0 = FP16 accum (660 TOPS path), 1 = FP32 accum (330 TOPS path).
+ */
+ERL_NIF_TERM cutlass_fp8_bench_nif(ErlNifEnv *env, int argc,
+                                            const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  int m, n, k, iters, mode;
+  if (!enif_get_int(env, argv[0], &m) ||
+      !enif_get_int(env, argv[1], &n) ||
+      !enif_get_int(env, argv[2], &k) ||
+      !enif_get_int(env, argv[3], &iters) ||
+      !enif_get_int(env, argv[4], &mode))
+    return make_error(env, "invalid_args");
+
+  int us = cutlass_fp8_bench(m, n, k, iters, mode);
+  if (us < 0) {
+    char errbuf[64];
+    snprintf(errbuf, sizeof(errbuf), "cutlass_fp8_bench_failed_%d", us);
+    return make_error(env, errbuf);
+  }
+  return enif_make_tuple2(env,
+    enif_make_atom(env, "ok"),
+    enif_make_int(env, us));
+}
+
 /** cutlass_int8_sparse_bench_nif(M, N, K, Iters, Config) -> ok
  *  CUTLASS INT8 2:4 Structured Sparse GEMM benchmark.
  *  Config: 0=128x256x128, 1=256x128x128, 2=128x128x256, 3=128x128x128

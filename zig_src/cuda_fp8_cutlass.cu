@@ -188,4 +188,64 @@ int cutlass_fp8_gemm_f32acc(int M, int N, int K,
     return (status == cutlass::Status::kSuccess) ? 0 : -4;
 }
 
+/**
+ * Self-contained FP8 E4M3 GEMM benchmark.
+ * Allocates A[M,K], B[K,N], C[M,N] on the device, runs `iters` GEMMs,
+ * returns total elapsed microseconds (kernel-only via CUDA events).
+ * Mode: 0 = FP16 accumulation (660 TOPS path), 1 = FP32 accumulation (330 TOPS).
+ * Returns negative on error.
+ */
+int cutlass_fp8_bench(int M, int N, int K, int iters, int mode) {
+    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0) return -10;
+
+    size_t bytes_A = (size_t)M * K;  /* FP8 = 1 byte each */
+    size_t bytes_B = (size_t)K * N;
+    size_t bytes_C = (size_t)M * N * 2;  /* FP16 = 2 bytes */
+
+    void *d_A = nullptr, *d_B = nullptr, *d_C = nullptr;
+    if (cudaMalloc(&d_A, bytes_A) != cudaSuccess) return -11;
+    if (cudaMalloc(&d_B, bytes_B) != cudaSuccess) { cudaFree(d_A); return -12; }
+    if (cudaMalloc(&d_C, bytes_C) != cudaSuccess) {
+        cudaFree(d_A); cudaFree(d_B); return -13;
+    }
+
+    /* Fill with non-zero pattern to avoid sparsity tricks skewing the bench. */
+    cudaMemset(d_A, 0x3C, bytes_A);  /* E4M3 ~= 0.5 */
+    cudaMemset(d_B, 0x3C, bytes_B);
+    cudaMemset(d_C, 0, bytes_C);
+
+    /* Warmup */
+    int rc = (mode == 0)
+        ? cutlass_fp8_gemm_f16acc(M, N, K, d_A, d_B, d_C)
+        : cutlass_fp8_gemm_f32acc(M, N, K, d_A, d_B, d_C);
+    if (rc != 0) {
+        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+        return rc - 100;
+    }
+    cudaDeviceSynchronize();
+
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+    cudaEventRecord(start);
+
+    for (int i = 0; i < iters; ++i) {
+        if (mode == 0) cutlass_fp8_gemm_f16acc(M, N, K, d_A, d_B, d_C);
+        else           cutlass_fp8_gemm_f32acc(M, N, K, d_A, d_B, d_C);
+    }
+
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+    float elapsed_ms = 0.0f;
+    cudaEventElapsedTime(&elapsed_ms, start, stop);
+
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+
+    return (int)(elapsed_ms * 1000.0f);  /* microseconds */
+}
+
 }  /* extern "C" */

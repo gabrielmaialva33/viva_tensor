@@ -537,6 +537,10 @@ extern int cutlass_fp8_gemm_f16acc(int M, int N, int K,
                                     const void *d_A, const void *d_B, void *d_C);
 extern int cutlass_fp8_gemm_f32acc(int M, int N, int K,
                                     const void *d_A, const void *d_B, void *d_C);
+/* Self-contained bench: allocs A/B/C device memory, runs `iters` GEMMs, returns
+ * elapsed microseconds (kernel-only via CUDA events). mode: 0 = FP16 accum
+ * (660 TOPS), 1 = FP32 accum (330 TOPS). */
+extern int cutlass_fp8_bench(int M, int N, int K, int iters, int mode);
 extern int cutlass_int8_sparse_gemm_bench(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_b(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_c(int M, int N, int K, int iters);
@@ -720,6 +724,7 @@ NIF_FUNC_DECL(ct16_matmul_batched_bench_nif);
 NIF_FUNC_DECL(fp8_matmul_lt_tn_bench_nif);
 NIF_FUNC_DECL(cutlass_fp8_f16acc_bench_nif);
 NIF_FUNC_DECL(cutlass_fp8_f32acc_bench_nif);
+NIF_FUNC_DECL(cutlass_fp8_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_ex_nif);
 NIF_FUNC_DECL(cusparselt_int8_sparse_bench_nif);

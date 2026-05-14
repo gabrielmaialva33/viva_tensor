@@ -309,6 +309,7 @@ static ErlNifFunc nif_funcs[] = {
     {"fp8_matmul_lt_tn_bench", 4, fp8_matmul_lt_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_fp8_f16acc_bench", 4, cutlass_fp8_f16acc_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_fp8_f32acc_bench", 4, cutlass_fp8_f32acc_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cutlass_fp8_bench", 5, cutlass_fp8_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench", 5, cutlass_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
