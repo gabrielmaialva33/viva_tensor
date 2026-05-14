@@ -20,7 +20,9 @@ pub fn main() {
   io.println(
     "\n╔══════════════════════════════════════════════════════════════════╗",
   )
-  io.println("║       Autotune persistent cache writer                           ║")
+  io.println(
+    "║       Autotune persistent cache writer                           ║",
+  )
   io.println(
     "╚══════════════════════════════════════════════════════════════════╝\n",
   )
@@ -48,23 +50,36 @@ pub fn main() {
     |> list.map(fn(entry) {
       let #(path, n, cfg, sk, us, tflops) = entry
       "{"
-      <> "\"" <> path <> "\""
-      <> ", " <> int.to_string(n)
-      <> ", " <> int.to_string(cfg)
-      <> ", " <> int.to_string(sk)
-      <> ", " <> int.to_string(us)
-      <> ", " <> float.to_string(round1(tflops))
+      <> "\""
+      <> path
+      <> "\""
+      <> ", "
+      <> int.to_string(n)
+      <> ", "
+      <> int.to_string(cfg)
+      <> ", "
+      <> int.to_string(sk)
+      <> ", "
+      <> int.to_string(us)
+      <> ", "
+      <> float.to_string(round1(tflops))
       <> "}.\n"
     })
     |> list.fold("", fn(acc, line) { acc <> line })
 
   case write_file(cache_path, dump) {
-    Ok(_) -> io.println("\n✓ wrote " <> int.to_string(list.length(entries)) <> " entries")
+    Ok(_) ->
+      io.println(
+        "\n✓ wrote " <> int.to_string(list.length(entries)) <> " entries",
+      )
     Error(reason) -> io.println("\n✗ write failed: " <> reason)
   }
 }
 
-fn sweep_int4(n: Int, iters: Int) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
+fn sweep_int4(
+  n: Int,
+  iters: Int,
+) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
   let configs = [
     10, 11, 12, 13, 14, 15, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32,
     33, 34, 35, 36,
@@ -98,7 +113,10 @@ fn sweep_int4(n: Int, iters: Int) -> Result(#(String, Int, Int, Int, Int, Float)
   }
 }
 
-fn sweep_int8(n: Int, iters: Int) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
+fn sweep_int8(
+  n: Int,
+  iters: Int,
+) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
   let configs = [10, 11, 12, 13, 14, 20, 21, 22, 23, 24, 25, 26, 27, 28]
   let split_ks = [1, 2]
   let result =
@@ -134,7 +152,10 @@ fn sweep_int8(n: Int, iters: Int) -> Result(#(String, Int, Int, Int, Int, Float)
   }
 }
 
-fn sweep_fp16(n: Int, iters: Int) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
+fn sweep_fp16(
+  n: Int,
+  iters: Int,
+) -> Result(#(String, Int, Int, Int, Int, Float), Nil) {
   case cublaslt_fp16_algo_sweep(n, n, n, iters, 16) {
     Ok(us) if us > 0 -> {
       let flops = 2.0 *. int.to_float(n * n * n * iters)
