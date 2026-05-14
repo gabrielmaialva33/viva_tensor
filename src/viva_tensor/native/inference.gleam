@@ -14,11 +14,22 @@
 ////
 //// ## Status
 ////
-//// The Gleam-side API is stable; the C/NIF side is still partial. Many
-//// functions in this module currently emit
-//// `Error("nif_not_implemented")` and need the underlying `nt_prepack_*`
-//// / `nt_linear_*` NIFs wired into `zig_src/nif_*.c`. The roadmap is in
-//// `bench/compare/INFERENCE_API_PLAN.md`.
+//// The Gleam-side API is stable. The C/NIF side is delivered by three
+//// agents working in parallel:
+////
+////   - Agent A: `nif_packed_weight.c` + `nt_prepack_fp8` + `nt_linear_fp8`
+////     + `nt_linear_gelu_fp8`.
+////   - Agent B: `nif_packed_weight_sparse.c` +
+////     `nt_prepack_int8_sparse` / `nt_prepack_int4_sparse` +
+////     `nt_linear_int8_sparse` / `nt_linear_int4_sparse`.
+////   - Agent C (this worktree): `nif_linear_swiglu_fp8.cu` +
+////     Gleam wiring + numerical validation suite.
+////
+//// Until all NIFs are linked into `priv/viva_tensor_zig.so`, every function
+//// returns `Error(DimensionError(<reason>))` where the reason describes the
+//// missing piece. The shape-check / feature-mismatch branches run *before*
+//// the NIF call, so contract tests in `test/inference_test.gleam` keep
+//// passing.
 ////
 //// ## Naming convention
 ////
@@ -27,20 +38,27 @@
 //// produce `[B, out_features]`. The prepacked weight conceptually
 //// represents a `[in_features, out_features]` matrix.
 
-import gleam/option.{type Option}
+import gleam/dynamic.{type Dynamic}
+import gleam/option.{type Option, None, Some}
 import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/tensor.{type Tensor}
 
 // =============================================================================
 // Packed-weight handle types (opaque)
 // =============================================================================
+//
+// `handle` is an opaque Erlang resource reference returned by the prepack NIF.
+// It owns device memory and a (FP8 only) per-tensor scale or (sparse) per-
+// channel scales. Gleam can pass it back into linear_* NIFs but cannot
+// introspect it; the metadata (`in_features`, `out_features`, dequant scales)
+// is captured in the record so callers can validate shapes without round-
+// tripping through the NIF.
 
 /// FP8 E4M3 prepacked weight: row-major `[in_features, out_features]` on
 /// device memory, with optional per-tensor FP32 dequant scale.
 pub opaque type PackedWeightFp8 {
   PackedWeightFp8(
-    handle: Int,
-    /// Stored just for introspection / shape validation.
+    handle: Dynamic,
     in_features: Int,
     out_features: Int,
     scale: Float,
@@ -51,7 +69,7 @@ pub opaque type PackedWeightFp8 {
 /// backend chosen automatically based on shape).
 pub opaque type PackedWeightInt8Sparse {
   PackedWeightInt8Sparse(
-    handle: Int,
+    handle: Dynamic,
     in_features: Int,
     out_features: Int,
     /// Per-output-channel scales for dequant.
@@ -62,7 +80,7 @@ pub opaque type PackedWeightInt8Sparse {
 /// INT4 2:4 structured-sparse prepacked weight (CUTLASS backend).
 pub opaque type PackedWeightInt4Sparse {
   PackedWeightInt4Sparse(
-    handle: Int,
+    handle: Dynamic,
     in_features: Int,
     out_features: Int,
     channel_scales: List(Float),
@@ -84,12 +102,17 @@ pub fn prepack_fp8_weight(
 ) -> Result(PackedWeightFp8, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      // TODO: NIF call into `nt_prepack_fp8(weight_ref, in_f, out_f)`
-      // which: (1) finds absmax over the full tensor, (2) divides by
-      // 448.0 (E4M3 max), (3) quantizes each element to FP8, (4) uploads
-      // to device, (5) returns a resource handle.
-      Error(DimensionError("prepack_fp8_weight: NIF not yet wired"))
-      |> with_shape(in_f, out_f)
+      case nt_prepack_fp8(tensor.to_list(weight), [in_f, out_f]) {
+        Ok(#(handle, scale)) ->
+          Ok(PackedWeightFp8(
+            handle: handle,
+            in_features: in_f,
+            out_features: out_f,
+            scale: scale,
+          ))
+        Error(reason) ->
+          Error(DimensionError("prepack_fp8_weight failed: " <> reason))
+      }
     }
     other ->
       Error(DimensionError(
@@ -105,15 +128,19 @@ pub fn prepack_int8_sparse_24_weight(
 ) -> Result(PackedWeightInt8Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      // TODO: NIF call into `nt_prepack_int8_sparse(weight_ref, in_f,
-      // out_f)`. The NIF will:
-      //   1. Compute per-output-channel absmax → per-channel scale
-      //   2. Quantize element-wise to INT8 with channel scale
-      //   3. Apply 2:4 magnitude pruning per row of 4
-      //   4. Reorder into the cuSPARSELt / CUTLASS sparse layout
-      //      (compressed indices + metadata `E`).
-      let _ = #(in_f, out_f)
-      Error(DimensionError("prepack_int8_sparse_24_weight: NIF not yet wired"))
+      case nt_prepack_int8_sparse(tensor.to_list(weight), [in_f, out_f]) {
+        Ok(#(handle, scales)) ->
+          Ok(PackedWeightInt8Sparse(
+            handle: handle,
+            in_features: in_f,
+            out_features: out_f,
+            channel_scales: scales,
+          ))
+        Error(reason) ->
+          Error(DimensionError(
+            "prepack_int8_sparse_24_weight failed: " <> reason,
+          ))
+      }
     }
     other ->
       Error(DimensionError(
@@ -131,8 +158,19 @@ pub fn prepack_int4_sparse_24_weight(
 ) -> Result(PackedWeightInt4Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      let _ = #(in_f, out_f)
-      Error(DimensionError("prepack_int4_sparse_24_weight: NIF not yet wired"))
+      case nt_prepack_int4_sparse(tensor.to_list(weight), [in_f, out_f]) {
+        Ok(#(handle, scales)) ->
+          Ok(PackedWeightInt4Sparse(
+            handle: handle,
+            in_features: in_f,
+            out_features: out_f,
+            channel_scales: scales,
+          ))
+        Error(reason) ->
+          Error(DimensionError(
+            "prepack_int4_sparse_24_weight failed: " <> reason,
+          ))
+      }
     }
     other ->
       Error(DimensionError(
@@ -155,9 +193,21 @@ pub fn linear_fp8(
   bias: Option(Tensor),
 ) -> Result(Tensor, TensorError) {
   case tensor.shape(input) {
-    [_, in_f] if in_f == weight.in_features -> {
-      let _ = bias
-      Error(DimensionError("linear_fp8: NIF not yet wired"))
+    [batch, in_f] if in_f == weight.in_features -> {
+      let bias_data = optional_tensor_to_bias_arg(bias)
+      // epilogue code 1 = DEFAULT (no activation)
+      case
+        nt_linear_fp8(
+          tensor.to_list(input),
+          [batch, in_f],
+          weight.handle,
+          bias_data,
+          1,
+        )
+      {
+        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        Error(reason) -> Error(DimensionError("linear_fp8 failed: " <> reason))
+      }
     }
     other ->
       Error(DimensionError(
@@ -179,9 +229,20 @@ pub fn linear_int4_sparse(
   bias: Option(Tensor),
 ) -> Result(Tensor, TensorError) {
   case tensor.shape(input) {
-    [_, in_f] if in_f == weight.in_features -> {
-      let _ = bias
-      Error(DimensionError("linear_int4_sparse: NIF not yet wired"))
+    [batch, in_f] if in_f == weight.in_features -> {
+      let bias_data = optional_tensor_to_bias_arg(bias)
+      case
+        nt_linear_int4_sparse(
+          tensor.to_list(input),
+          [batch, in_f],
+          weight.handle,
+          bias_data,
+        )
+      {
+        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        Error(reason) ->
+          Error(DimensionError("linear_int4_sparse failed: " <> reason))
+      }
     }
     other ->
       Error(DimensionError(
@@ -203,9 +264,20 @@ pub fn linear_int8_sparse(
   bias: Option(Tensor),
 ) -> Result(Tensor, TensorError) {
   case tensor.shape(input) {
-    [_, in_f] if in_f == weight.in_features -> {
-      let _ = bias
-      Error(DimensionError("linear_int8_sparse: NIF not yet wired"))
+    [batch, in_f] if in_f == weight.in_features -> {
+      let bias_data = optional_tensor_to_bias_arg(bias)
+      case
+        nt_linear_int8_sparse(
+          tensor.to_list(input),
+          [batch, in_f],
+          weight.handle,
+          bias_data,
+        )
+      {
+        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        Error(reason) ->
+          Error(DimensionError("linear_int8_sparse failed: " <> reason))
+      }
     }
     other ->
       Error(DimensionError(
@@ -228,9 +300,22 @@ pub fn linear_gelu_fp8(
   bias: Option(Tensor),
 ) -> Result(Tensor, TensorError) {
   case tensor.shape(input) {
-    [_, in_f] if in_f == weight.in_features -> {
-      let _ = bias
-      Error(DimensionError("linear_gelu_fp8: NIF not yet wired"))
+    [batch, in_f] if in_f == weight.in_features -> {
+      let bias_data = optional_tensor_to_bias_arg(bias)
+      case
+        nt_linear_gelu_fp8(
+          tensor.to_list(input),
+          [batch, in_f],
+          weight.handle,
+          bias_data,
+          // epilogue code: BIAS+GELU
+          36,
+        )
+      {
+        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        Error(reason) ->
+          Error(DimensionError("linear_gelu_fp8 failed: " <> reason))
+      }
     }
     other ->
       Error(DimensionError(
@@ -261,9 +346,22 @@ pub fn linear_swiglu_fp8(
     gate_weight.in_features == up_weight.in_features,
     gate_weight.out_features == up_weight.out_features
   {
-    [_, in_f], True, True if in_f == gate_weight.in_features -> {
-      let _ = bias
-      Error(DimensionError("linear_swiglu_fp8: NIF not yet wired"))
+    [batch, in_f], True, True if in_f == gate_weight.in_features -> {
+      let bias_data = optional_tensor_to_bias_arg(bias)
+      case
+        nt_linear_swiglu_fp8(
+          tensor.to_list(input),
+          [batch, in_f],
+          gate_weight.handle,
+          up_weight.handle,
+          bias_data,
+        )
+      {
+        Ok(out_data) ->
+          Ok(make_2d_tensor(out_data, batch, gate_weight.out_features))
+        Error(reason) ->
+          Error(DimensionError("linear_swiglu_fp8 failed: " <> reason))
+      }
     }
     _, False, _ ->
       Error(DimensionError("linear_swiglu_fp8: gate/up in_features mismatch"))
@@ -299,13 +397,31 @@ pub fn int4_features(w: PackedWeightInt4Sparse) -> #(Int, Int) {
 // Private helpers
 // =============================================================================
 
-fn with_shape(
-  res: Result(PackedWeightFp8, TensorError),
-  in_f: Int,
-  out_f: Int,
-) -> Result(PackedWeightFp8, TensorError) {
-  let _ = #(in_f, out_f)
-  res
+/// Internal sum type for bias argument: either a list of floats or absent.
+///
+/// Encoded as a Gleam custom type so the NIF receives a canonical tagged
+/// tuple (`{bias_list, [...]}`) or atom (`bias_nil`) instead of Option's
+/// `none` constructor. Agents A and B's NIFs pattern-match on this shape.
+type BiasArg {
+  BiasList(List(Float))
+  BiasNil
+}
+
+fn optional_tensor_to_bias_arg(bias: Option(Tensor)) -> BiasArg {
+  case bias {
+    Some(b) -> BiasList(tensor.to_list(b))
+    None -> BiasNil
+  }
+}
+
+fn make_2d_tensor(data: List(Float), rows: Int, cols: Int) -> Tensor {
+  // The NIF returns a flat row-major list of `rows * cols` floats. Reshape
+  // never fails when sizes match; fall back to flat if for some reason the
+  // NIF returned the wrong length (defensive, should never happen).
+  case tensor.reshape(tensor.from_list(data), [rows, cols]) {
+    Ok(t) -> t
+    Error(_) -> tensor.from_list(data)
+  }
 }
 
 @external(erlang, "erlang", "integer_to_binary")
@@ -322,3 +438,80 @@ fn join_int_list(xs: List(Int)) -> String {
     [x, ..rest] -> int_to_string(x) <> ", " <> join_int_list(rest)
   }
 }
+
+// =============================================================================
+// NIF bindings
+// =============================================================================
+//
+// Each NIF is delivered by another agent or this worktree. The contract:
+//
+//   - prepack_fp8       : `{ok, {Resource, Scale}}` | `{error, String}`
+//   - prepack_int*      : `{ok, {Resource, [ChannelScale]}}` | `{error, String}`
+//   - linear_*          : `{ok, [Float]}` (FP32 host list, flat row-major
+//                         `[batch * out_features]`) | `{error, String}`
+//   - linear_swiglu_fp8 : same return shape as linear_*
+//
+// `BiasArg` is encoded as either `{bias_list, List}` or atom `bias_nil`.
+// Agent A's NIF pattern-matches on the first element of the tuple, or on
+// the atom directly, to decide whether to add bias.
+
+@external(erlang, "viva_tensor_zig", "nt_prepack_fp8")
+fn nt_prepack_fp8(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(#(Dynamic, Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_prepack_int8_sparse")
+fn nt_prepack_int8_sparse(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(#(Dynamic, List(Float)), String)
+
+@external(erlang, "viva_tensor_zig", "nt_prepack_int4_sparse")
+fn nt_prepack_int4_sparse(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(#(Dynamic, List(Float)), String)
+
+@external(erlang, "viva_tensor_zig", "nt_linear_fp8")
+fn nt_linear_fp8(
+  input_data: List(Float),
+  input_shape: List(Int),
+  weight: Dynamic,
+  bias: BiasArg,
+  epilogue: Int,
+) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_linear_gelu_fp8")
+fn nt_linear_gelu_fp8(
+  input_data: List(Float),
+  input_shape: List(Int),
+  weight: Dynamic,
+  bias: BiasArg,
+  epilogue: Int,
+) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_linear_int8_sparse")
+fn nt_linear_int8_sparse(
+  input_data: List(Float),
+  input_shape: List(Int),
+  weight: Dynamic,
+  bias: BiasArg,
+) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_linear_int4_sparse")
+fn nt_linear_int4_sparse(
+  input_data: List(Float),
+  input_shape: List(Int),
+  weight: Dynamic,
+  bias: BiasArg,
+) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "nt_linear_swiglu_fp8")
+fn nt_linear_swiglu_fp8(
+  input_data: List(Float),
+  input_shape: List(Int),
+  gate_weight: Dynamic,
+  up_weight: Dynamic,
+  bias: BiasArg,
+) -> Result(List(Float), String)

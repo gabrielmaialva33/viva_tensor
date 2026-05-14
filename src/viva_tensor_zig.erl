@@ -123,6 +123,15 @@
     cublaslt_fp16_algo_sweep/5,        %% cublasLt FP16 algorithm sweep
     nvfp4_fused_gemm_bench/4,          %% NVFP4 dequant+GEMM single kernel
     cublaslt_fp8_algo_sweep/5,         %% cublasLt FP8 algorithm sweep
+    %% Inference API — PackedWeight resource + prepack/linear NIFs
+    nt_prepack_fp8/2,
+    nt_linear_fp8/4,
+    nt_linear_gelu_fp8/4,
+    nt_prepack_int8_sparse/2,
+    nt_prepack_int4_sparse/2,
+    nt_linear_int8_sparse/3,
+    nt_linear_int4_sparse/3,
+    nt_linear_swiglu_fp8/5,
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
     cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
@@ -573,6 +582,16 @@ cutlass_fp8_concurrent_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loa
 cublaslt_fp16_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_not_loaded).
 nvfp4_fused_gemm_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_not_loaded).
+
+%% Inference API — PackedWeight + prepack + linear forward + SwiGLU
+nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
+nt_linear_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
+nt_linear_gelu_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
+nt_prepack_int8_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
+nt_prepack_int4_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
+nt_linear_int8_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
+nt_linear_int4_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
+nt_linear_swiglu_fp8(_InputData, _InputShape, _GateW, _UpW, _Bias) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).

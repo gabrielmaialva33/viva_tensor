@@ -23,6 +23,10 @@
 #include <math.h>
 #include <stdint.h>
 #include <stdlib.h>
+
+#ifdef __cplusplus
+extern "C" {
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -754,6 +758,16 @@ NIF_FUNC_DECL(cutlass_fp8_concurrent_bench_nif);
 NIF_FUNC_DECL(cublaslt_fp16_algo_sweep_nif);
 NIF_FUNC_DECL(nvfp4_fused_gemm_bench_nif);
 NIF_FUNC_DECL(cublaslt_fp8_algo_sweep_nif);
+
+/* Inference API — PackedWeight + FP8 / INT8 / INT4 prepack + linear / SwiGLU. */
+NIF_FUNC_DECL(nt_prepack_fp8);
+NIF_FUNC_DECL(nt_linear_fp8);
+NIF_FUNC_DECL(nt_linear_gelu_fp8);
+NIF_FUNC_DECL(nt_prepack_int8_sparse);
+NIF_FUNC_DECL(nt_prepack_int4_sparse);
+NIF_FUNC_DECL(nt_linear_int8_sparse);
+NIF_FUNC_DECL(nt_linear_int4_sparse);
+NIF_FUNC_DECL(nt_linear_swiglu_fp8_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_ex_nif);
 NIF_FUNC_DECL(cusparselt_int8_sparse_bench_nif);
@@ -817,5 +831,9 @@ NIF_FUNC_DECL(qint8_shape);
 NIF_FUNC_DECL(qnf4_info);
 
 #undef NIF_FUNC_DECL
+
+#ifdef __cplusplus
+}
+#endif
 
 #endif /* VIVA_NIF_H */

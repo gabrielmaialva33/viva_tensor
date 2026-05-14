@@ -15,6 +15,7 @@
  */
 
 #include "viva_nif.h"
+#include "nif_packed_weight.h"
 
 /* =========================================================================
  * NIF Init
@@ -134,6 +135,12 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
   SPARSE_TENSOR_RESOURCE = enif_open_resource_type(
       env, NULL, "SparseTensor", sparse_tensor_destructor, ERL_NIF_RT_CREATE, NULL);
   if (!SPARSE_TENSOR_RESOURCE)
+    return -1;
+
+  /* PackedWeight — FP8/INT8/INT4 prepacked weights for the stable
+   * inference API. Shared across nif_prepack_fp8/_int_sparse and
+   * nif_linear_fp8/_int_sparse/_swiglu_fp8. */
+  if (register_packed_weight_resource(env) != 0)
     return -1;
 #endif
 
@@ -324,6 +331,15 @@ static ErlNifFunc nif_funcs[] = {
     {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp8_sparse_bench", 4, cusparselt_fp8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    /* Inference API — PackedWeight + prepack + linear forward + SwiGLU */
+    {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_linear_fp8", 4, nt_linear_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_prepack_int8_sparse", 2, nt_prepack_int8_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_prepack_int4_sparse", 2, nt_prepack_int4_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_linear_int8_sparse", 3, nt_linear_int8_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_linear_int4_sparse", 3, nt_linear_int4_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},

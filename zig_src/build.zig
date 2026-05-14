@@ -108,6 +108,33 @@ pub fn build(b: *std.Build) void {
             .file = b.path("nif_sparse.c"),
             .flags = &.{},
         });
+
+        // Inference NIFs: PackedWeight resource + FP8 prepack/linear paths.
+        // Backed by CUTLASS for the fast path and cublasLt for fused
+        // bias / GELU / SwiGLU epilogues. Agents B/C add INT8/INT4
+        // sparse + SwiGLU files alongside these.
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_packed_weight.c"),
+            .flags = &.{},
+        });
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_prepack_fp8.c"),
+            .flags = &.{},
+        });
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_linear_fp8.c"),
+            .flags = &.{},
+        });
+        // Agent B: INT8/INT4 2:4 sparse inference NIFs. Need -std=c11 for
+        // alignas() in <cusparseLt.h>.
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_prepack_int_sparse.c"),
+            .flags = &.{"-std=c11"},
+        });
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_linear_int_sparse.c"),
+            .flags = &.{"-std=c11"},
+        });
     }
 
     // Quantization NIFs (INT8 + NF4 fused matmul)
@@ -211,6 +238,9 @@ pub fn build(b: *std.Build) void {
             lib.root_module.addRPath(.{ .cwd_relative = cuda_path });
             lib.root_module.addLibraryPath(.{ .cwd_relative = cusparselt_path });
             lib.root_module.addRPath(.{ .cwd_relative = cusparselt_path });
+            // cusparseLt.h + cuda_runtime.h for nif_prepack_int_sparse.c + nif_linear_int_sparse.c
+            lib.root_module.addIncludePath(.{ .cwd_relative = "/opt/cusparselt/include" });
+            lib.root_module.addIncludePath(.{ .cwd_relative = "/usr/local/cuda/include" });
             lib.root_module.linkSystemLibrary("cusparseLt", .{});
             lib.root_module.linkSystemLibrary("cudart", .{});
             lib.root_module.linkSystemLibrary("cublas", .{});
