@@ -1,1 +1,43 @@
-{"op":"sub","case":"vec4","inputs":[{"shape":[4],"data":[1.0,2.0,3.0,4.0]},{"shape":[4],"data":[0.5,1.5,2.5,3.5]}],"output":{"shape":[4],"data":[0.5,0.5,0.5,0.5]},"tolerance":{"rtol":1e-07,"atol":1e-09}}
+{
+  "op": "sub",
+  "case": "vec4",
+  "inputs": [
+    {
+      "shape": [
+        4
+      ],
+      "data": [
+        1.0,
+        2.0,
+        3.0,
+        4.0
+      ]
+    },
+    {
+      "shape": [
+        4
+      ],
+      "data": [
+        0.5,
+        1.5,
+        2.5,
+        3.5
+      ]
+    }
+  ],
+  "output": {
+    "shape": [
+      4
+    ],
+    "data": [
+      0.5,
+      0.5,
+      0.5,
+      0.5
+    ]
+  },
+  "tolerance": {
+    "rtol": 1e-07,
+    "atol": 1e-09
+  }
+}

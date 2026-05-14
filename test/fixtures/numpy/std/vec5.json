@@ -1,1 +1,28 @@
-{"op":"std","case":"vec5","inputs":[{"shape":[5],"data":[1.0,2.0,3.0,4.0,5.0]}],"output":{"shape":[],"data":[1.4142135623730951]},"tolerance":{"rtol":1e-07,"atol":1e-09}}
+{
+  "op": "std",
+  "case": "vec5",
+  "inputs": [
+    {
+      "shape": [
+        5
+      ],
+      "data": [
+        1.0,
+        2.0,
+        3.0,
+        4.0,
+        5.0
+      ]
+    }
+  ],
+  "output": {
+    "shape": [],
+    "data": [
+      1.4142135623730951
+    ]
+  },
+  "tolerance": {
+    "rtol": 1e-07,
+    "atol": 1e-09
+  }
+}
