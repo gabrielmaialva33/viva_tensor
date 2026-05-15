@@ -32,6 +32,13 @@
 #include <stdalign.h>
 #include "viva_nif.h"
 
+/* Sparse layout info exposed by zig_src/cuda_int_sparse_run.cu — used to
+ * size the ElementE metadata buffer correctly regardless of CUTLASS
+ * specialisation (Sm80+/Sm89 INT8 m16n8k32 → uint32 covering 16 K,
+ * INT4 m16n8k128 → uint32 covering 32 K). */
+extern void cutlass_int8_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e);
+extern void cutlass_int4_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e);
+
 #ifndef _WIN32
 #include <cuda_runtime.h>
 #include <cusparseLt.h>
@@ -267,14 +274,21 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
     if (cerr != cudaSuccess) goto cuda_fail;
 
     /* CUTLASS metadata "E" buffer.
-     * For INT8 sparse: ElementE is uint16, 1 element per 16 K values.
-     * Buffer shape: [out_features, in_features / 16].
-     * We don't fill it here (the cuSPARSELt path computes its own); leaving
-     * it allocated and zeroed is safe for the dense-compressed fallback
-     * path. A future revision can encode the 2-bit indices explicitly. */
-    size_t metaK_int8 = (size_t)in_features / 16;  /* kSparse=2, elemsPerE=8 */
+     * For CUTLASS INT8 sparse (m16n8k32 OpClassTensorOp on Sm80+):
+     *   kSparse=2  kElementsPerElementE=16  sizeof(ElementE)=4 (uint32_t)
+     * Verified via cutlass_int8_sparse_run_info() at runtime.
+     * Buffer shape: [out_features, in_features / (kSparse*kElemsPerE)] = [O, K/32].
+     * We zero-fill: cuSPARSELt path computes its own metadata, CUTLASS
+     * fallback path is gated on non-zero metadata (a future encoder fills
+     * the 2-bit keep indices; for now zero means "all positions 0,1 kept"
+     * which is harmless for sanity tests but wrong for real inference). */
+    int int8_sparse, int8_elems_per_e, int8_sizeof_e;
+    cutlass_int8_sparse_run_info(&int8_sparse, &int8_elems_per_e, &int8_sizeof_e);
+    size_t metaK_int8 =
+        (size_t)in_features / (size_t)(int8_sparse * int8_elems_per_e);
     if (metaK_int8 > 0) {
-        size_t metadata_bytes = (size_t)out_features * metaK_int8 * sizeof(uint16_t);
+        size_t metadata_bytes =
+            (size_t)out_features * metaK_int8 * (size_t)int8_sizeof_e;
         cerr = cudaMalloc(&pw->d_metadata, metadata_bytes);
         if (cerr != cudaSuccess) goto cuda_fail;
         cerr = cudaMemset(pw->d_metadata, 0, metadata_bytes);
@@ -570,10 +584,25 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     }
     memset(h_packed, 0, packed_total);
 
-    /* Metadata: 1 byte (uint8) per 8 K positions.
-     * 8 K positions = 2 groups of 4, each group contributing 2 keeps × 2 bits
-     * = 4 bits per group. Two groups → 8 bits = 1 byte. */
-    size_t meta_bytes_per_row = (size_t)in_features / 8;
+    /* Metadata encoding for CUTLASS INT4 2:4 sparse (m16n8k128, Sm80+):
+     *   kSparse=2  kElementsPerElementE=32  sizeof(ElementE)=4 (uint32_t).
+     * Verified at runtime via cutlass_int4_sparse_run_info().
+     *
+     * Layout: one uint32 ElementE covers 32 K positions = 8 groups of 4.
+     * Each group contributes 4 bits (2 keep indices × 2 bits each).
+     *   bits[0..3]   = group 0 (k=0..3):   (keep0 | keep1 << 2)
+     *   bits[4..7]   = group 1 (k=4..7)
+     *   ...
+     *   bits[28..31] = group 7 (k=28..31)
+     * The 8 groups pack into a single uint32 little-endian, which is also
+     * exactly 4 bytes when written via a uint8_t* (4 bytes per uint32, 8 K
+     * positions per byte, 2 groups per byte). We accept either pointer
+     * width as long as the buffer alignment matches sizeof(ElementE). */
+    int int4_sparse, int4_elems_per_e, int4_sizeof_e;
+    cutlass_int4_sparse_run_info(&int4_sparse, &int4_elems_per_e, &int4_sizeof_e);
+    size_t meta_units_per_row =
+        (size_t)in_features / (size_t)(int4_sparse * int4_elems_per_e);
+    size_t meta_bytes_per_row = meta_units_per_row * (size_t)int4_sizeof_e;
     size_t meta_total = (size_t)out_features * meta_bytes_per_row;
     uint8_t* h_meta = (uint8_t*)malloc(meta_total);
     if (!h_meta) {
@@ -589,7 +618,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
 
         /* Walk K in groups of 4. For each group, locate the two non-zero
          * positions, pack the two int4 values into one byte, and write 4
-         * bits of metadata into the byte for this group of 4. */
+         * bits of metadata into the uint32 word that covers this group. */
         size_t out_nibble_idx = 0;
         for (int k = 0; k < in_features; k += 4) {
             int keep_ix[2] = {-1, -1};
@@ -600,6 +629,10 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
             /* All-zero row fallback: keep positions 0 and 2 with value 0. */
             if (p == 0) { keep_ix[0] = 0; keep_ix[1] = 2; }
             else if (p == 1) { keep_ix[1] = (keep_ix[0] == 0) ? 2 : 0; }
+            /* Force sorted (CUTLASS expects keep0 < keep1). */
+            if (keep_ix[0] > keep_ix[1]) {
+                int tmp = keep_ix[0]; keep_ix[0] = keep_ix[1]; keep_ix[1] = tmp;
+            }
 
             int8_t v0 = qrow[k + keep_ix[0]];
             int8_t v1 = qrow[k + keep_ix[1]];
@@ -611,11 +644,21 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
             uint8_t hi = ((uint8_t)v1 & 0x0F) << 4;
             prow[out_nibble_idx++] = (int8_t)(lo | hi);
 
-            /* Metadata: 2 bits per keep, 4 bits per group of 4, 2 groups per byte. */
-            int group_in_byte = (k / 4) & 1;          /* 0 or 1 within the byte */
-            size_t byte_idx = (size_t)k / 8;
-            uint8_t bits = (uint8_t)((keep_ix[0] & 0x3) | ((keep_ix[1] & 0x3) << 2));
-            mrow[byte_idx] |= (uint8_t)(bits << (group_in_byte * 4));
+            /* Metadata into the uint32 that covers this group of 4.
+             *   group_idx_in_word = (k / 4) & 7   (8 groups per uint32)
+             *   word_idx          = k / 32
+             * Each group occupies 4 bits at offset (group_idx_in_word * 4)
+             * within the uint32, little-endian. */
+            int group_idx_in_word = (k / 4) & 7;
+            size_t word_idx = (size_t)k / 32;
+            uint32_t bits =
+                ((uint32_t)keep_ix[0] & 0x3u) |
+                (((uint32_t)keep_ix[1] & 0x3u) << 2);
+            /* Reinterpret mrow as uint32 little-endian — safe because
+             * malloc returns at least 8-byte aligned memory on x86-64 and
+             * the buffer is uint32-stride from the start. */
+            uint32_t* mrow_u32 = (uint32_t*)(void*)mrow;
+            mrow_u32[word_idx] |= bits << (group_idx_in_word * 4);
         }
     }
 
