@@ -1,61 +1,17 @@
-<div align="center">
+# viva_tensor
 
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:8B0000,100:006400&height=180&section=header&text=viva_tensor&fontSize=60&fontColor=fff&animation=twinkling&fontAlignY=35&desc=High-Performance%20Tensors%20for%20Gleam&descSize=20&descAlignY=55" width="100%"/>
+[![Hex](https://img.shields.io/hexpm/v/viva_tensor.svg)](https://hex.pm/packages/viva_tensor)
+[![HexDocs](https://img.shields.io/badge/hex-docs-blueviolet)](https://hexdocs.pm/viva_tensor)
+[![Tests](https://img.shields.io/badge/tests-783%20passing-2E8B57)](./test)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
-[![Gleam](https://img.shields.io/badge/Gleam-FFAFF3?style=for-the-badge&logo=gleam&logoColor=000)](https://gleam.run/)
-[![Tests](https://img.shields.io/badge/Tests-222%20passed-2E8B57?style=for-the-badge)](./test)
-[![License](https://img.shields.io/badge/MIT-2E8B57?style=for-the-badge)](./LICENSE)
+A tensor library for Gleam on the BEAM. Provides a pure-Gleam tensor API
+with zero-copy views, automatic broadcasting, and an optional native
+acceleration layer that delegates to Intel MKL, cuBLAS / cuBLASLt,
+cuSPARSELt, and CUTLASS when available.
 
-**The fastest tensor library on the BEAM**
-
-</div>
-
----
-
-## 📘 Documentation
-
-- **Site**: <https://gabrielmaialva33.github.io/viva_tensor/> (auto-published from `main`)
-- **HexDocs**: <https://hexdocs.pm/viva_tensor>
-- **API Guide**: [docs/en/api.md](docs/en/api.md)
-- **Technical Paper**: [docs/en/paper.md](docs/en/paper.md)
-- **Stability Policy**: [docs/en/stability.md](docs/en/stability.md)
-- **Project Structure**: [docs/en/project-structure.md](docs/en/project-structure.md)
-- **FFI Architecture**: [docs/en/ffi-architecture.md](docs/en/ffi-architecture.md)
-
----
-
-## Performance
-
-### GPU Tensor Cores (RTX 4090)
-
-| Backend                   |      Throughput |       % of Peak |
-|:--------------------------|----------------:|----------------:|
-| FP8 E4M3 (CUTLASS)        |    **660 TOPS** |            100% |
-| INT8 Dense (IMMA)         |    **604 TOPS** |             92% |
-| FP16 Dense (cublasGemmEx) |  **284 TFLOPS** |             86% |
-| FP32/TF32 (cuBLAS)        | **84.5 TFLOPS** |            102% |
-| Fused GEMM+ReLU           |  **162 TFLOPS** | free activation |
-
-### GPU 2:4 Structured Sparsity
-
-| Backend                  |     Throughput | % of Peak |
-|:-------------------------|---------------:|----------:|
-| INT4 Sparse (CUTLASS)    |  **1854 TOPS** |       70% |
-| INT8 Sparse (cuSPARSELt) |  **1094 TOPS** |       83% |
-| INT8 Sparse (CUTLASS)    |   **841 TOPS** |       64% |
-| FP8 Sparse (cuSPARSELt)  |   **702 TOPS** |       53% |
-| FP16 Sparse (cuSPARSELt) | **355 TFLOPS** |       53% |
-
-### CPU (Intel MKL)
-
-|   Size    |  viva_tensor   | PyTorch | NumPy | vs PyTorch |
-|:---------:|:--------------:|:-------:|:-----:|:----------:|
-| 5000x5000 | **931 GFLOPS** |   620   |  368  |  **+50%**  |
-
-> Xeon 24-core (AVX2), MKL dgemm FP64, compact affinity, MADV_HUGEPAGE.
-> All numbers verified with CUDA events and IQR outlier removal.
-
----
+The library works fully in pure BEAM (slow but portable) and transparently
+upgrades to the native paths when the NIF shared object is loaded.
 
 ## Install
 
@@ -63,199 +19,224 @@
 gleam add viva_tensor
 ```
 
-## Architecture
-
-```mermaid
-graph TB
-    subgraph "Gleam Layer"
-        A[viva_tensor API]
-        B[src/ - packaged runtime modules]
-        C[dev/ - benchmarks and examples]
-        D[test/ - regression and behavior tests]
-    end
-
-    subgraph "Erlang Layer"
-        E[viva_tensor_zig.erl - NIF wrapper]
-    end
-
-    subgraph "Native Layer (13K+ lines C/CUDA)"
-        F[nif_entry.c - dispatch]
-        G[nif_cpu_ops.c - AVX2 SIMD]
-        H[nif_cuda_fp32/fp16/int8.c - Tensor Cores]
-        I[nif_sparse.c - 2:4 sparsity]
-        J[nif_specialized.c - fused GEMM]
-    end
-
-    subgraph "Backend Libraries"
-        K[Intel MKL]
-        L[CUDA cuBLAS/cuBLASLt]
-        M[cuSPARSELt]
-        N[CUTLASS]
-    end
-
-    A --> B & C & D
-    B --> E
-    E --> F
-    F --> G & H & I & J
-    G --> K
-    H --> L
-    I --> M & N
-    J --> L
-
-    style A fill:#FFAFF3
-    style K fill:#0071C5,color:#fff
-    style L fill:#76B900,color:#fff
-    style M fill:#76B900,color:#fff
-    style N fill:#76B900,color:#fff
-```
-
-## Quick Start
+## Quick start
 
 ```gleam
 import gleam/result
 import viva_tensor as t
 
-let a = t.zeros([1000, 1000])
-let b = t.random_uniform([1000, 1000])
+pub fn main() {
+  let a = t.zeros([1000, 1000])
+  let b = t.random_uniform([1000, 1000])
 
-use c <- result.try(t.matmul(a, b))
-let average = t.mean(c)
-
-Ok(average)
+  use c <- result.try(t.matmul(a, b))
+  Ok(t.mean(c))
+}
 ```
 
-## Features
-
-```mermaid
-mindmap
-  root((viva_tensor))
-    Core Ops
-      add/sub/mul/div
-      matmul/transpose
-      sum/mean/max/min
-      dot/outer/broadcast
-    GPU Backends
-      FP32/TF32 cuBLAS
-      FP16 Tensor Cores
-      INT8 IMMA
-      FP8 E4M3 CUTLASS
-    Sparsity
-      INT4 2:4 CUTLASS
-      INT8 2:4 cuSPARSELt
-      FP8/FP16 Sparse
-    Quantization
-      INT8 4x compress
-      NF4 7.5x compress
-      AWQ 7.7x compress
-    Neural Networks
-      autograd
-      linear layers
-      flash attention
-      fused GEMM+act
-    CNN
-      conv2d
-      max/avg pool2d
-      global_avg_pool2d
-```
-
-### Quantization
-
-| Method | Compression | Quality |     Use Case      |
-|:------:|:-----------:|:-------:|:-----------------:|
-|  INT8  |     4x      |   96%   |     Inference     |
-|  NF4   |    7.5x     |   99%   | QLoRA Fine-tuning |
-|  AWQ   |    7.7x     |   97%   |  Edge Deployment  |
-
-## Build
+If you want native acceleration on Linux + CUDA, build the NIF locally:
 
 ```bash
-# Pure Gleam (no native deps)
-make build && make test
-
-# CI-style fallback check without the native NIF
-make test-no-nif
-
-# Small stable API regression benchmark
-make bench-regression
-
-# With NIF acceleration (Intel MKL + CUDA)
-make zig && make build
-
-# Full build
-make build-all
+make zig-cpu       # CPU-only (Intel MKL + AVX2)
+make zig-cuda      # full path (CUTLASS + cuSPARSELt, requires CUDA toolkit)
 ```
 
-### Requirements
+The pure-BEAM path keeps working with no NIF; the upgrade is transparent
+once `priv/viva_tensor_zig.so` is in place.
 
-- Gleam 1.16.0+
-- OTP 27+
-- Zig 0.14+ (for NIF build)
-- Intel MKL (CPU BLAS)
-- CUDA 13+ with cuBLAS, cuBLASLt (GPU)
+## What's in the box
+
+- **Core tensor ops.** Create, reshape, slice, broadcast, gather, scatter,
+  einsum, linalg (solve / det / lu / qr / cholesky), 50+ activations and
+  pooling primitives.
+- **Neural network layers.** Conv1d/2d/3d, attention, RNN/GRU/LSTM,
+  embeddings, normalisations, optimisers (SGD / Adam / AdamW), schedulers,
+  autograd with a `Tape` API plus standalone backward functions.
+- **Pre-baked transformer architectures.** Llama, BERT, GPT, and T5
+  blocks ready to wire up. Mixture of Experts with top-k routing.
+  Tokenizers: WordPiece, BPE, Unigram (Viterbi), Whitespace, Char,
+  SentencePiece.
+- **Data + IO.** Dataloader, vision transforms / augmentations,
+  diffusion samplers (DDPM / DDIM), HuggingFace SafeTensors loader,
+  ONNX JSON import / runtime.
+- **Native acceleration.** Intel MKL on CPU; FP16 / FP8 / INT8 / INT4
+  paths on CUDA Tensor Cores; 2:4 structured sparsity via cuSPARSELt
+  and CUTLASS.
+- **Inference API (`2.2.101+`).** `prepack_*` + `linear_*` /
+  `linear_gelu_fp8` / `linear_swiglu_fp8` against opaque
+  `PackedWeight*` handles that own their device memory across calls.
+
+## Measured performance (RTX 4090 + Ryzen 24-core)
+
+Numbers are kernel-only via `cudaEvent_t` for GPU and `time.perf_counter`
+for CPU, averaged over 30 iterations with one warm-up. Reproducer scripts
+live in `dev/viva_tensor/bench/`.
+
+### Matmul throughput
+
+| Path                                       |     2048² |     4096² |     8192² |
+| :----------------------------------------- | --------: | --------: | --------: |
+| Pure BEAM matmul                           |     ~0.02 GFLOPS | ~0.01 GFLOPS |              — |
+| MKL CPU dense FP64 (24-core, AVX2)         |     ~150 GFLOPS  | ~575 GFLOPS  |              — |
+| cuBLASLt FP16 (heuristic)                  | 108 TFLOPS | 102 TFLOPS | 282 TFLOPS |
+| cuBLASLt FP16 (algo-sweep best of 16)      | 120 TFLOPS | 266 TFLOPS | 305 TFLOPS |
+| CUTLASS FP8 + FP16 accum                   | 218 TFLOPS | 392 TFLOPS | 618 TFLOPS |
+| cuSPARSELt INT8 2:4 sparse                 | 228 TFLOPS | 629 TFLOPS | 872 TFLOPS |
+| CUTLASS INT8 2:4 sparse (cfg=28)           | 250 TFLOPS | 634 TFLOPS | 750 TFLOPS |
+| CUTLASS INT4 2:4 sparse (cfg=22/28)        | 600 TFLOPS | 1074 TFLOPS | 1355 TFLOPS |
+
+### Versus PyTorch / NumPy (same hardware, same shape)
+
+At 4096²:
+
+| Backend                                       |       TFLOPS |
+| :-------------------------------------------- | -----------: |
+| NumPy CPU FP32                                |          0.8 |
+| PyTorch CPU FP32 (oneDNN + MKL)               |          1.2 |
+| PyTorch GPU FP32 (cuBLAS)                     |         20.6 |
+| PyTorch GPU FP16 (cuBLAS Tensor Core)         |        148.9 |
+| PyTorch GPU BF16 (cuBLAS Tensor Core)         |        149.0 |
+| PyTorch GPU FP8 E4M3 (`torch._scaled_mm`)     |        307.8 |
+| viva_tensor cuBLASLt FP16 (algo-sweep)        |        265.6 |
+| viva_tensor CUTLASS FP8 + FP16 accum          |        392.5 |
+| viva_tensor cuSPARSELt INT8 2:4               |        628.0 |
+| viva_tensor CUTLASS INT4 2:4                  |       1074.3 |
+
+The FP8 win over PyTorch's `_scaled_mm` (392 vs 308 TFLOPS) comes from
+the CUTLASS f16-accum path that bypasses the GeForce FP32-accum
+half-rate cap; sparse paths have no `torch._scaled_mm` equivalent today.
+Full methodology + raw numbers in
+[bench/compare/RESULTS.md](bench/compare/RESULTS.md).
+
+## Inference API
+
+Higher-level surface for the championship kernels, designed for actual
+inference (the `cutlass_*_bench` NIFs are throughput probes — they
+allocate and free GEMM tensors on every call). Prepack once, run linear
+forwards many times.
+
+```gleam
+import gleam/option.{None}
+import viva_tensor as t
+
+// w has shape [in_features, out_features]
+let assert Ok(packed) = t.prepack_fp8_weight(w)
+let assert Ok(output) = t.linear_fp8(input, packed, None)
+```
+
+Variants:
+
+- `prepack_fp8_weight` + `linear_fp8` / `linear_gelu_fp8` (FP8 dense)
+- `prepack_int8_sparse_24_weight` + `linear_int8_sparse` (INT8 2:4 sparse)
+- `prepack_int4_sparse_24_weight` + `linear_int4_sparse` (INT4 2:4 sparse)
+- `linear_swiglu_fp8` (fused gate + up + silu*mul, Llama FFN building
+  block)
+
+FP8 linear is validated end-to-end against an FP32 reference matmul
+across `K = 32 ... 4096`; relative L2 error stays bounded (5–13%
+depending on `K`, on uniform random fixtures). Tighter bands need an
+FP32 output buffer (a planned CUTLASS template change).
+
+Numerical / known limitations are tracked in
+[bench/compare/INFERENCE_API_PLAN.md](bench/compare/INFERENCE_API_PLAN.md).
+
+## Architecture (text)
+
+```
++-------------------------------------------------------------+
+|   Gleam library                                             |
+|   - src/viva_tensor.gleam            (public facade)        |
+|   - src/viva_tensor/* (core, nn, optim, models, vision, …)  |
+|   - test/                                                   |
+|   - dev/  (benchmarks, examples)                            |
++----------------------------+--------------------------------+
+                             |
+                             | Erlang stubs (@external)
+                             v
++-------------------------------------------------------------+
+|   src/viva_tensor_zig.erl  (NIF wrapper)                    |
++----------------------------+--------------------------------+
+                             |
+                             v
++-------------------------------------------------------------+
+|   zig_src/  (native NIF, compiled with Zig + nvcc)          |
+|   - nif_entry.c   (dispatch + resource types)               |
+|   - nif_cpu_ops.c, nif_packed_weight.c, nif_prepack_*.c     |
+|   - nif_linear_*.c, nif_linear_swiglu_fp8.cu                |
+|   - cuda_fp8_cutlass.cu, cuda_fp16_bench.cu, …              |
++----------------------------+--------------------------------+
+                             |
+                             v
++-------------------------------------------------------------+
+|   Native backends                                           |
+|   - Intel MKL (CPU dgemm/sgemm)                             |
+|   - cuBLAS / cuBLASLt (FP32 / FP16 / FP8)                   |
+|   - cuSPARSELt (FP8 / FP16 / INT8 2:4 sparse)               |
+|   - CUTLASS (FP8 f16-accum, INT8/INT4 sparse)               |
++-------------------------------------------------------------+
+```
+
+## Documentation
+
+- API guide: [docs/en/api.md](docs/en/api.md)
+- Project structure: [docs/en/project-structure.md](docs/en/project-structure.md)
+- FFI architecture: [docs/en/ffi-architecture.md](docs/en/ffi-architecture.md)
+- Stability policy: [docs/en/stability.md](docs/en/stability.md)
+- Technical paper: [docs/en/paper.md](docs/en/paper.md)
+- Inference API roadmap: [bench/compare/INFERENCE_API_PLAN.md](bench/compare/INFERENCE_API_PLAN.md)
+- HexDocs site: <https://hexdocs.pm/viva_tensor>
+- Project site: <https://gabrielmaialva33.github.io/viva_tensor/>
+
+## Build targets
+
+```bash
+make build           # pure Gleam build
+make test            # gleam test (uses NIF if priv/viva_tensor_zig.so exists)
+make test-no-nif     # runs gleam test with the NIF temporarily moved aside
+
+make zig-cpu         # build NIF without CUDA (Intel MKL + AVX2 SIMD only)
+make cutlass-libs    # compile CUTLASS / cuSPARSELt static libs via nvcc
+make zig-cuda        # cutlass-libs + full NIF with CUDA paths
+
+make bench           # write benchmarks/latest.txt
+make docs            # gleam docs build
+```
+
+Override CUDA arch / paths via env variables:
+
+```bash
+make zig-cuda CUDA_ARCH=sm_89 NVCC=/usr/local/cuda/bin/nvcc \
+              CUTLASS_INCLUDE=/usr/include
+```
+
+## Requirements
+
+- Gleam 1.16.0+, OTP 28+
+- Zig 0.15.2+ (for the NIF build)
+- Intel MKL (CPU BLAS path) — `apt install intel-mkl`
+- CUDA 13+ with cuBLAS / cuBLASLt (GPU)
 - cuSPARSELt 0.8.1+ (sparse ops)
-- CUTLASS 4.3+ (FP8, INT4 sparse)
+- CUTLASS 4.x headers (FP8 and INT4 sparse)
 
-## API Stability
+The CPU-only build (`make zig-cpu`) drops the CUDA / cuSPARSELt
+requirements; everything else still works.
 
-Use `import viva_tensor as t` for the stable library surface. The root module
-exports tensor creation, math, reductions, broadcasting, shape/layout inspection,
-native acceleration helpers, `softmax_axis`, runtime `capabilities()`, and
-`plan_backend()` for deterministic backend selection. `matmul_planned()` uses that planner to execute matrix
-multiplication with automatic safe fallback. Backend plans include rejected backend reasons, and `device()`/`dtype()`
-expose basic tensor placement metadata.
+## API stability
 
-Lower-level backend, quantization, sparse, neural-network, telemetry, benchmark,
-and example modules remain experimental until their contracts are documented and
-covered by stable compatibility tests.
+`import viva_tensor as t` is the stable surface. Submodules under
+`viva_tensor/core`, `viva_tensor/nn`, `viva_tensor/native`, etc. remain
+internal until their contracts are documented and covered by
+compatibility tests. See [docs/en/stability.md](docs/en/stability.md)
+for the policy and `test/public_api_contract_test.gleam` for the
+automated check.
 
-The detailed stability boundary is documented in
-[docs/en/stability.md](docs/en/stability.md). Root-module additions should be
-covered by `test/public_api_contract_test.gleam` so accidental public API drift
-is caught by `gleam test`.
+## Third-party
 
-The package layout and module boundary rules are documented in
-[docs/en/project-structure.md](docs/en/project-structure.md).
-
-## Third-Party Code
-
-The project may learn from or closely port permissively licensed tensor-library
-work when that materially improves correctness or performance. Any copied or
-closely derived code must retain the original notices and be tracked in
+Some kernels are derived from permissively licensed work (CUTLASS,
+cuSPARSELt examples, ggml inspiration on the block-wise quantisation
+side). Original notices are kept in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## GPU Benchmark Suite
+## License
 
-```bash
-# Individual benchmarks (Erlang escripts)
-./bench/erlang/bench_gpu_peak.erl       # FP32/TF32
-./bench/erlang/bench_fp16_imma.erl      # FP16 Tensor Cores
-./bench/erlang/bench_int8_imma.erl      # INT8 IMMA
-./bench/erlang/bench_fp8_peak.erl       # FP8 E4M3
-./bench/erlang/bench_sparse_peak.erl    # 2:4 Sparsity
-./bench/erlang/bench_fused_peak.erl     # Fused GEMM+activation
-./bench/erlang/bench_batched_peak.erl   # Batched GEMM
-```
-
----
-
-<div align="center">
-
-```mermaid
-flowchart LR
-    G[Gleam] --> Z[Zig NIF] --> M[Intel MKL]
-    Z --> C[CUDA Tensor Cores]
-    Z --> S[cuSPARSELt]
-    Z --> CU[CUTLASS]
-    style G fill:#FFAFF3,color:#000
-    style Z fill:#F7A41D,color:#000
-    style M fill:#0071C5,color:#fff
-    style C fill:#76B900,color:#fff
-    style S fill:#76B900,color:#fff
-    style CU fill:#76B900,color:#fff
-```
-
-**Built with love for the BEAM**
-
-<img src="https://capsule-render.vercel.app/api?type=waving&color=0:006400,100:8B0000&height=80&section=footer" width="100%"/>
-
-</div>
+[MIT](./LICENSE).
