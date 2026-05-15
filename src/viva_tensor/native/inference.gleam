@@ -487,45 +487,49 @@ fn nt_prepack_int4_sparse(
   shape: List(Int),
 ) -> Result(Dynamic, String)
 
+// Helper: FP32 floats -> FP16 binary (cuBLASLt activation format).
+@external(erlang, "viva_tensor_inference_ffi", "floats_to_fp16_binary")
+fn floats_to_fp16_binary(floats: List(Float)) -> BitArray
+
+// Helper: FP16 binary -> Float list (for decoding NIF output).
+@external(erlang, "viva_tensor_inference_ffi", "fp16_binary_to_floats")
+fn fp16_binary_to_floats(bin: BitArray) -> List(Float)
+
 @external(erlang, "viva_tensor_zig", "nt_linear_fp8")
 fn nt_linear_fp8(
-  input_data: List(Float),
-  input_shape: List(Int),
+  input_fp16: BitArray,
   weight: Dynamic,
   bias: BiasArg,
   epilogue: Int,
-) -> Result(List(Float), String)
+) -> Result(BitArray, String)
 
 @external(erlang, "viva_tensor_zig", "nt_linear_gelu_fp8")
 fn nt_linear_gelu_fp8(
-  input_data: List(Float),
-  input_shape: List(Int),
+  input_fp16: BitArray,
   weight: Dynamic,
   bias: BiasArg,
   epilogue: Int,
-) -> Result(List(Float), String)
+) -> Result(BitArray, String)
 
 @external(erlang, "viva_tensor_zig", "nt_linear_int8_sparse")
 fn nt_linear_int8_sparse(
-  input_data: List(Float),
-  input_shape: List(Int),
+  input_fp16: BitArray,
   weight: Dynamic,
   bias: BiasArg,
-) -> Result(List(Float), String)
+) -> Result(BitArray, String)
 
 @external(erlang, "viva_tensor_zig", "nt_linear_int4_sparse")
 fn nt_linear_int4_sparse(
-  input_data: List(Float),
-  input_shape: List(Int),
+  input_fp16: BitArray,
   weight: Dynamic,
   bias: BiasArg,
-) -> Result(List(Float), String)
+) -> Result(BitArray, String)
 
 @external(erlang, "viva_tensor_zig", "nt_linear_swiglu_fp8")
 fn nt_linear_swiglu_fp8(
-  input_data: List(Float),
+  input_fp16: BitArray,
   input_shape: List(Int),
   gate_weight: Dynamic,
   up_weight: Dynamic,
   bias: BiasArg,
-) -> Result(List(Float), String)
+) -> Result(BitArray, String)
