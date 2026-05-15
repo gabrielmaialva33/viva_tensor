@@ -1,5 +1,5 @@
 name = "viva_tensor"
-version = "2.2.100"
+version = "2.2.101"
 description = "Tensor library for Gleam/BEAM with a pure Gleam API, zero-copy views, and optional native acceleration"
 licences = ["MIT"]
 repository = { type = "github", user = "gabrielmaialva33", repo = "viva_tensor" }

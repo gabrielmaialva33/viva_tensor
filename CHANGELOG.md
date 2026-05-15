@@ -2,6 +2,62 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2.2.101] - 2026-05-15
+
+### Added
+
+- High-level inference API in `viva_tensor/native/inference` (re-exported from
+  `viva_tensor`) with opaque `PackedWeightFp8` / `PackedWeightInt8Sparse` /
+  `PackedWeightInt4Sparse` handles and `prepack_*` / `linear_*` /
+  `linear_gelu_fp8` / `linear_swiglu_fp8` functions. Replaces the bench-only
+  `cutlass_*_bench` NIFs for actual inference workloads.
+- C/NIF backend: `nif_packed_weight.{h,c}` (Erlang resource type with device
+  memory lifetime), `nif_prepack_fp8.c` (host absmax → FP8 E4M3 quantize +
+  device upload), `nif_linear_fp8.c` (CUTLASS f32acc + cuBLASLt BIAS/GELU
+  epilogue), `nif_prepack_int_sparse.c` and `nif_linear_int_sparse.c` (INT8 /
+  INT4 2:4 sparse via cuSPARSELt + CUTLASS), `nif_linear_swiglu_fp8.cu` (two
+  FP8 GEMMs + custom `silu_mul` kernel).
+- `viva_tensor_inference_ffi.erl`: helpers for FP32/FP16 binary marshalling
+  used by the inference wiring.
+- ggml-inspired dual scaling on the FP8 path: per-output-channel weight
+  scales (one FP32 per column on device) and per-batch-row activation scales
+  (one FP32 per row on host).
+- Numerical validation suite (`test/inference_numerical_test.gleam`) with
+  5 quantization paths (FP8 / INT8 sparse / INT4 sparse / GELU FP8 / SwiGLU
+  FP8) measured against a reference FP32 matmul.
+
+### Changed
+
+- Inference NIFs use FP32 weight binaries and FP16 activation binaries (vs
+  passing `List(Float)` from BEAM); switched to faster zero-copy paths.
+- FP8 GEMM moved from f16-accum (660 TOPS, FP16 saturation at K ≥ 32) to
+  f32-accum (330 TOPS on GeForce, numerically safe up to Llama-7B K=4096).
+- CUTLASS sparse `ElementE` metadata buffers now sized via a runtime probe
+  (`cutlass_int*_sparse_run_info`) instead of guessed constants. Prevents
+  the heap-corruption that earlier assumptions caused on shapes ≥ K=256.
+
+### Fixed
+
+- INT4 sparse prepack no longer writes past its metadata buffer (was over-
+  allocated mismatched against the encoder loop, stomping the heap).
+- `floats_to_fp32_binary` / `floats_to_fp16_binary` / `fp16_binary_to_floats`
+  produce correct round-trip values for the activation/weight pipelines.
+
+### Performance (RTX 4090, end-to-end FP8 linear vs FP32 reference)
+
+| K (hidden) | Relative L2 error |
+|-----------:|------------------:|
+|         32 |               5%  |
+|        128 |               8%  |
+|        256 |              10%  |
+|        512 |              12%  |
+|       1024 |              13%  |
+|       4096 |              13%  |
+
+Numbers are finite for every shape (no `Inf`); the cap around 13% comes from
+the FP16 output cast saturation. A future FP32 output buffer (CUTLASS
+template change) is what unlocks `<5%` end-to-end on Llama-scale `K`.
+
 ## [2.2.100] - 2026-04-27
 
 ### Changed
