@@ -181,18 +181,18 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
   float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
   if (!h_scales) return make_error(env, "out_of_memory");
 
-  /* Pass 1: per-channel absmax + scale. Use the FULL FP8 range (448)
-   * here — per-channel scaling guarantees no inter-channel range loss,
-   * and the activation path still uses the conservative target (T_act)
-   * so the product max stays within the FP16 output cast. */
-  static const float W_TARGET = 240.0f;  /* mid-aggressive within E4M3 */
+  /* Pass 1: per-channel absmax + scale. Each output column gets its
+   * own dequant factor so an outlier in one channel doesn't shrink the
+   * effective range of the others. With FP16 output cast still in
+   * play, target is kept at the conservative T (matches the act path).
+   * For higher precision, upgrade to FP32 output buffer + T=448. */
   for (int n = 0; n < out_features; ++n) {
     float absmax = 0.0f;
     for (int k = 0; k < in_features; ++k) {
       float a = fabsf(src[(size_t)k * out_features + n]);
       if (a > absmax) absmax = a;
     }
-    h_scales[n] = (absmax > 0.0f) ? (absmax / W_TARGET) : 1.0f;
+    h_scales[n] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
   }
 
   /* Pass 2: quantize + transpose. Each column uses its own scale. */
