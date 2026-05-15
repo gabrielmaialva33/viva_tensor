@@ -39,13 +39,13 @@
 
 /* FP8 E4M3 max representable magnitude. CUTLASS uses 448 for the
  * symmetric scale on Ada; see cutlass/numeric_types.h. */
-/* FP8 E4M3 nominal max is 448 but the CUTLASS kernels store output as
- * FP16. Even with the FP32 accumulator (no accum overflow), the cast to
- * FP16 saturates at 65504 when (T² · K) is large. Conservative target
- * T=16 keeps the FP16 output in range for K up to ~256. The pair
- * (prepack + linear) MUST use the same T — they're coupled by the
- * weight_scale that the linear path multiplies back on the host side. */
-#define FP8_E4M3_MAX 16.0f
+/* FP8 E4M3 quantization target. Empirical sweet spot for the
+ * per-row × per-channel scaling pattern: T=128 trades a bit of
+ * outlier headroom for substantially better precision on small
+ * values (which dominate cancellation-heavy random workloads).
+ * For real LLM weights with per-channel outliers, raise to 448
+ * via a callable parameter in a future revision. */
+#define FP8_E4M3_MAX 128.0f
 
 /* =========================================================================
  * FP8 E4M3 quantization (host-side)

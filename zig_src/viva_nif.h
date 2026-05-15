@@ -545,6 +545,10 @@ extern int cutlass_fp8_gemm_f32acc(int M, int N, int K,
  * elapsed microseconds (kernel-only via CUDA events). mode: 0 = FP16 accum
  * (660 TOPS), 1 = FP32 accum (330 TOPS). */
 extern int cutlass_fp8_bench(int M, int N, int K, int iters, int mode);
+/* Inference path: FP8 GEMM with FP32 output buffer (caller-allocated). */
+extern int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K,
+                                            const void *d_A, const void *d_B,
+                                            float *d_C);
 /* cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core ~165 TFLOPS). */
 extern int cublaslt_fp16_bench(int M, int N, int K, int iters);
 /* N axpy kernels as N stream launches (baseline). */

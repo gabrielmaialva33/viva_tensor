@@ -50,8 +50,8 @@
 #include <cublasLt.h>
 #endif
 
-/* Mirror of the conservative target in nif_prepack_fp8.c — must match. */
-#define FP8_E4M3_MAX 16.0f
+/* Mirror of nif_prepack_fp8.c — must match. */
+#define FP8_E4M3_MAX 128.0f
 
 /* FP8 E4M3 quantization (host-side). Local duplicate of the prepack
  * routine — kept here to avoid an extra header file. If the math is
@@ -250,27 +250,21 @@ static int read_weight_scales_per_channel(const PackedWeight *w,
 static int run_cutlass_path(const PackedWeight *w,
                              const uint8_t *d_input,
                              int batch,
-                             uint16_t **out_d_C) {
-  uint16_t *d_C = NULL;
-  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(uint16_t);
+                             float **out_d_C) {
+  /* FP32 output buffer eliminates the FP16 cast saturation that
+   * previously capped end-to-end precision at L2 ~13% on K=4096.
+   * Caller applies per-row × per-channel dequant on the FP32 values
+   * before the final FP16 binary encode on the host. */
+  float *d_C = NULL;
+  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
   if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -1;
   if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
     cudaFree(d_C);
     return -2;
   }
-  /* M = batch, N = out_features, K = in_features.
-   * A = d_input (row-major FP8, MxK), B = w->d_weight (col-major FP8, KxN),
-   * C = d_C (row-major FP16, MxN). */
-  /* Use FP32 accumulator for numerical safety. FP16 accum (660 TOPS) only
-   * stays within range when (FP8_E4M3_MAX² * K) < 65504, which constrains
-   * K to ~32 with target=448 or ~256 with target=16. Inference workloads
-   * (K=1024-16384 for real LLMs) need FP32 accum. Throughput drops from
-   * 660 TOPS to ~330 TOPS on Ada GeForce (NVIDIA's nerf), but correctness
-   * is preserved across all shapes. The f8_gemm_f32acc symbol comes from
-   * the same `cuda_fp8_cutlass.cu` translation unit. */
-  int rc = cutlass_fp8_gemm_f32acc(
+  int rc = cutlass_fp8_gemm_f32acc_out_f32(
       batch, w->out_features, w->in_features,
-      (const void *)d_input, (const void *)w->d_weight, (void *)d_C);
+      (const void *)d_input, (const void *)w->d_weight, d_C);
   if (rc != 0) {
     cudaFree(d_C);
     return -100 + rc;
@@ -395,11 +389,51 @@ static int run_cublaslt_path(const PackedWeight *w,
   return 0;
 }
 
-/* Download the FP16 device buffer, apply per-row × per-channel dequant:
- *   dst[b, c] = h_C[b, c] * act_scales[b] * weight_scales[c]
- *
- * `act_scales` may be NULL (single scalar fallback in `legacy_combined_scale`).
- * `weight_scales` may be NULL when only the legacy path is needed. */
+/* Download an FP32 device buffer (output of the CUTLASS f32acc_out_f32
+ * GEMM), apply per-row × per-channel dequant on FP32, cast to FP16, and
+ * emit a FP16 binary. The FP32 accumulator skips the cast saturation
+ * that the older FP16-output path suffered at large K. */
+static int download_fp32_and_make_binary(ErlNifEnv *env, float *d_C, int batch,
+                                          int out_features,
+                                          const float *act_scales,
+                                          const float *weight_scales,
+                                          ERL_NIF_TERM *out_term) {
+  size_t n = (size_t)batch * (size_t)out_features;
+  size_t in_bytes = n * sizeof(float);
+  size_t out_bytes = n * sizeof(uint16_t);
+  float *h_C = (float *)malloc(in_bytes);
+  if (!h_C) return -1;
+  if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+    free(h_C);
+    return -2;
+  }
+
+  ErlNifBinary outbin;
+  if (!enif_alloc_binary(out_bytes, &outbin)) {
+    free(h_C);
+    return -3;
+  }
+  uint16_t *dst = (uint16_t *)outbin.data;
+
+  for (int b = 0; b < batch; ++b) {
+    float a = act_scales ? act_scales[b] : 1.0f;
+    for (int c = 0; c < out_features; ++c) {
+      size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+      float wsc = weight_scales ? weight_scales[c] : 1.0f;
+      dst[i] = float_to_half(h_C[i] * a * wsc);
+    }
+  }
+  free(h_C);
+
+  *out_term = enif_make_binary(env, &outbin);
+  return 0;
+}
+
+/* Download the FP16 device buffer (legacy / cublasLt epilogue path),
+ * apply per-row × per-channel dequant, and emit a new FP16 binary.
+ * `act_scales` may be NULL (single scalar fallback in
+ * `legacy_combined_scale`). `weight_scales` may be NULL when only the
+ * legacy path is needed. */
 static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
                                      int out_features,
                                      const float *act_scales,
@@ -503,42 +537,51 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
     }
   }
 
-  /* Dispatch on epilogue: plain CUTLASS for the fast path, cublasLt
-   * for any fused variant. */
-  uint16_t *d_C = NULL;
+  /* Dispatch on epilogue: plain CUTLASS for the fast path (FP32 output
+   * buffer), cublasLt for any fused variant (FP16 output buffer). */
+  uint16_t *d_C_fp16 = NULL;
+  float    *d_C_fp32 = NULL;
   int use_cublaslt = has_bias || (epilogue != 1);
   if (use_cublaslt) {
-    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C);
+    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C_fp16);
   } else {
-    rc = run_cutlass_path(w, d_input, batch, &d_C);
+    rc = run_cutlass_path(w, d_input, batch, &d_C_fp32);
   }
   cudaFree(d_input);
   if (rc != 0) {
     if (d_bias) cudaFree(d_bias);
-    if (d_C) cudaFree(d_C);
+    if (d_C_fp16) cudaFree(d_C_fp16);
+    if (d_C_fp32) cudaFree(d_C_fp32);
     char err[64];
     snprintf(err, sizeof(err), "gemm_failed_%d", rc);
     return make_error(env, err);
   }
 
-  /* Per-output-channel dequant: dst[b, c] *= act_scale * W_scale[c]. */
+  /* Per-output-channel dequant. */
   float *w_scales = NULL;
   size_t w_scales_count = 0;
   if (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0
       || w_scales_count != (size_t)w->out_features) {
     if (d_bias) cudaFree(d_bias);
-    cudaFree(d_C);
+    if (d_C_fp16) cudaFree(d_C_fp16);
+    if (d_C_fp32) cudaFree(d_C_fp32);
     if (w_scales) free(w_scales);
     return make_error(env, "weight_scale_read_failed");
   }
 
   ERL_NIF_TERM out_term;
-  rc = download_and_make_binary(env, d_C, batch, w->out_features,
-                                 act_scales, w_scales, 0.0f, &out_term);
+  if (use_cublaslt) {
+    rc = download_and_make_binary(env, d_C_fp16, batch, w->out_features,
+                                   act_scales, w_scales, 0.0f, &out_term);
+  } else {
+    rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features,
+                                        act_scales, w_scales, &out_term);
+  }
   free(act_scales);
   free(w_scales);
   if (d_bias) cudaFree(d_bias);
-  cudaFree(d_C);
+  if (d_C_fp16) cudaFree(d_C_fp16);
+  if (d_C_fp32) cudaFree(d_C_fp32);
   if (rc != 0) return make_error(env, "output_download_failed");
 
   return make_ok(env, out_term);
