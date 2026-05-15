@@ -50,7 +50,7 @@
 #include <cublasLt.h>
 #endif
 
-/* Mirror of the conservative target in nif_prepack_fp8.c (must match). */
+/* Mirror of the conservative target in nif_prepack_fp8.c — must match. */
 #define FP8_E4M3_MAX 16.0f
 
 /* FP8 E4M3 quantization (host-side). Local duplicate of the prepack
@@ -222,7 +222,14 @@ static int run_cutlass_path(const PackedWeight *w,
   /* M = batch, N = out_features, K = in_features.
    * A = d_input (row-major FP8, MxK), B = w->d_weight (col-major FP8, KxN),
    * C = d_C (row-major FP16, MxN). */
-  int rc = cutlass_fp8_gemm_f16acc(
+  /* Use FP32 accumulator for numerical safety. FP16 accum (660 TOPS) only
+   * stays within range when (FP8_E4M3_MAX² * K) < 65504, which constrains
+   * K to ~32 with target=448 or ~256 with target=16. Inference workloads
+   * (K=1024-16384 for real LLMs) need FP32 accum. Throughput drops from
+   * 660 TOPS to ~330 TOPS on Ada GeForce (NVIDIA's nerf), but correctness
+   * is preserved across all shapes. The f8_gemm_f32acc symbol comes from
+   * the same `cuda_fp8_cutlass.cu` translation unit. */
+  int rc = cutlass_fp8_gemm_f32acc(
       batch, w->out_features, w->in_features,
       (const void *)d_input, (const void *)w->d_weight, (void *)d_C);
   if (rc != 0) {
