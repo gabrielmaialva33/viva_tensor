@@ -13,7 +13,11 @@
 
 -module(viva_tensor_inference_ffi).
 
--export([floats_to_fp32_binary/1, fp16_binary_to_floats/1]).
+-export([
+    floats_to_fp32_binary/1,
+    floats_to_fp16_binary/1,
+    fp16_binary_to_floats/1
+]).
 
 %% List(Float) -> binary holding the same values as little-endian IEEE-754
 %% single-precision floats. Used to feed the FP32 weight / input lists
@@ -40,7 +44,10 @@ fp16_decode(H) ->
             V = M * math:pow(2.0, -14.0),
             case Sign of 0 -> V; 1 -> -V end;
         16#1F when Frac =:= 0 ->
-            case Sign of 0 -> 1.0e308 * 10.0; 1 -> -1.0e308 * 10.0 end;
+            %% Inf: Erlang doesn't have a native Inf literal — return the
+            %% largest finite double (1.79e308). Callers comparing for
+            %% magnitude will still see "huge" without crashing.
+            case Sign of 0 -> 1.7976931348623157e308; 1 -> -1.7976931348623157e308 end;
         16#1F ->
             %% NaN — return 0 to keep tests numerically stable
             0.0;
