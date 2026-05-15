@@ -195,17 +195,16 @@ pub fn linear_fp8(
   case tensor.shape(input) {
     [batch, in_f] if in_f == weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
-      // epilogue code 1 = DEFAULT (no activation)
-      case
-        nt_linear_fp8(
-          tensor.to_list(input),
-          [batch, in_f],
-          weight.handle,
-          bias_data,
-          1,
-        )
-      {
-        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+      // epilogue code 1 = DEFAULT (no activation). NIF expects FP16 input
+      // binary, returns FP16 output binary.
+      let _ = batch
+      let _ = in_f
+      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
+      case nt_linear_fp8(input_bin, weight.handle, bias_data, 1) {
+        Ok(out_bin) -> {
+          let out_data = fp16_binary_to_floats(out_bin)
+          Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        }
         Error(reason) -> Error(DimensionError("linear_fp8 failed: " <> reason))
       }
     }
