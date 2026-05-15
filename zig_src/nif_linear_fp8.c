@@ -188,13 +188,44 @@ static int upload_input_fp8(const ErlNifBinary *bin, int batch,
 
 /* Pull the per-tensor weight scale (1 FP32) back from device memory.
  * Cheap (4 bytes, sync copy) — only runs once per linear call. */
+/* Read the (avg of) weight scales into a single float — used by the
+ * cublasLt fused path which takes a single alpha. The CUTLASS path
+ * uses `read_weight_scales_per_channel` below to do per-channel dequant
+ * on the host. */
 static int read_weight_scale(const PackedWeight *w, float *out_scale) {
   if (!w->d_scales) return -1;
-  return cudaMemcpy(out_scale, w->d_scales, sizeof(float),
-                     cudaMemcpyDeviceToHost) == cudaSuccess
-             ? 0
-             : -2;
+  size_t count = w->scales_count > 0 ? w->scales_count : 1;
+  float *tmp = (float *)malloc(count * sizeof(float));
+  if (!tmp) return -2;
+  if (cudaMemcpy(tmp, w->d_scales, count * sizeof(float),
+                 cudaMemcpyDeviceToHost) != cudaSuccess) {
+    free(tmp);
+    return -3;
+  }
+  float avg = 0.0f;
+  for (size_t i = 0; i < count; ++i) avg += tmp[i];
+  *out_scale = (count > 0) ? (avg / (float)count) : 1.0f;
+  free(tmp);
+  return 0;
 }
+
+/* Allocate + populate a host array with the per-output-channel scales. */
+static int read_weight_scales_per_channel(const PackedWeight *w,
+                                            float **out_arr,
+                                            size_t *out_count) {
+  if (!w->d_scales || w->scales_count == 0) return -1;
+  float *arr = (float *)malloc(w->scales_count * sizeof(float));
+  if (!arr) return -2;
+  if (cudaMemcpy(arr, w->d_scales, w->scales_count * sizeof(float),
+                 cudaMemcpyDeviceToHost) != cudaSuccess) {
+    free(arr);
+    return -3;
+  }
+  *out_arr = arr;
+  *out_count = w->scales_count;
+  return 0;
+}
+
 
 /* =========================================================================
  * Path A: CUTLASS FP8 GEMM (no bias, no activation, 660 TOPS on Ada).
@@ -356,11 +387,16 @@ static int run_cublaslt_path(const PackedWeight *w,
   return 0;
 }
 
-/* Download the FP16 device buffer, multiply by `combined_scale` to
- * undo the symmetric FP8 quantization, and emit a new FP16 binary as
- * an ERL_NIF_TERM. Allocates / fills the binary in-place. */
+/* Download the FP16 device buffer, apply `act_scale * weight_scales[c]`
+ * per output channel, and emit a new FP16 binary. `weight_scales` is
+ * either:
+ *   - NULL: fall back to the legacy single `combined_scale` path
+ *   - length == out_features: per-output-channel dequant (the prepack
+ *     stores one absmax/T per channel) */
 static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
-                                     int out_features, float combined_scale,
+                                     int out_features, float act_scale,
+                                     const float *weight_scales,
+                                     float legacy_combined_scale,
                                      ERL_NIF_TERM *out_term) {
   size_t n = (size_t)batch * (size_t)out_features;
   size_t bytes = n * sizeof(uint16_t);
@@ -371,9 +407,6 @@ static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
     return -2;
   }
 
-  /* Apply scale on host (one multiply per output element). For larger
-   * outputs this should move to a CUDA kernel; for typical inference
-   * batches (B*out_features < 8M) it's <1 ms. */
   ErlNifBinary outbin;
   if (!enif_alloc_binary(bytes, &outbin)) {
     free(h_C);
@@ -381,10 +414,21 @@ static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
   }
   uint16_t *dst = (uint16_t *)outbin.data;
 
-  /* Convert FP16 -> float, multiply, convert back to FP16. */
-  for (size_t i = 0; i < n; ++i) {
-    float v = f16_to_f32(h_C[i]) * combined_scale;
-    dst[i] = float_to_half(v);
+  if (weight_scales != NULL) {
+    /* Per-output-channel dequant: dst[b, c] = h_C[b, c] * act_scale * W_scale[c]. */
+    for (int b = 0; b < batch; ++b) {
+      for (int c = 0; c < out_features; ++c) {
+        size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+        float v = f16_to_f32(h_C[i]) * act_scale * weight_scales[c];
+        dst[i] = float_to_half(v);
+      }
+    }
+  } else {
+    /* Legacy single combined scale path. */
+    for (size_t i = 0; i < n; ++i) {
+      float v = f16_to_f32(h_C[i]) * legacy_combined_scale;
+      dst[i] = float_to_half(v);
+    }
   }
   free(h_C);
 
@@ -468,18 +512,21 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
     return make_error(env, err);
   }
 
-  /* Combined dequant scale = act_scale * weight_scale. */
-  float weight_scale = 1.0f;
-  if (read_weight_scale(w, &weight_scale) != 0) {
+  /* Per-output-channel dequant: dst[b, c] *= act_scale * W_scale[c]. */
+  float *w_scales = NULL;
+  size_t w_scales_count = 0;
+  if (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0
+      || w_scales_count != (size_t)w->out_features) {
     if (d_bias) cudaFree(d_bias);
     cudaFree(d_C);
+    if (w_scales) free(w_scales);
     return make_error(env, "weight_scale_read_failed");
   }
-  float combined = act_scale * weight_scale;
 
   ERL_NIF_TERM out_term;
-  rc = download_and_make_binary(env, d_C, batch, w->out_features, combined,
-                                 &out_term);
+  rc = download_and_make_binary(env, d_C, batch, w->out_features,
+                                 act_scale, w_scales, 0.0f, &out_term);
+  free(w_scales);
   if (d_bias) cudaFree(d_bias);
   cudaFree(d_C);
   if (rc != 0) return make_error(env, "output_download_failed");
@@ -552,17 +599,22 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
     return make_error(env, err);
   }
 
-  float weight_scale = 1.0f;
-  if (read_weight_scale(w, &weight_scale) != 0) {
+  /* cublasLt path with epilogue: still uses per-channel dequant on host
+   * (epilogue scale arg in cublasLt is a single FP32). */
+  float *w_scales2 = NULL;
+  size_t w_scales2_count = 0;
+  if (read_weight_scales_per_channel(w, &w_scales2, &w_scales2_count) != 0
+      || w_scales2_count != (size_t)w->out_features) {
     if (d_bias) cudaFree(d_bias);
     cudaFree(d_C);
+    if (w_scales2) free(w_scales2);
     return make_error(env, "weight_scale_read_failed");
   }
-  float combined = act_scale * weight_scale;
 
   ERL_NIF_TERM out_term;
-  rc = download_and_make_binary(env, d_C, batch, w->out_features, combined,
-                                 &out_term);
+  rc = download_and_make_binary(env, d_C, batch, w->out_features,
+                                 act_scale, w_scales2, 0.0f, &out_term);
+  free(w_scales2);
   if (d_bias) cudaFree(d_bias);
   cudaFree(d_C);
   if (rc != 0) return make_error(env, "output_download_failed");
