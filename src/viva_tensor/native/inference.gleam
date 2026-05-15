@@ -102,7 +102,12 @@ pub fn prepack_fp8_weight(
 ) -> Result(PackedWeightFp8, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_fp8(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+      case
+        nt_prepack_fp8(floats_to_fp32_binary(tensor.to_list(weight)), [
+          in_f,
+          out_f,
+        ])
+      {
         Ok(#(handle, _in, _out, scale)) ->
           Ok(PackedWeightFp8(
             handle: handle,
@@ -128,14 +133,21 @@ pub fn prepack_int8_sparse_24_weight(
 ) -> Result(PackedWeightInt8Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_int8_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+      case
+        nt_prepack_int8_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [
+          in_f,
+          out_f,
+        ])
+      {
         Ok(handle) ->
-          Ok(PackedWeightInt8Sparse(
-            handle: handle,
-            in_features: in_f,
-            out_features: out_f,
-            channel_scales: [],
-          ))
+          Ok(
+            PackedWeightInt8Sparse(
+              handle: handle,
+              in_features: in_f,
+              out_features: out_f,
+              channel_scales: [],
+            ),
+          )
         Error(reason) ->
           Error(DimensionError(
             "prepack_int8_sparse_24_weight failed: " <> reason,
@@ -158,14 +170,21 @@ pub fn prepack_int4_sparse_24_weight(
 ) -> Result(PackedWeightInt4Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_int4_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+      case
+        nt_prepack_int4_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [
+          in_f,
+          out_f,
+        ])
+      {
         Ok(handle) ->
-          Ok(PackedWeightInt4Sparse(
-            handle: handle,
-            in_features: in_f,
-            out_features: out_f,
-            channel_scales: [],
-          ))
+          Ok(
+            PackedWeightInt4Sparse(
+              handle: handle,
+              in_features: in_f,
+              out_features: out_f,
+              channel_scales: [],
+            ),
+          )
         Error(reason) ->
           Error(DimensionError(
             "prepack_int4_sparse_24_weight failed: " <> reason,
