@@ -142,47 +142,55 @@ static int ensure_lt_ctx(void) {
  * ========================================================================= */
 static int upload_input_fp8(const ErlNifBinary *bin, int batch,
                              int in_features, uint8_t **out_d_input,
-                             float *out_scale) {
+                             float **out_row_scales) {
   *out_d_input = NULL;
-  *out_scale = 1.0f;
+  *out_row_scales = NULL;
 
   size_t n = (size_t)batch * (size_t)in_features;
   if (bin->size != n * sizeof(uint16_t)) return -1;
 
   const uint16_t *src_half = (const uint16_t *)bin->data;
 
-  /* Host absmax + quantize. Decode FP16 -> FP32 along the way using the
-   * helper already in nif_cuda_fp16.c (f16_to_f32). */
-  float absmax = 0.0f;
-  for (size_t i = 0; i < n; ++i) {
-    float v = f16_to_f32(src_half[i]);
-    float a = fabsf(v);
-    if (a > absmax) absmax = a;
+  /* Per-row activation quantization (ggml-style block_q8_0 with block ==
+   * row): each input batch row gets its own absmax + scale. Outliers in
+   * one row don't compress the dynamic range of the others — important
+   * for attention scores where one sequence position can dominate. */
+  float *row_scales = (float *)malloc((size_t)batch * sizeof(float));
+  if (!row_scales) return -2;
+
+  for (int b = 0; b < batch; ++b) {
+    float absmax = 0.0f;
+    for (int k = 0; k < in_features; ++k) {
+      float a = fabsf(f16_to_f32(src_half[(size_t)b * in_features + k]));
+      if (a > absmax) absmax = a;
+    }
+    row_scales[b] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
   }
-  float scale = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-  float inv_scale = 1.0f / scale;
 
   uint8_t *h_packed = (uint8_t *)malloc(n);
-  if (!h_packed) return -2;
-  for (size_t i = 0; i < n; ++i) {
-    float v = f16_to_f32(src_half[i]) * inv_scale;
-    h_packed[i] = lin_float_to_fp8_e4m3(v);
+  if (!h_packed) { free(row_scales); return -2; }
+  for (int b = 0; b < batch; ++b) {
+    float inv = 1.0f / row_scales[b];
+    for (int k = 0; k < in_features; ++k) {
+      float v = f16_to_f32(src_half[(size_t)b * in_features + k]) * inv;
+      h_packed[(size_t)b * in_features + k] = lin_float_to_fp8_e4m3(v);
+    }
   }
 
   uint8_t *d_input = NULL;
   if (cudaMalloc((void **)&d_input, n) != cudaSuccess) {
-    free(h_packed);
+    free(h_packed); free(row_scales);
     return -3;
   }
   if (cudaMemcpy(d_input, h_packed, n, cudaMemcpyHostToDevice) !=
       cudaSuccess) {
-    free(h_packed);
+    free(h_packed); free(row_scales);
     cudaFree(d_input);
     return -4;
   }
   free(h_packed);
   *out_d_input = d_input;
-  *out_scale = scale;
+  *out_row_scales = row_scales;
   return 0;
 }
 
@@ -387,14 +395,14 @@ static int run_cublaslt_path(const PackedWeight *w,
   return 0;
 }
 
-/* Download the FP16 device buffer, apply `act_scale * weight_scales[c]`
- * per output channel, and emit a new FP16 binary. `weight_scales` is
- * either:
- *   - NULL: fall back to the legacy single `combined_scale` path
- *   - length == out_features: per-output-channel dequant (the prepack
- *     stores one absmax/T per channel) */
+/* Download the FP16 device buffer, apply per-row × per-channel dequant:
+ *   dst[b, c] = h_C[b, c] * act_scales[b] * weight_scales[c]
+ *
+ * `act_scales` may be NULL (single scalar fallback in `legacy_combined_scale`).
+ * `weight_scales` may be NULL when only the legacy path is needed. */
 static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
-                                     int out_features, float act_scale,
+                                     int out_features,
+                                     const float *act_scales,
                                      const float *weight_scales,
                                      float legacy_combined_scale,
                                      ERL_NIF_TERM *out_term) {
@@ -414,12 +422,13 @@ static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
   }
   uint16_t *dst = (uint16_t *)outbin.data;
 
-  if (weight_scales != NULL) {
-    /* Per-output-channel dequant: dst[b, c] = h_C[b, c] * act_scale * W_scale[c]. */
+  if (weight_scales != NULL && act_scales != NULL) {
+    /* Full per-row × per-channel dequant. */
     for (int b = 0; b < batch; ++b) {
+      float a = act_scales[b];
       for (int c = 0; c < out_features; ++c) {
         size_t i = (size_t)b * (size_t)out_features + (size_t)c;
-        float v = f16_to_f32(h_C[i]) * act_scale * weight_scales[c];
+        float v = f16_to_f32(h_C[i]) * a * weight_scales[c];
         dst[i] = float_to_half(v);
       }
     }
@@ -474,9 +483,9 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
 
   /* Quantize + upload input. */
   uint8_t *d_input = NULL;
-  float act_scale = 1.0f;
+  float *act_scales = NULL;
   int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input,
-                            &act_scale);
+                            &act_scales);
   if (rc != 0) return make_error(env, "input_upload_failed");
 
   /* Upload bias if present. */
@@ -525,7 +534,8 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
 
   ERL_NIF_TERM out_term;
   rc = download_and_make_binary(env, d_C, batch, w->out_features,
-                                 act_scale, w_scales, 0.0f, &out_term);
+                                 act_scales, w_scales, 0.0f, &out_term);
+  free(act_scales);
   free(w_scales);
   if (d_bias) cudaFree(d_bias);
   cudaFree(d_C);
@@ -567,9 +577,9 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
     return make_error(env, "bias_size_mismatch");
 
   uint8_t *d_input = NULL;
-  float act_scale = 1.0f;
+  float *act_scales = NULL;
   int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input,
-                            &act_scale);
+                            &act_scales);
   if (rc != 0) return make_error(env, "input_upload_failed");
 
   uint16_t *d_bias = NULL;
@@ -613,7 +623,8 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
 
   ERL_NIF_TERM out_term;
   rc = download_and_make_binary(env, d_C, batch, w->out_features,
-                                 act_scale, w_scales2, 0.0f, &out_term);
+                                 act_scales, w_scales2, 0.0f, &out_term);
+  free(act_scales);
   free(w_scales2);
   if (d_bias) cudaFree(d_bias);
   cudaFree(d_C);
