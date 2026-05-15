@@ -50,8 +50,8 @@
 #include <cublasLt.h>
 #endif
 
-/* Mirror of the constant in nif_prepack_fp8.c. */
-#define FP8_E4M3_MAX 448.0f
+/* Mirror of the conservative target in nif_prepack_fp8.c (must match). */
+#define FP8_E4M3_MAX 16.0f
 
 /* FP8 E4M3 quantization (host-side). Local duplicate of the prepack
  * routine — kept here to avoid an extra header file. If the math is

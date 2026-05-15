@@ -39,7 +39,14 @@
 
 /* FP8 E4M3 max representable magnitude. CUTLASS uses 448 for the
  * symmetric scale on Ada; see cutlass/numeric_types.h. */
-#define FP8_E4M3_MAX 448.0f
+/* FP8 E4M3 nominal max is 448.0, but the CUTLASS f16-accum path overflows
+ * the FP16 accumulator when both operands reach that range and K is non-
+ * trivial: accum_max ≈ T² · K, FP16 max = 65504. We quantize against a
+ * conservative target so the accumulator stays inside FP16 range up to
+ * K ≈ 256. Trades ~5 bits of FP8 dynamic range for end-to-end correctness.
+ * For larger K, switch the kernel to an FP32 accumulator path (which pays
+ * the GeForce half-rate penalty but keeps correctness). */
+#define FP8_E4M3_MAX 16.0f
 
 /* =========================================================================
  * FP8 E4M3 quantization (host-side)
