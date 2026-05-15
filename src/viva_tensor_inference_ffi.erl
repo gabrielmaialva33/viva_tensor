@@ -25,6 +25,57 @@
 floats_to_fp32_binary(Floats) when is_list(Floats) ->
     iolist_to_binary([<<F:32/float-little>> || F <- Floats]).
 
+%% List(Float) -> binary holding IEEE-754 half-precision values, little-endian.
+%% Round-to-nearest-even on the mantissa, clamp infinities to FP16-max.
+%% Used to feed the cuBLASLt FP8 NIFs which expect FP16 input binaries.
+floats_to_fp16_binary(Floats) when is_list(Floats) ->
+    iolist_to_binary([<<(fp16_encode(F)):16/unsigned-little>> || F <- Floats]).
+
+%% float64 -> uint16 IEEE-754 binary16
+fp16_encode(F) when is_float(F) ->
+    <<S:1, E:8, M:23>> = <<F:32/float-big>>,
+    case E of
+        0 ->
+            %% zero or subnormal float32 — both flush to ±0 fp16
+            (S bsl 15);
+        255 ->
+            %% Inf / NaN
+            (S bsl 15) bor (16#1F bsl 10) bor (case M of 0 -> 0; _ -> 1 end);
+        _ ->
+            UnbiasedE = E - 127,
+            case UnbiasedE of
+                X when X < -14 ->
+                    (S bsl 15);  %% underflow → ±0
+                X when X > 15 ->
+                    (S bsl 15) bor (16#1F bsl 10);  %% overflow → ±Inf
+                X ->
+                    Eh = X + 15,
+                    %% Round-to-nearest-even on the mantissa: keep top 10 bits
+                    Mh = (M bsr 13),
+                    Round = (M bsr 12) band 1,
+                    Sticky = case M band 16#FFF of 0 -> 0; _ -> 1 end,
+                    {Mh2, Eh2} = case Round of
+                        0 -> {Mh, Eh};
+                        1 when Sticky =:= 1 ->
+                            Mh1 = Mh + 1,
+                            case Mh1 of
+                                1024 -> {0, Eh + 1};
+                                _ -> {Mh1, Eh}
+                            end;
+                        1 when (Mh band 1) =:= 1 ->
+                            Mh1 = Mh + 1,
+                            case Mh1 of
+                                1024 -> {0, Eh + 1};
+                                _ -> {Mh1, Eh}
+                            end;
+                        1 -> {Mh, Eh}
+                    end,
+                    (S bsl 15) bor (Eh2 bsl 10) bor Mh2
+            end
+    end;
+fp16_encode(0) -> 0;
+fp16_encode(F) when is_integer(F) -> fp16_encode(float(F)).
+
 %% binary of FP16 little-endian values -> list of floats. Used to decode
 %% the FP16 output binaries returned by linear_*_fp8 etc.
 fp16_binary_to_floats(Bin) when is_binary(Bin) ->
