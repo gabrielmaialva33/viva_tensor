@@ -1,0 +1,47 @@
+# Quick reproducible setup for viva_tensor.
+#
+# Usage:
+#   docker compose run --rm bench           # peak TFLOPS sweep on RTX 4090
+#   docker compose run --rm test            # full test suite
+#   docker compose run --rm shell           # interactive shell with all tools
+#
+# Requires the NVIDIA Container Toolkit (nvidia-docker) on the host.
+
+services:
+  bench:
+    build:
+      context: .
+      args:
+        CUDA_ARCH: sm_89   # override for Ampere (sm_86), Turing (sm_75), etc.
+    image: viva_tensor:2.2.101
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    command: gleam run -m viva_tensor/bench/peak
+
+  test:
+    image: viva_tensor:2.2.101
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    command: gleam test
+
+  showdown:
+    image: viva_tensor:2.2.101
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    command: gleam run -m viva_tensor/bench/showdown
+
+  shell:
+    image: viva_tensor:2.2.101
+    runtime: nvidia
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,utility
+    entrypoint: /bin/bash
+    stdin_open: true
+    tty: true

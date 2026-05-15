@@ -1,0 +1,15 @@
+.git
+.claude
+.bench-venv
+build
+priv/viva_tensor_zig.so
+priv/viva_tensor_zig.dll
+zig_src/zig-out
+zig_src/.zig-cache
+zig_src/*.o
+zig_src/libcutlass_*.a
+zig_src/libcusparselt_*.a
+tmp
+*.beam
+erl_crash.dump
+docs/build
