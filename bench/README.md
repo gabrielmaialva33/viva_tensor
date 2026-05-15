@@ -1,63 +1,54 @@
-# Benchmark Suite
+# bench/
 
-External benchmark tools for `viva_tensor`.
+External benchmark and comparison tools. Anything that runs **outside**
+the Gleam package API lives here — Python and R scripts for statistical
+analysis, cross-runtime comparisons against PyTorch / NumPy, shell
+runners, and the results / methodology markdowns.
 
-This directory is for scripts that run outside the Gleam package API. Gleam
-development-only benchmark modules live under `dev/viva_tensor/bench/`.
-
-## Uso Rápido
-
-```bash
-# Benchmark completo (30 runs, Bootstrap CI 95%)
-python3 bench/python/benchmark.py
-
-# Análise estatística (requer R)
-Rscript bench/r/analysis.R
-
-# Runner automatizado (CI/CD)
-./bench/scripts/run_benchmarks.sh
-```
+Gleam-side benchmark entrypoints (the ones invoked via
+`gleam run -m viva_tensor/bench/...`) live under
+[`dev/viva_tensor/bench/`](../dev/viva_tensor/bench/) instead — keeping
+them out of `src/` so they don't ship in the Hex package.
 
 ## Layout
 
-| Path       | Purpose                                       |
-|:-----------|:----------------------------------------------|
-| `python/`  | Statistical and comparison benchmarks.        |
-| `r/`       | Statistical analysis and plots.               |
-| `erlang/`  | Low-level BEAM/NIF escript benchmarks.        |
-| `cuda/`    | CUDA benchmark probes and native fixtures.    |
-| `scripts/` | Cross-runtime benchmark runners.              |
-| `windows/` | Windows helper scripts.                       |
-| `data/`    | Generated raw benchmark data, ignored by git. |
-| `reports/` | Generated reports and plots, ignored by git.  |
+| Path        | Purpose                                                                      |
+| :---------- | :--------------------------------------------------------------------------- |
+| `compare/`  | Current head-to-head: viva_tensor vs PyTorch / NumPy. Methodology + results. |
+| `perf/`     | NumPy comparison scripts + saved CSV baselines.                              |
+| `python/`   | Statistical benchmark scripts (bootstrap CI, throughput sweeps).             |
+| `r/`        | R-based statistical analysis + plots.                                        |
+| `scripts/`  | Shell runners for CI / batch execution.                                      |
 
-## Output
-
-```
-bench/
-├── data/           # JSON com dados brutos (gitignored)
-└── reports/        # Gráficos e relatórios (gitignored)
-```
-
-## Metodologia
-
-Seguindo [Kalibera & Jones (2013)](https://dl.acm.org/doi/10.1145/2400682.2400691):
-
-1. **Warmup**: 5 runs descartados
-2. **Timed**: 30 runs cronometrados
-3. **Outliers**: Remoção via IQR (1.5×)
-4. **CI**: Bootstrap BCa 95% (10.000 resamples)
-5. **Testes**: Mann-Whitney U (não-paramétrico)
-6. **Effect Size**: Cliff's delta
-
-## Ambiente
+## Quick start
 
 ```bash
-# Linux/WSL
-export MKL_NUM_THREADS=24
-export OMP_NUM_THREADS=24
+# Head-to-head vs PyTorch / NumPy (matches viva_tensor/bench/showdown.gleam)
+.bench-venv/bin/python3 bench/compare/numpy_pytorch.py
 
-# Windows
-set MKL_NUM_THREADS=24
-set OMP_NUM_THREADS=24
+# Full statistical sweep with bootstrap CI
+python3 bench/python/benchmark.py
+
+# Drive everything in one go (CI)
+./bench/scripts/run_benchmarks.sh
 ```
+
+The `compare/` directory carries the markdowns that document what the
+numbers mean:
+
+- [`compare/RESULTS.md`](compare/RESULTS.md) — measured benchmarks
+  across all backends and shapes.
+- [`compare/INFERENCE_API_PLAN.md`](compare/INFERENCE_API_PLAN.md) —
+  status of the `prepack_*` / `linear_*` NIFs.
+- [`compare/CUTLASS_DSL_NOTES.md`](compare/CUTLASS_DSL_NOTES.md) —
+  design notes for a future migration to CUTLASS 4 CuTeDSL.
+- [`compare/NVFP4_EVT_PLAN.md`](compare/NVFP4_EVT_PLAN.md) —
+  design notes for NVFP4 fused dequant + GEMM.
+
+## Removed in 2.2.101
+
+- `bench/erlang/` — 22 escript benchmarks superseded by the
+  `dev/viva_tensor/bench/*.gleam` modern generation.
+- `bench/cuda/test_int8_imma.cu` — covered by `peak.gleam`.
+- `bench/windows/` — `.bat` runners (project doesn't currently support
+  Windows as a first-class target; reopen if there's demand).
