@@ -230,15 +230,14 @@ pub fn linear_int4_sparse(
   case tensor.shape(input) {
     [batch, in_f] if in_f == weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
-      case
-        nt_linear_int4_sparse(
-          tensor.to_list(input),
-          [batch, in_f],
-          weight.handle,
-          bias_data,
-        )
-      {
-        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+      let _ = batch
+      let _ = in_f
+      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
+      case nt_linear_int4_sparse(input_bin, weight.handle, bias_data) {
+        Ok(out_bin) -> {
+          let out_data = fp16_binary_to_floats(out_bin)
+          Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        }
         Error(reason) ->
           Error(DimensionError("linear_int4_sparse failed: " <> reason))
       }
@@ -265,15 +264,14 @@ pub fn linear_int8_sparse(
   case tensor.shape(input) {
     [batch, in_f] if in_f == weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
-      case
-        nt_linear_int8_sparse(
-          tensor.to_list(input),
-          [batch, in_f],
-          weight.handle,
-          bias_data,
-        )
-      {
-        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+      let _ = batch
+      let _ = in_f
+      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
+      case nt_linear_int8_sparse(input_bin, weight.handle, bias_data) {
+        Ok(out_bin) -> {
+          let out_data = fp16_binary_to_floats(out_bin)
+          Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        }
         Error(reason) ->
           Error(DimensionError("linear_int8_sparse failed: " <> reason))
       }
@@ -301,17 +299,15 @@ pub fn linear_gelu_fp8(
   case tensor.shape(input) {
     [batch, in_f] if in_f == weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
-      case
-        nt_linear_gelu_fp8(
-          tensor.to_list(input),
-          [batch, in_f],
-          weight.handle,
-          bias_data,
-          // epilogue code: BIAS+GELU
-          36,
-        )
-      {
-        Ok(out_data) -> Ok(make_2d_tensor(out_data, batch, weight.out_features))
+      let _ = batch
+      let _ = in_f
+      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
+      // epilogue code: BIAS+GELU = 36
+      case nt_linear_gelu_fp8(input_bin, weight.handle, bias_data, 36) {
+        Ok(out_bin) -> {
+          let out_data = fp16_binary_to_floats(out_bin)
+          Ok(make_2d_tensor(out_data, batch, weight.out_features))
+        }
         Error(reason) ->
           Error(DimensionError("linear_gelu_fp8 failed: " <> reason))
       }
@@ -347,17 +343,20 @@ pub fn linear_swiglu_fp8(
   {
     [batch, in_f], True, True if in_f == gate_weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
+      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
       case
         nt_linear_swiglu_fp8(
-          tensor.to_list(input),
+          input_bin,
           [batch, in_f],
           gate_weight.handle,
           up_weight.handle,
           bias_data,
         )
       {
-        Ok(out_data) ->
+        Ok(out_bin) -> {
+          let out_data = fp16_binary_to_floats(out_bin)
           Ok(make_2d_tensor(out_data, batch, gate_weight.out_features))
+        }
         Error(reason) ->
           Error(DimensionError("linear_swiglu_fp8 failed: " <> reason))
       }
