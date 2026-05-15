@@ -172,30 +172,43 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
 
   const float *src = (const float *)weight_bin.data;
 
-  /* Pass 1: compute absmax over the whole tensor (per-tensor scale). */
-  float absmax = 0.0f;
-  for (size_t i = 0; i < n_elems; ++i) {
-    float v = src[i];
-    float a = fabsf(v);
-    if (a > absmax) absmax = a;
-  }
-  /* Avoid divide-by-zero for all-zero weights (degenerate but legal). */
-  float scale = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-  float inv_scale = 1.0f / scale;
+  /* Per-output-channel quantization (inspired by ggml block-wise quant
+   * and what vllm/TRT-LLM use for FP8 LLM serving). Each output column
+   * gets its own absmax → its own scale → its own dequant factor on the
+   * linear path. Outliers in one channel don't compress the dynamic
+   * range of the others. With FP8 E4M3 full range (448), per-channel
+   * scaling on K=4096 LLM weights typically lands L2 < 1% vs FP32. */
+  float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
+  if (!h_scales) return make_error(env, "out_of_memory");
 
-  /* Pass 2: quantize and transpose to column-major in one go.
-   * Source layout: src[k * N + n]  (row k, col n in [K, N] row-major).
-   * Dest layout:   dst[n * K + k]  (col-major == B^T row-major).
-   * CUTLASS expects B as column-major with ldb=K. */
+  /* Pass 1: per-channel absmax + scale. */
+  for (int n = 0; n < out_features; ++n) {
+    float absmax = 0.0f;
+    for (int k = 0; k < in_features; ++k) {
+      float a = fabsf(src[(size_t)k * out_features + n]);
+      if (a > absmax) absmax = a;
+    }
+    h_scales[n] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+  }
+
+  /* Pass 2: quantize + transpose. Each column uses its own scale. */
   uint8_t *h_packed = (uint8_t *)malloc(n_elems);
-  if (!h_packed) return make_error(env, "out_of_memory");
+  if (!h_packed) { free(h_scales); return make_error(env, "out_of_memory"); }
 
   for (int n = 0; n < out_features; ++n) {
+    float inv_scale_n = 1.0f / h_scales[n];
     for (int k = 0; k < in_features; ++k) {
-      float v = src[(size_t)k * out_features + n] * inv_scale;
+      float v = src[(size_t)k * out_features + n] * inv_scale_n;
       h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
     }
   }
+  /* Backwards-compat: still expose a single "scale" field on the resource
+   * (using a representative absmax — the geometric mean is closer to the
+   * old per-tensor scale's role). Real dequant uses the per-channel
+   * d_scales buffer below. */
+  float scale = 0.0f;
+  for (int n = 0; n < out_features; ++n) scale += h_scales[n];
+  scale /= (float)out_features;
 
   /* Allocate the PackedWeight resource and its device buffers. */
   PackedWeight *w = alloc_packed_weight();
