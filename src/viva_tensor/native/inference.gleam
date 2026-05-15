@@ -102,8 +102,8 @@ pub fn prepack_fp8_weight(
 ) -> Result(PackedWeightFp8, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_fp8(tensor.to_list(weight), [in_f, out_f]) {
-        Ok(#(handle, scale)) ->
+      case nt_prepack_fp8(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+        Ok(#(handle, _in, _out, scale)) ->
           Ok(PackedWeightFp8(
             handle: handle,
             in_features: in_f,
@@ -128,13 +128,13 @@ pub fn prepack_int8_sparse_24_weight(
 ) -> Result(PackedWeightInt8Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_int8_sparse(tensor.to_list(weight), [in_f, out_f]) {
-        Ok(#(handle, scales)) ->
+      case nt_prepack_int8_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+        Ok(handle) ->
           Ok(PackedWeightInt8Sparse(
             handle: handle,
             in_features: in_f,
             out_features: out_f,
-            channel_scales: scales,
+            channel_scales: [],
           ))
         Error(reason) ->
           Error(DimensionError(
@@ -158,13 +158,13 @@ pub fn prepack_int4_sparse_24_weight(
 ) -> Result(PackedWeightInt4Sparse, TensorError) {
   case tensor.shape(weight) {
     [in_f, out_f] -> {
-      case nt_prepack_int4_sparse(tensor.to_list(weight), [in_f, out_f]) {
-        Ok(#(handle, scales)) ->
+      case nt_prepack_int4_sparse(floats_to_fp32_binary(tensor.to_list(weight)), [in_f, out_f]) {
+        Ok(handle) ->
           Ok(PackedWeightInt4Sparse(
             handle: handle,
             in_features: in_f,
             out_features: out_f,
-            channel_scales: scales,
+            channel_scales: [],
           ))
         Error(reason) ->
           Error(DimensionError(
@@ -455,23 +455,37 @@ fn join_int_list(xs: List(Int)) -> String {
 // Agent A's NIF pattern-matches on the first element of the tuple, or on
 // the atom directly, to decide whether to add bias.
 
+// FP8 NIF returns {ok, {Resource, InFeatures, OutFeatures, Scale}}. We
+// reuse in/out from the Gleam-side shape check so the tuple decode only
+// cares about handle + scale; the two Int slots between them are still
+// part of the wire shape and need to appear in the type signature.
+// FP32 helper: List(Float) -> binary of little-endian IEEE-754 fp32.
+// The C NIFs prefer binaries because copying a 1M-element weight list
+// through enif_get_list_cell is ~100× slower than enif_inspect_binary.
+@external(erlang, "viva_tensor_inference_ffi", "floats_to_fp32_binary")
+fn floats_to_fp32_binary(floats: List(Float)) -> BitArray
+
 @external(erlang, "viva_tensor_zig", "nt_prepack_fp8")
 fn nt_prepack_fp8(
-  data: List(Float),
+  data: BitArray,
   shape: List(Int),
-) -> Result(#(Dynamic, Float), String)
+) -> Result(#(Dynamic, Int, Int, Float), String)
 
+// INT8/INT4 NIFs return {ok, Resource} — the per-channel scales live
+// inside the PackedWeight C struct so they don't need to be exposed
+// to the Gleam side (the linear NIFs read them straight from the
+// resource).
 @external(erlang, "viva_tensor_zig", "nt_prepack_int8_sparse")
 fn nt_prepack_int8_sparse(
-  data: List(Float),
+  data: BitArray,
   shape: List(Int),
-) -> Result(#(Dynamic, List(Float)), String)
+) -> Result(Dynamic, String)
 
 @external(erlang, "viva_tensor_zig", "nt_prepack_int4_sparse")
 fn nt_prepack_int4_sparse(
-  data: List(Float),
+  data: BitArray,
   shape: List(Int),
-) -> Result(#(Dynamic, List(Float)), String)
+) -> Result(Dynamic, String)
 
 @external(erlang, "viva_tensor_zig", "nt_linear_fp8")
 fn nt_linear_fp8(

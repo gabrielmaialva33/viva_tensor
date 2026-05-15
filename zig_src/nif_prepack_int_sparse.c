@@ -584,20 +584,26 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     }
     memset(h_packed, 0, packed_total);
 
-    /* Metadata encoding for CUTLASS INT4 2:4 sparse (m16n8k128, Sm80+):
-     *   kSparse=2  kElementsPerElementE=32  sizeof(ElementE)=4 (uint32_t).
-     * Verified at runtime via cutlass_int4_sparse_run_info().
+    /* Metadata buffer for CUTLASS INT4 2:4 sparse (m16n8k128, Sm80+).
      *
-     * Layout: one uint32 ElementE covers 32 K positions = 8 groups of 4.
-     * Each group contributes 4 bits (2 keep indices × 2 bits each).
-     *   bits[0..3]   = group 0 (k=0..3):   (keep0 | keep1 << 2)
-     *   bits[4..7]   = group 1 (k=4..7)
-     *   ...
-     *   bits[28..31] = group 7 (k=28..31)
-     * The 8 groups pack into a single uint32 little-endian, which is also
-     * exactly 4 bytes when written via a uint8_t* (4 bytes per uint32, 8 K
-     * positions per byte, 2 groups per byte). We accept either pointer
-     * width as long as the buffer alignment matches sizeof(ElementE). */
+     * Probe values: kSparse=2  kElementsPerElementE=32  sizeof(ElementE)=4.
+     * Per CUTLASS:  metaK = in_features / kSparse / kElemsPerE
+     *             = in_features / 64
+     * For K=256 that gives 4 uint32 ElementE words per row (16 bytes).
+     *
+     * The exact bit layout inside each ElementE is CUTLASS internal — the
+     * 32 bits cover 64 pre-sparse K positions packed in a hardware-specific
+     * encoding that the m16n8k128 sparse MMA instruction consumes directly.
+     * We don't reverse-engineer that here; instead we zero-fill (matching
+     * the cutlass_int4_sparse_bench reference path which also zero-fills).
+     * Throughput is correct; element-wise numerical correctness against
+     * an FP32 reference still requires the proper bit pattern — tracked
+     * in INFERENCE_API_PLAN.md.
+     *
+     * Critical: size the buffer *exactly* as CUTLASS expects so the kernel
+     * doesn't read past it. Allocate metaK_e * sizeof(ElementE) per row.
+     * Previously this was over-sized 2× and the encoder loop wrote past
+     * the end — corrupted the heap on shapes ≥ K=256. */
     int int4_sparse, int4_elems_per_e, int4_sizeof_e;
     cutlass_int4_sparse_run_info(&int4_sparse, &int4_elems_per_e, &int4_sizeof_e);
     size_t meta_units_per_row =
@@ -611,14 +617,12 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     }
     memset(h_meta, 0, meta_total);
 
+    /* Data buffer — pack two int4 nibbles per byte after 2:4 magnitude
+     * pruning. Drives correctness of the throughput path. */
     for (int o = 0; o < out_features; ++o) {
         int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
         int8_t* prow = h_packed + (size_t)o * packed_bytes_per_row;
-        uint8_t* mrow = h_meta + (size_t)o * meta_bytes_per_row;
 
-        /* Walk K in groups of 4. For each group, locate the two non-zero
-         * positions, pack the two int4 values into one byte, and write 4
-         * bits of metadata into the uint32 word that covers this group. */
         size_t out_nibble_idx = 0;
         for (int k = 0; k < in_features; k += 4) {
             int keep_ix[2] = {-1, -1};
@@ -626,39 +630,17 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
             for (int j = 0; j < 4 && p < 2; ++j) {
                 if (qrow[k + j] != 0) keep_ix[p++] = j;
             }
-            /* All-zero row fallback: keep positions 0 and 2 with value 0. */
             if (p == 0) { keep_ix[0] = 0; keep_ix[1] = 2; }
             else if (p == 1) { keep_ix[1] = (keep_ix[0] == 0) ? 2 : 0; }
-            /* Force sorted (CUTLASS expects keep0 < keep1). */
             if (keep_ix[0] > keep_ix[1]) {
                 int tmp = keep_ix[0]; keep_ix[0] = keep_ix[1]; keep_ix[1] = tmp;
             }
 
             int8_t v0 = qrow[k + keep_ix[0]];
             int8_t v1 = qrow[k + keep_ix[1]];
-
-            /* Pack two int4 nibbles into one byte. Low nibble = v0, high = v1.
-             * Sign-extension is the consumer's responsibility (CUTLASS does
-             * this automatically with the int4b_t type). */
             uint8_t lo = (uint8_t)v0 & 0x0F;
             uint8_t hi = ((uint8_t)v1 & 0x0F) << 4;
             prow[out_nibble_idx++] = (int8_t)(lo | hi);
-
-            /* Metadata into the uint32 that covers this group of 4.
-             *   group_idx_in_word = (k / 4) & 7   (8 groups per uint32)
-             *   word_idx          = k / 32
-             * Each group occupies 4 bits at offset (group_idx_in_word * 4)
-             * within the uint32, little-endian. */
-            int group_idx_in_word = (k / 4) & 7;
-            size_t word_idx = (size_t)k / 32;
-            uint32_t bits =
-                ((uint32_t)keep_ix[0] & 0x3u) |
-                (((uint32_t)keep_ix[1] & 0x3u) << 2);
-            /* Reinterpret mrow as uint32 little-endian — safe because
-             * malloc returns at least 8-byte aligned memory on x86-64 and
-             * the buffer is uint32-stride from the start. */
-            uint32_t* mrow_u32 = (uint32_t*)(void*)mrow;
-            mrow_u32[word_idx] |= bits << (group_idx_in_word * 4);
         }
     }
 
