@@ -220,12 +220,12 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
   w->dtype = PW_FP8;
   w->in_features = in_features;
   w->out_features = out_features;
-  w->weight_bytes = n_elems;        /* FP8 = 1 byte/elem */
-  w->scales_count = 1;               /* per-tensor */
+  w->weight_bytes = n_elems;                /* FP8 = 1 byte/elem */
+  w->scales_count = (size_t)out_features;   /* per-output-channel */
 
   cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
   if (err != cudaSuccess) {
-    free(h_packed);
+    free(h_packed); free(h_scales);
     enif_release_resource(w);
     return make_error(env, "cuda_malloc_weight_failed");
   }
@@ -233,17 +233,21 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
                     cudaMemcpyHostToDevice);
   free(h_packed);
   if (err != cudaSuccess) {
+    free(h_scales);
     enif_release_resource(w);
     return make_error(env, "cuda_upload_weight_failed");
   }
 
-  err = cudaMalloc(&w->d_scales, sizeof(float));
+  size_t scales_bytes = (size_t)out_features * sizeof(float);
+  err = cudaMalloc(&w->d_scales, scales_bytes);
   if (err != cudaSuccess) {
+    free(h_scales);
     enif_release_resource(w);
     return make_error(env, "cuda_malloc_scale_failed");
   }
-  err = cudaMemcpy(w->d_scales, &scale, sizeof(float),
+  err = cudaMemcpy(w->d_scales, h_scales, scales_bytes,
                     cudaMemcpyHostToDevice);
+  free(h_scales);
   if (err != cudaSuccess) {
     enif_release_resource(w);
     return make_error(env, "cuda_upload_scale_failed");
