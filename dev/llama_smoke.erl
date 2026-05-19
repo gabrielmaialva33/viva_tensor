@@ -85,9 +85,14 @@ run() ->
     XNorm2Fp16 = floats_to_fp16(XNorm2),
     io:format("After post_attention_layernorm  mean_abs=~p~n", [mean_abs(XNorm2)]),
 
-    %% SwiGLU FFN via the fused viva_tensor NIF.
-    FfnOut = time_stage("SwiGLU FFN",
-        fun() -> linear_swiglu_fp8(XNorm2Fp16, GatePacked, UpPacked, DownPacked, ?HIDDEN) end),
+    %% SwiGLU FFN: intermediate = silu(gate(x)) * up(x), then down.
+    SwiGluInter = time_stage("SwiGLU gate*silu*up",
+        fun() -> linear_swiglu_intermediate(XNorm2, 1, ?HIDDEN, GatePacked, UpPacked, ?FFN) end),
+    io:format("SwiGLU intermediate mean_abs=~p~n", [mean_abs(SwiGluInter)]),
+
+    SwiGluInterFp16 = floats_to_fp16(SwiGluInter),
+    FfnOut = time_stage("Linear Down",
+        fun() -> linear_fp8(SwiGluInterFp16, DownPacked, ?HIDDEN) end),
     io:format("FFN out mean_abs=~p~n", [mean_abs(FfnOut)]),
 
     %% Residual 2.
@@ -117,15 +122,19 @@ load_rmsnorm(Header, Name) ->
     viva_tensor_safetensors_ffi:rmsnorm_weight_to_fp32_list(Bf16).
 
 prepack(Bin, InF, OutF) when is_binary(Bin) ->
-    {ok, Packed} = viva_tensor_zig:prepack_fp8_weight(Bin, [InF, OutF]),
-    Packed.
+    case viva_tensor_zig:nt_prepack_fp8(Bin, [InF, OutF]) of
+        {ok, {Resource, _, _, _}} -> Resource;
+        {ok, Resource} when is_reference(Resource) -> Resource;
+        Other -> error({prepack_failed, Other})
+    end.
 
 %% ---------------------------------------------------------------------------
-%% Linear NIF wrappers (binary in/out, no list conversion)
+%% Linear NIF wrappers
 %% ---------------------------------------------------------------------------
 
+%% linear_fp8(Input_FP16_binary, Packed, Bias_or_nil, Epilogue_int) -> {ok, OutFp16Binary}
 linear_fp8(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
-    case viva_tensor_zig:linear_fp8(InputFp16, Packed, bias_nil) of
+    case viva_tensor_zig:nt_linear_fp8(InputFp16, Packed, nil, 0) of
         {ok, OutBin} ->
             Vals = viva_tensor_inference_ffi:fp16_binary_to_floats(OutBin),
             verify_size(Vals, OutF),
@@ -134,11 +143,14 @@ linear_fp8(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
             error({linear_fp8_failed, Error})
     end.
 
-linear_swiglu_fp8(InputFp16, Gate, Up, Down, OutF) when is_binary(InputFp16) ->
-    case viva_tensor_zig:linear_swiglu_fp8(InputFp16, Gate, Up, Down, bias_nil) of
+%% linear_swiglu_fp8(InputDataList, InputShapeList, Gate, Up, BiasOrNil)
+%% Returns the SwiGLU intermediate [B, ffn] — does NOT include the down
+%% projection. Caller must apply linear_fp8 with down_proj afterwards.
+linear_swiglu_intermediate(InputFp32List, B, InF, Gate, Up, FfnDim) ->
+    case viva_tensor_zig:nt_linear_swiglu_fp8(InputFp32List, [B, InF], Gate, Up, nil) of
         {ok, OutBin} ->
             Vals = viva_tensor_inference_ffi:fp16_binary_to_floats(OutBin),
-            verify_size(Vals, OutF),
+            verify_size(Vals, B * FfnDim),
             Vals;
         Error ->
             error({swiglu_failed, Error})
