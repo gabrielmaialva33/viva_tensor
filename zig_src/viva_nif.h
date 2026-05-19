@@ -554,6 +554,12 @@ extern int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
                                              void *d_fp16,
                                              int K,
                                              int N);
+extern int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
+                                                       const float *d_scales,
+                                                       void *d_fp16,
+                                                       int K,
+                                                       int N,
+                                                       int block_size);
 /* cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core ~165 TFLOPS). */
 extern int cublaslt_fp16_bench(int M, int N, int K, int iters);
 /* N axpy kernels as N stream launches (baseline). */
@@ -773,6 +779,7 @@ NIF_FUNC_DECL(cublaslt_fp8_algo_sweep_nif);
 
 /* Inference API — PackedWeight + FP8 / INT8 / INT4 prepack + linear / SwiGLU. */
 NIF_FUNC_DECL(nt_prepack_fp8);
+NIF_FUNC_DECL(nt_prepack_fp8_blocked);
 NIF_FUNC_DECL(nt_linear_fp8);
 NIF_FUNC_DECL(nt_linear_fp8_w8a16);
 NIF_FUNC_DECL(nt_linear_gelu_fp8);
