@@ -38,39 +38,40 @@
  */
 
 #include "viva_nif.h"
+#include "nif_packed_weight.h"
 
 #include <cuda_runtime.h>
 #include <cuda_fp16.h>
+#include <math.h>
 
-/* ============================================================================
- * Externs that agent A provides (nif_packed_weight.c)
- *
- * If those symbols don't exist yet, this NIF compiles but `make_error`s
- * cleanly at the resource-fetch step (no segfault, just returns
- * `{error, "packed_weight_resource_unavailable"}`).
- * ============================================================================ */
+/* Inline per-tensor E4M3 host quantization (same as in nif_linear_fp8.c).
+ * input_scale = absmax / 448, then qx = float_to_fp8(x / input_scale).
+ * Returns 0 on success. */
+static int swiglu_quantize_fp8_e4m3_host(uint8_t* d_out,
+                                          const float* h_in,
+                                          size_t n,
+                                          float* out_scale) {
+  float amax = 0.0f;
+  for (size_t i = 0; i < n; ++i) {
+    float a = fabsf(h_in[i]);
+    if (a > amax) amax = a;
+  }
+  float s = (amax > 0.0f) ? (amax / 448.0f) : 1.0f;
+  *out_scale = s;
 
-extern "C" {
+  uint8_t* h_q = (uint8_t*)malloc(n);
+  if (!h_q) return -1;
+  float* tmp = (float*)malloc(n * sizeof(float));
+  if (!tmp) { free(h_q); return -1; }
+  float inv = 1.0f / s;
+  for (size_t i = 0; i < n; ++i) tmp[i] = h_in[i] * inv;
+  float_to_fp8_e4m3_batch(h_q, tmp, n);
+  free(tmp);
 
-/* Agent A's PackedWeight resource accessors. Forward-declared as opaque. */
-typedef struct PackedWeight PackedWeight;
-
-__attribute__((weak)) ErlNifResourceType* packed_weight_resource_type(void);
-__attribute__((weak)) PackedWeight* get_packed_weight(ErlNifEnv* env, ERL_NIF_TERM term);
-__attribute__((weak)) void* packed_weight_device_ptr(PackedWeight* w);
-__attribute__((weak)) int   packed_weight_in_features(PackedWeight* w);
-__attribute__((weak)) int   packed_weight_out_features(PackedWeight* w);
-__attribute__((weak)) float packed_weight_scale(PackedWeight* w);
-
-/* Agent A's input-quantization helper. Per-tensor E4M3 absmax/448.0. */
-__attribute__((weak)) int quantize_fp8_e4m3_host(uint8_t* d_out, const float* h_in,
-                                                  size_t n, float* out_scale);
-
-/* NOTE: `cutlass_fp8_gemm_f16acc` is declared in `viva_nif.h` (extern "C"
- * compatible since viva_nif.h is included via a C header guard). We use the
- * declaration from viva_nif.h directly. */
-
-}  /* extern "C" */
+  cudaError_t cerr = cudaMemcpy(d_out, h_q, n, cudaMemcpyHostToDevice);
+  free(h_q);
+  return (cerr == cudaSuccess) ? 0 : -2;
+}
 
 /* ============================================================================
  * Fused silu+mul kernel
@@ -135,13 +136,6 @@ extern "C" ERL_NIF_TERM
 nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   if (argc != 5) return enif_make_badarg(env);
 
-  /* --- Guard: agent A symbols must be present at link/runtime --- */
-  if (!packed_weight_resource_type || !get_packed_weight ||
-      !packed_weight_device_ptr || !packed_weight_in_features ||
-      !packed_weight_out_features || !quantize_fp8_e4m3_host) {
-    return make_error(env, "packed_weight_resource_unavailable");
-  }
-
   /* --- Parse input shape --- */
   int shape[8];
   int ndim = 0;
@@ -175,24 +169,23 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     free(h_input_fp32);
     return make_error(env, "bad_packed_weight");
   }
+  if (gate_w->dtype != PW_FP8 || up_w->dtype != PW_FP8) {
+    free(h_input_fp32);
+    return make_error(env, "weight_not_fp8");
+  }
 
-  int in_f_gate  = packed_weight_in_features(gate_w);
-  int in_f_up    = packed_weight_in_features(up_w);
-  int out_f_gate = packed_weight_out_features(gate_w);
-  int out_f_up   = packed_weight_out_features(up_w);
-
-  if (in_f_gate != in_features || in_f_up != in_features) {
+  if (gate_w->in_features != in_features || up_w->in_features != in_features) {
     free(h_input_fp32);
     return make_error(env, "in_features_mismatch");
   }
-  if (out_f_gate != out_f_up) {
+  if (gate_w->out_features != up_w->out_features) {
     free(h_input_fp32);
     return make_error(env, "out_features_mismatch");
   }
-  int out_features = out_f_gate;
+  int out_features = gate_w->out_features;
 
-  void* d_gate_weight = packed_weight_device_ptr(gate_w);
-  void* d_up_weight   = packed_weight_device_ptr(up_w);
+  void* d_gate_weight = gate_w->d_weight;
+  void* d_up_weight   = up_w->d_weight;
   if (!d_gate_weight || !d_up_weight) {
     free(h_input_fp32);
     return make_error(env, "packed_weight_device_ptr_null");
@@ -206,7 +199,7 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     return make_error(env, "cuda_malloc_input");
   }
   float input_scale = 1.0f;
-  if (quantize_fp8_e4m3_host(d_input_fp8, h_input_fp32, input_elems, &input_scale) != 0) {
+  if (swiglu_quantize_fp8_e4m3_host(d_input_fp8, h_input_fp32, input_elems, &input_scale) != 0) {
     cudaFree(d_input_fp8);
     free(h_input_fp32);
     return make_error(env, "input_quantize_failed");
