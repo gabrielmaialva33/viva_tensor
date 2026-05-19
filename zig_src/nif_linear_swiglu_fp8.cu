@@ -358,7 +358,9 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
   free(h_out);
 
+  fprintf(stderr, "[SWIGLU-DBG] before doubles_to_list total=%zu\n", total);
   ERL_NIF_TERM out_list = doubles_to_list(env, h_out_doubles, (unsigned)total);
+  fprintf(stderr, "[SWIGLU-DBG] after doubles_to_list\n");
   free(h_out_doubles);
 
   return make_ok(env, out_list);
