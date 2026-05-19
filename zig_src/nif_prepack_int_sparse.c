@@ -606,19 +606,30 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     }
     memset(h_meta, 0, meta_total);
 
+    /* Derive metadata from h_quant directly (row-major, already pruned in the
+     * quant loop). Re-reading W here in column-major was a bug: it picked
+     * different pairs than the ones actually preserved in h_quant. */
     for (int o = 0; o < out_features; ++o) {
+        const int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
         uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
         for (int k = 0; k < in_features; k += 8) {
-            float vals[8];
-            for (int j = 0; j < 8; ++j) {
-                vals[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
+            int kept[2] = {-1, -1};
+            int p = 0;
+            for (int pair = 0; pair < 4 && p < 2; ++pair) {
+                if (qrow[k + pair * 2] != 0 || qrow[k + pair * 2 + 1] != 0) {
+                    kept[p++] = pair;
+                }
             }
-            int keep_pair0, keep_pair1;
-            top2_pairs_of_8(vals, &keep_pair0, &keep_pair1);
+            /* If a row is entirely zero (rare, all-equal-magnitude block),
+             * fall back to pairs 0 and 2 — matches top2_pairs_of_8 default. */
+            if (p == 0) { kept[0] = 0; kept[1] = 2; }
+            else if (p == 1) { kept[1] = (kept[0] == 0) ? 2 : 0;
+                               if (kept[0] > kept[1]) { int t = kept[0]; kept[0] = kept[1]; kept[1] = t; } }
+
             size_t group = (size_t)k / 8;
             size_t word = group / 8;
             size_t nibble = group % 8;
-            uint32_t e = (uint32_t)(keep_pair0 | (keep_pair1 << 2));
+            uint32_t e = (uint32_t)(kept[0] | (kept[1] << 2));
             meta_row[word] |= e << (nibble * 4);
         }
     }
