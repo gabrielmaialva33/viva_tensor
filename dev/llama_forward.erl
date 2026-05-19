@@ -32,6 +32,7 @@
 -define(VOCAB, 32000).
 -define(EPS, 1.0e-5).
 -define(BOS_TOKEN, 1).        %% <s> in TinyLlama tokenizer
+-define(ROPE_THETA, 10000.0). %% From config.json
 
 run() -> run_n(?NUM_LAYERS).
 
@@ -55,7 +56,12 @@ run_n(NumLayers) ->
     TF0 = ms(),
     FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
     EmbedTbl  = load_embed_table(Header),     %% lazy: index -> row
-    io:format("[~5w ms] Final norm + embed table loaded~n", [ms() - TF0]),
+    %% Pre-compute RoPE table up to a small max-pos. For the first-token
+    %% forward we only need pos=0 entries, but we build a few rows in case
+    %% downstream tasks (KV cache) want longer contexts.
+    RopeTable = precompute_rope_table(64, ?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Final norm + embed table + RoPE table loaded~n",
+              [ms() - TF0]),
 
     %% --- Initial hidden state: embedding row for BOS token. --------------
     Token = ?BOS_TOKEN,
@@ -164,6 +170,59 @@ forward_block(H, Layer, _LayerIdx) ->
     %% Residual 2
     list_add(H1, Ffn).
 
+%% ---------------------------------------------------------------------------
+%% RoPE (rotary positional embedding)
+%% ---------------------------------------------------------------------------
+%% Llama applies RoPE to Q and K (NOT V) before attention. Per head_dim/2 pair
+%% (i, i + head_dim/2) the value is rotated by angle = pos * theta_i where
+%%   theta_i = rope_theta ** (-2i/head_dim) for i in [0, head_dim/2)
+%%
+%% precompute_rope_table(MaxPos) returns a tuple of MaxPos rotation tables,
+%% each table being a list of {cos, sin} pairs of length head_dim/2.
+%% We index by position to read once per forward.
+
+precompute_rope_freqs(HeadDim, Theta) ->
+    Half = HeadDim div 2,
+    [math:pow(Theta, -2.0 * float(I) / float(HeadDim))
+     || I <- lists:seq(0, Half - 1)].
+
+precompute_rope_table(MaxPos, HeadDim, Theta) ->
+    Freqs = precompute_rope_freqs(HeadDim, Theta),
+    list_to_tuple(
+        [[ {math:cos(float(Pos) * F), math:sin(float(Pos) * F)} || F <- Freqs ]
+         || Pos <- lists:seq(0, MaxPos - 1)]
+    ).
+
+%% Apply RoPE to a flat list of [num_heads * head_dim] floats at the given
+%% absolute position. Returns the rotated flat list with the same shape.
+apply_rope(Flat, Pos, RopeTable, NumHeads, HeadDim) ->
+    RotationsAtPos = element(Pos + 1, RopeTable),    %% list of {cos, sin}
+    Heads = chunks(Flat, HeadDim),
+    Rotated = [rotate_head(H, RotationsAtPos, HeadDim) || H <- Heads],
+    _Count = NumHeads,
+    lists:flatten(Rotated).
+
+rotate_head(HeadVec, Rotations, HeadDim) ->
+    Half = HeadDim div 2,
+    HeadTup = list_to_tuple(HeadVec),
+    [rotate_at(HeadTup, I, Half, Rotations) || I <- lists:seq(0, HeadDim - 1)].
+
+rotate_at(HeadTup, I, Half, Rotations) ->
+    case I < Half of
+        true ->
+            X1 = element(I + 1, HeadTup),
+            X2 = element(I + Half + 1, HeadTup),
+            {C, S} = lists:nth(I + 1, Rotations),
+            X1 * C - X2 * S;
+        false ->
+            J = I - Half,
+            X1 = element(J + 1, HeadTup),
+            X2 = element(I + 1, HeadTup),
+            {C, S} = lists:nth(J + 1, Rotations),
+            X1 * S + X2 * C
+    end.
+
+%% ---------------------------------------------------------------------------
 %% Single-token attention: with one position in the KV cache, softmax of the
 %% lone scaled QK dot product is 1, so attn_out per Q-head equals the V-head
 %% it points at (GQA: 32 Q heads / 4 KV heads = 8 Q per KV).
