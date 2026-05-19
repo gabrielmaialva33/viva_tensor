@@ -91,23 +91,38 @@ bf16_to_fp32(<<U:16/unsigned-little, Rest/binary>>, Acc) ->
 %% binary with shape {Cols, Rows} (still row-major). Used to flip
 %% HuggingFace [out, in] convention to viva_tensor's [in, out] prepack
 %% convention.
+%%
+%% Fast path: calls the C NIF `viva_tensor_zig:nt_transpose_fp32/3`
+%% (single-threaded tiled transpose; ~50× faster than pure Erlang for
+%% the 32000×2048 lm_head). Falls back to the pure-Erlang implementation
+%% if the NIF is not loaded (e.g. test runs without the .so).
 transpose_fp32(Bin, Rows, Cols) when is_binary(Bin) ->
     Elems = Rows * Cols,
     case byte_size(Bin) of
         Sz when Sz =:= Elems * 4 ->
-            %% Iterate columns of the input (becomes rows of the output).
-            %% For each output row c, build a contiguous Rows×4-byte chunk
-            %% by reading `binary_part(Bin, (r*Cols+c)*4, 4)` for r=0..Rows-1.
-            %% Avoids the O(Rows*Cols) tuple allocation that blew up the
-            %% Erlang scheduler for 32000×2048 matrices.
-            Out = iolist_to_binary(
-                [transpose_col(Bin, C, Rows, Cols)
-                 || C <- lists:seq(0, Cols - 1)]
-            ),
-            {ok, Out};
+            try
+                Out = viva_tensor_zig:nt_transpose_fp32(Bin, Rows, Cols),
+                {ok, Out}
+            catch
+                error:nif_not_loaded -> transpose_fp32_erlang(Bin, Rows, Cols);
+                error:undef          -> transpose_fp32_erlang(Bin, Rows, Cols);
+                error:badarg         -> transpose_fp32_erlang(Bin, Rows, Cols)
+            end;
         _ ->
             {error, size_mismatch}
     end.
+
+%% Pure-Erlang fallback. Iterates columns of the input (becomes rows of the
+%% output). For each output row c, build a contiguous Rows×4-byte chunk by
+%% reading `binary_part(Bin, (r*Cols+c)*4, 4)` for r=0..Rows-1. Avoids the
+%% O(Rows*Cols) tuple allocation that blew up the Erlang scheduler for
+%% 32000×2048 matrices.
+transpose_fp32_erlang(Bin, Rows, Cols) ->
+    Out = iolist_to_binary(
+        [transpose_col(Bin, C, Rows, Cols)
+         || C <- lists:seq(0, Cols - 1)]
+    ),
+    {ok, Out}.
 
 transpose_col(Bin, C, Rows, Cols) ->
     [binary_part(Bin, (R * Cols + C) * 4, 4) || R <- lists:seq(0, Rows - 1)].

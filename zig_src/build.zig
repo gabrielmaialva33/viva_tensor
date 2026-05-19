@@ -102,6 +102,13 @@ pub fn build(b: *std.Build) void {
         .flags = &.{},
     });
 
+    // Fast FP32 row-major transpose (used by safetensors loader to flip
+    // HuggingFace [out,in] weights into viva_tensor's [in,out] convention).
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("nif_transpose.c"),
+        .flags = &.{},
+    });
+
     if (enable_cuda) {
         // SparseTensor NIFs (FP16 + INT8 via cuSPARSELt)
         lib.root_module.addCSourceFile(.{

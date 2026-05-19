@@ -260,6 +260,9 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_layer_norm", 4, nt_layer_norm, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_gelu_exact", 1, nt_gelu_exact, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
+    /* Fast FP32 transpose for safetensors loader (HF [out,in] -> [in,out]) */
+    {"nt_transpose_fp32", 3, nt_transpose_fp32, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+
     /* LNS (True Log-Number System) — f32 via IADD, 8x throughput */
     {"lns_from_f64", 1, lns_from_f64, 0},
     {"lns_to_f64", 1, lns_to_f64, 0},

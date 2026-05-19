@@ -43,7 +43,9 @@
     %% Resonance kernels (Log-Number System) - f64
     nt_resonance_mul/2, nt_resonance_power/2,
     %% CPU scaffolding — softmax_axis / layer_norm / gelu_exact
-    nt_softmax_axis/2, nt_layer_norm/4, nt_gelu_exact/1
+    nt_softmax_axis/2, nt_layer_norm/4, nt_gelu_exact/1,
+    %% Fast FP32 transpose for safetensors loader
+    nt_transpose_fp32/3
 ]).
 
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput
@@ -471,6 +473,9 @@ nt_resonance_power(_Ref, _Exponent) -> erlang:nif_error(nif_not_loaded).
 nt_softmax_axis(_Ref, _Axis) -> erlang:nif_error(nif_not_loaded).
 nt_layer_norm(_Ref, _Scale, _Bias, _Eps) -> erlang:nif_error(nif_not_loaded).
 nt_gelu_exact(_Ref) -> erlang:nif_error(nif_not_loaded).
+
+%% Fast FP32 transpose (used by safetensors loader to flip HF [out,in] -> [in,out])
+nt_transpose_fp32(_Bin, _Rows, _Cols) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput

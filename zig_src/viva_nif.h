@@ -689,6 +689,9 @@ NIF_FUNC_DECL(nt_fused_linear_relu_nif);
 NIF_FUNC_DECL(nt_softmax_axis);
 NIF_FUNC_DECL(nt_layer_norm);
 NIF_FUNC_DECL(nt_gelu_exact);
+
+/* nif_transpose.c — fast row-major FP32 transpose for safetensors loader */
+NIF_FUNC_DECL(nt_transpose_fp32);
 #ifndef _WIN32
 NIF_FUNC_DECL(nt_matmul_cuda_fp32);
 NIF_FUNC_DECL(nt_matmul_int8_tc);
