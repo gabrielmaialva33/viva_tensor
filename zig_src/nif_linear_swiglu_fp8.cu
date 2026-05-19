@@ -179,6 +179,8 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
   fprintf(stderr, "[SWIGLU-DBG] gate.dtype=%d in_f=%d out_f=%d d_weight=%p\n",
           gate_w->dtype, gate_w->in_features, gate_w->out_features, gate_w->d_weight);
+
+  fprintf(stderr, "[SWIGLU-DBG] checking dtypes\n");
   if (gate_w->dtype != PW_FP8 || up_w->dtype != PW_FP8) {
     free(h_input_fp32);
     return make_error(env, "weight_not_fp8");
