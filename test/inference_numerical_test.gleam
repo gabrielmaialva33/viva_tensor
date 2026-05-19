@@ -276,22 +276,17 @@ pub fn linear_int8_sparse_numerical_within_band_test() {
 // ---------------------------------------------------------------------------
 
 pub fn linear_int4_sparse_numerical_within_band_test() {
-  // INT4 sparse also requires in_features divisible by 4 (CUTLASS kernel).
-  let fixture = make_fixture(8, 32, 16, 99)
+  // INT4 sparse follows CUTLASS m16n8k128 sparse MMA metadata tiles.
+  let fixture = make_fixture(8, 128, 16, 99)
   case
     rescue_call_int4(fn() { t.prepack_int4_sparse_24_weight(fixture.weight) })
   {
-    CallErr -> Nil
-    CallOk(Error(_)) -> Nil
+    CallErr -> "prepack_int4_call_err" |> should.equal("ok")
+    CallOk(Error(_)) -> "prepack_int4_failed" |> should.equal("ok")
     CallOk(Ok(packed)) -> {
-      case
-        rescue_call_tensor(fn() {
-          t.linear_int4_sparse(fixture.input, packed, None)
-        })
-      {
-        CallErr -> Nil
-        CallOk(Error(_)) -> Nil
-        CallOk(Ok(quant_out)) -> {
+      case t.linear_int4_sparse(fixture.input, packed, None) {
+        Error(_) -> "linear_int4_failed" |> should.equal("ok")
+        Ok(quant_out) -> {
           let err =
             relative_l2_error(t.to_list(fixture.ref_out), t.to_list(quant_out))
           should.be_true(err <. int4_sparse_l2_tolerance)

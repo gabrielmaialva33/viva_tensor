@@ -12,8 +12,8 @@
  * INT8 path: also builds a cuSPARSELt plan + compressed buffer, suitable for
  *            cuSPARSELt-based forward (winner ≥ 8192²). When K is not divisible
  *            by 16 cuSPARSELt path is skipped and only the CUTLASS path is set up.
- * INT4 path: packs two nibbles per byte and emits a CUTLASS-style metadata
- *            buffer `E` (uint8 entries, one byte per 8 K-positions).
+ * INT4 path: packs the two kept int4 pairs per 8 K positions and emits the
+ *            CUTLASS ElementE metadata consumed by sparse Tensor Core MMA.
  *
  * The PackedWeight resource is owned by agent A (zig_src/nif_packed_weight.c).
  * Symbols expected to be provided there:
@@ -155,6 +155,34 @@ static inline void top2_of_4(const float* a, int* keep0, int* keep1) {
     /* Test 3 */
     if (m3 > v0)      { i1 = i0; v1 = v0; i0 = 3; v0 = m3; }
     else if (m3 > v1) { i1 = 3; v1 = m3; }
+    *keep0 = (i0 < i1) ? i0 : i1;
+    *keep1 = (i0 < i1) ? i1 : i0;
+}
+
+/* CUTLASS sparse INT4 metadata indexes pairs of adjacent int4 values.
+ * The official host_uncompress.h path uses step=8, a=4, b=8, ElementsPerE=2:
+ * one metadata nibble names two kept pairs inside each 8-int4 chunk. */
+static inline void top2_pairs_of_8(const float* a, int* keep0, int* keep1) {
+    float score[4];
+    for (int p = 0; p < 4; ++p) {
+        score[p] = fabsf(a[p * 2 + 0]) + fabsf(a[p * 2 + 1]);
+    }
+
+    int i0 = 0;
+    int i1 = 1;
+    if (score[i1] > score[i0]) {
+        int tmp = i0; i0 = i1; i1 = tmp;
+    }
+
+    for (int p = 2; p < 4; ++p) {
+        if (score[p] > score[i0]) {
+            i1 = i0;
+            i0 = p;
+        } else if (score[p] > score[i1]) {
+            i1 = p;
+        }
+    }
+
     *keep0 = (i0 < i1) ? i0 : i1;
     *keep1 = (i0 < i1) ? i1 : i0;
 }
@@ -474,17 +502,17 @@ cuda_fail:
 /* =========================================================================
  * INT4 2:4 sparse prepack
  *
- * Layout: row-major [out_features, in_features]; pack two int4 nibbles per byte
- * along the K axis (low nibble = even k, high nibble = odd k).
+ * Layout: row-major [out_features, in_features]; every 8-int4 K chunk keeps
+ * two adjacent int4 pairs, packs those four values into two bytes, and writes
+ * one metadata nibble.
  *
- *   in_features must be divisible by 8 (we group 4 INT4s into nibble pairs,
- *   and 16 INT4s into one ElementE byte).
+ *   in_features must be divisible by 128 to match the m16n8k128 sparse MMA
+ *   tile used by the runtime launcher.
  *
- * After 2:4 pruning, the "packed sparse A" buffer has size
+ * After sparse-pair pruning, the "packed sparse A" buffer has size
  *   out_features * (in_features / 2 / 2) bytes  (kSparse=2 halves K, nibbles halve again)
  *
- * The metadata buffer holds one byte per 16 INT4 positions (kElemsPerE = 16
- * for INT4 sparse in CUTLASS).
+ * One 32-bit ElementE covers 64 logical INT4 positions as 8 metadata nibbles.
  * ========================================================================= */
 ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
                                     const ERL_NIF_TERM argv[]) {
@@ -503,9 +531,10 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     if (weight_bin.size != expected)
         return make_error(env, "weight_size_mismatch");
 
-    /* K must be divisible by 16 (8 elements per metadata byte * 2 sparsity halving). */
-    if (in_features % 16 != 0)
-        return make_error(env, "in_features_not_mul_16");
+    /* CUTLASS INT4 sparse MMA is m16n8k128; ElementE covers 64 logical int4s
+     * and the runtime launcher expects K aligned to the 128-wide MMA K tile. */
+    if (in_features % 128 != 0)
+        return make_error(env, "in_features_not_mul_128");
 
     const float* W = (const float*)weight_bin.data;
 
@@ -528,119 +557,97 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
         h_scales[o] = (amax > 0.0f) ? (amax / 7.0f) : 1.0f;
     }
 
-    /* Quantize + 2:4 prune. h_quant holds int8 in range [-7, 7] (or 0). */
+    /* Quantize + sparse-pair prune. h_quant holds int8 in range [-7, 7].
+     * CUTLASS INT4 sparse metadata indexes 2-int4 pairs, not individual
+     * scalar int4 lanes, so the pruning unit is 2 kept pairs per 8 values. */
     for (int o = 0; o < out_features; ++o) {
         const float* row = W + (size_t)o * (size_t)in_features;
         int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
         float inv_scale = 1.0f / h_scales[o];
-        for (int k = 0; k < in_features; k += 4) {
-            float g[4] = { row[k+0], row[k+1], row[k+2], row[k+3] };
-            int keep0, keep1;
-            top2_of_4(g, &keep0, &keep1);
-            for (int j = 0; j < 4; ++j) {
-                if (j == keep0 || j == keep1) {
-                    qrow[k + j] = f32_to_int4_sat(g[j], inv_scale);
-                } else {
-                    qrow[k + j] = 0;
+        for (int k = 0; k < in_features; k += 8) {
+            int keep_pair0, keep_pair1;
+            top2_pairs_of_8(row + k, &keep_pair0, &keep_pair1);
+            for (int pair = 0; pair < 4; ++pair) {
+                for (int lane = 0; lane < 2; ++lane) {
+                    int j = pair * 2 + lane;
+                    if (pair == keep_pair0 || pair == keep_pair1) {
+                        qrow[k + j] = f32_to_int4_sat(row[k + j], inv_scale);
+                    } else {
+                        qrow[k + j] = 0;
+                    }
                 }
             }
         }
     }
 
-    /* Pack nibbles + emit CUTLASS-style ElementE metadata bytes.
-     *
-     * For row-major INT4 sparse with kSparse=2 and kElementsPerElementE=16:
-     *   - The "packed sparse A" buffer holds only the kept halves of K (50%).
-     *     Storage: out_features rows × (in_features / 2 / 2) bytes
-     *              (the /2 from 2:4 sparsity, the /2 from int4 nibble packing).
-     *   - The metadata buffer holds one uint8 per 16 K positions, where each
-     *     pair of bits indicates which of (0,1,2,3) is kept in that group of 4.
-     *
-     * Encoding of the 2-bit pair: 0b00 if index 0 kept, 0b01 if index 1,
-     * 0b10 if index 2, 0b11 if index 3. With two indices per group of 4 we
-     * store (keep0, keep1) → byte:bits[0:2]=keep0, bits[2:4]=keep1, etc.
-     *
-     * 4 groups of 4 = 16 K positions = 1 ElementE byte (4 × 2 bits = 8 bits).
-     * Wait: 4 groups × 2 keeps × 2 bits = 16 bits, which is uint16. The
-     * CUTLASS INT4 ElementE is in fact uint8 == 8 bits, representing 2 groups
-     * of 4 K positions. Re-checking: kElementsPerElementE = 16 for INT4
-     * sparse means 16 elements per ElementE byte, i.e. 4 groups of 4. With
-     * 2 keeps per group of 4 and 2 bits per keep, that's 16 bits. So
-     * ElementE for INT4 sparse is actually uint16_t, not uint8_t — confirm
-     * via cutlass_int4_sparse_info() at load time.
-     *
-     * For now we write a uint8_t buffer and zero it; the cuSPARSELt-style
-     * pruning is faithful for the data buffer but the CUTLASS run path will
-     * need the real ElementE encoding to compute correct outputs. The
-     * data path will still produce a numerically valid (if degenerate)
-     * result with zero metadata — the test suite will catch this.
-     */
-    size_t packed_bytes_per_row = (size_t)in_features / 2 / 2;  /* sparse/2, nibble/2 */
-    size_t packed_total = (size_t)out_features * packed_bytes_per_row;
-    int8_t* h_packed = (int8_t*)malloc(packed_total);
-    if (!h_packed) {
-        free(h_scales); free(h_quant);
-        return make_error(env, "host_alloc_failed");
-    }
-    memset(h_packed, 0, packed_total);
-
     /* Metadata buffer for CUTLASS INT4 2:4 sparse (m16n8k128, Sm80+).
      *
-     * Probe values: kSparse=2  kElementsPerElementE=32  sizeof(ElementE)=4.
-     * Per CUTLASS:  metaK = in_features / kSparse / kElemsPerE
-     *             = in_features / 64
-     * For K=256 that gives 4 uint32 ElementE words per row (16 bytes).
-     *
-     * The exact bit layout inside each ElementE is CUTLASS internal — the
-     * 32 bits cover 64 pre-sparse K positions packed in a hardware-specific
-     * encoding that the m16n8k128 sparse MMA instruction consumes directly.
-     * We don't reverse-engineer that here; instead we zero-fill (matching
-     * the cutlass_int4_sparse_bench reference path which also zero-fills).
-     * Throughput is correct; element-wise numerical correctness against
-     * an FP32 reference still requires the proper bit pattern — tracked
-     * in INFERENCE_API_PLAN.md.
-     *
-     * Critical: size the buffer *exactly* as CUTLASS expects so the kernel
-     * doesn't read past it. Allocate metaK_e * sizeof(ElementE) per row.
-     * Previously this was over-sized 2× and the encoder loop wrote past
-     * the end — corrupted the heap on shapes ≥ K=256. */
+     * CUTLASS' official host_uncompress.h decodes int4 ElementE as:
+     *   ElementE:uint32 covers 64 logical int4 values;
+     *   each nibble covers 8 int4 values;
+     *   bits[1:0] = first kept pair index, bits[3:2] = second kept pair.
+     */
     int int4_sparse, int4_elems_per_e, int4_sizeof_e;
     cutlass_int4_sparse_run_info(&int4_sparse, &int4_elems_per_e, &int4_sizeof_e);
+    if (int4_sizeof_e != (int)sizeof(uint32_t)) {
+        free(h_scales); free(h_quant);
+        return make_error(env, "unexpected_int4_elemente_size");
+    }
     size_t meta_units_per_row =
         (size_t)in_features / (size_t)(int4_sparse * int4_elems_per_e);
     size_t meta_bytes_per_row = meta_units_per_row * (size_t)int4_sizeof_e;
     size_t meta_total = (size_t)out_features * meta_bytes_per_row;
     uint8_t* h_meta = (uint8_t*)malloc(meta_total);
     if (!h_meta) {
-        free(h_scales); free(h_quant); free(h_packed);
+        free(h_scales); free(h_quant);
         return make_error(env, "host_alloc_failed");
     }
     memset(h_meta, 0, meta_total);
 
-    /* Data buffer — pack two int4 nibbles per byte after 2:4 magnitude
-     * pruning. Drives correctness of the throughput path. */
+    for (int o = 0; o < out_features; ++o) {
+        const float* row = W + (size_t)o * (size_t)in_features;
+        uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
+        for (int k = 0; k < in_features; k += 8) {
+            int keep_pair0, keep_pair1;
+            top2_pairs_of_8(row + k, &keep_pair0, &keep_pair1);
+            size_t group = (size_t)k / 8;
+            size_t word = group / 8;
+            size_t nibble = group % 8;
+            uint32_t e = (uint32_t)(keep_pair0 | (keep_pair1 << 2));
+            meta_row[word] |= e << (nibble * 4);
+        }
+    }
+
+    size_t packed_bytes_per_row = (size_t)in_features / 4;  /* 50% sparse, int4 packed */
+    size_t packed_total = (size_t)out_features * packed_bytes_per_row;
+    int8_t* h_packed = (int8_t*)malloc(packed_total);
+    if (!h_packed) {
+        free(h_scales); free(h_quant); free(h_meta);
+        return make_error(env, "host_alloc_failed");
+    }
+    memset(h_packed, 0, packed_total);
+
+    /* Pack compressed A in the same pair order named by ElementE. */
     for (int o = 0; o < out_features; ++o) {
         int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
         int8_t* prow = h_packed + (size_t)o * packed_bytes_per_row;
 
-        size_t out_nibble_idx = 0;
-        for (int k = 0; k < in_features; k += 4) {
-            int keep_ix[2] = {-1, -1};
-            int p = 0;
-            for (int j = 0; j < 4 && p < 2; ++j) {
-                if (qrow[k + j] != 0) keep_ix[p++] = j;
-            }
-            if (p == 0) { keep_ix[0] = 0; keep_ix[1] = 2; }
-            else if (p == 1) { keep_ix[1] = (keep_ix[0] == 0) ? 2 : 0; }
-            if (keep_ix[0] > keep_ix[1]) {
-                int tmp = keep_ix[0]; keep_ix[0] = keep_ix[1]; keep_ix[1] = tmp;
-            }
+        size_t out_byte_idx = 0;
+        for (int k = 0; k < in_features; k += 8) {
+            uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
+            size_t group = (size_t)k / 8;
+            uint32_t e = (meta_row[group / 8] >> ((group % 8) * 4)) & 0x0F;
+            int keep_pair0 = (int)(e & 0x3);
+            int keep_pair1 = (int)(e >> 2);
 
-            int8_t v0 = qrow[k + keep_ix[0]];
-            int8_t v1 = qrow[k + keep_ix[1]];
-            uint8_t lo = (uint8_t)v0 & 0x0F;
-            uint8_t hi = ((uint8_t)v1 & 0x0F) << 4;
-            prow[out_nibble_idx++] = (int8_t)(lo | hi);
+            int base0 = k + keep_pair0 * 2;
+            int base1 = k + keep_pair1 * 2;
+            uint8_t p0_lo = (uint8_t)qrow[base0 + 0] & 0x0F;
+            uint8_t p0_hi = ((uint8_t)qrow[base0 + 1] & 0x0F) << 4;
+            uint8_t p1_lo = (uint8_t)qrow[base1 + 0] & 0x0F;
+            uint8_t p1_hi = ((uint8_t)qrow[base1 + 1] & 0x0F) << 4;
+            prow[out_byte_idx++] = (int8_t)(p0_lo | p0_hi);
+            prow[out_byte_idx++] = (int8_t)(p1_lo | p1_hi);
         }
     }
 
