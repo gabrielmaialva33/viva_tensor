@@ -337,6 +337,7 @@ static ErlNifFunc nif_funcs[] = {
     {"cusparselt_fp8_sparse_bench", 4, cusparselt_fp8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     /* Inference API — PackedWeight + prepack + linear forward + SwiGLU */
     {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_prepack_fp8_blocked", 3, nt_prepack_fp8_blocked, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8", 4, nt_linear_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8_w8a16", 3, nt_linear_fp8_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},

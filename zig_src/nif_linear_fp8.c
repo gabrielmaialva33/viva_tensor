@@ -520,11 +520,21 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
                  sizeof(uint16_t);
   if (cudaMalloc((void **)&d_weight_fp16, bytes) != cudaSuccess) return -20;
 
-  int rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight,
-                                             (const float *)w->d_scales,
-                                             d_weight_fp16,
-                                             w->in_features,
-                                             w->out_features);
+  int rc;
+  if (w->block_size > 0) {
+    rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight,
+                                                    (const float *)w->d_scales,
+                                                    d_weight_fp16,
+                                                    w->in_features,
+                                                    w->out_features,
+                                                    w->block_size);
+  } else {
+    rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight,
+                                            (const float *)w->d_scales,
+                                            d_weight_fp16,
+                                            w->in_features,
+                                            w->out_features);
+  }
   if (rc != 0) {
     cudaFree(d_weight_fp16);
     return -30 + rc;

@@ -20,8 +20,11 @@
 
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
+          bisect_w8a16_blocked/0, bisect_w8a16_blocked/1,
+          run_n_w8a16/2,
           bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
           build_layer/2, build_layer_calibrated/3,
+          build_layer_blocked/3,
           precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
@@ -107,6 +110,81 @@ bisect() ->
     H2 = list_add(H1, Ffn),
     dump("residual 2 (block 0 hidden)", H2),
     ok.
+
+%% Bisect with per-block FP8 weight quant + W8A16 path.
+%% Default block_size = 128 (DeepSeek-V4-Pro recommended).
+bisect_w8a16_blocked() -> bisect_w8a16_blocked(128).
+bisect_w8a16_blocked(BlockSize) ->
+    io:format("~n=== viva_tensor W8A16 BLOCKED bisect (block=~p) — layer 0, BOS ===~n~n",
+              [BlockSize]),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    %% Build a custom layer with prepack_blocked instead of prepack.
+    Prefix = "model.layers.0.",
+    P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+    QProj    = load_linear(Header, P("self_attn.q_proj.weight"), ?HIDDEN, ?HIDDEN),
+    KProj    = load_linear(Header, P("self_attn.k_proj.weight"), ?KV_DIM, ?HIDDEN),
+    VProj    = load_linear(Header, P("self_attn.v_proj.weight"), ?KV_DIM, ?HIDDEN),
+    OProj    = load_linear(Header, P("self_attn.o_proj.weight"), ?HIDDEN, ?HIDDEN),
+    GateProj = load_linear(Header, P("mlp.gate_proj.weight"),    ?FFN,    ?HIDDEN),
+    UpProj   = load_linear(Header, P("mlp.up_proj.weight"),      ?FFN,    ?HIDDEN),
+    DownProj = load_linear(Header, P("mlp.down_proj.weight"),    ?HIDDEN, ?FFN),
+    Q  = prepack_blocked(QProj,    ?HIDDEN, ?HIDDEN, BlockSize),
+    K  = prepack_blocked(KProj,    ?HIDDEN, ?KV_DIM, BlockSize),
+    V  = prepack_blocked(VProj,    ?HIDDEN, ?KV_DIM, BlockSize),
+    O  = prepack_blocked(OProj,    ?HIDDEN, ?HIDDEN, BlockSize),
+    _G = prepack_blocked(GateProj, ?HIDDEN, ?FFN,    BlockSize),
+    _U = prepack_blocked(UpProj,   ?HIDDEN, ?FFN,    BlockSize),
+    D  = prepack_blocked(DownProj, ?FFN,    ?HIDDEN, BlockSize),
+
+    EmbedTbl = load_embed_table(Header),
+    RopeTable = precompute_rope_table(16, ?HEAD_DIM, ?ROPE_THETA),
+    X = embed_row(EmbedTbl, ?BOS_TOKEN),
+    dump("embed[BOS]", X),
+
+    Norm1 = load_rmsnorm(Header, P("input_layernorm.weight")),
+    Norm2 = load_rmsnorm(Header, P("post_attention_layernorm.weight")),
+    XNorm1 = rmsnorm(X, Norm1, ?EPS),
+    dump("after input_layernorm", XNorm1),
+
+    XNorm1Fp16 = floats_to_fp16(XNorm1),
+    QRaw = linear_fp8_w8a16(XNorm1Fp16, Q, ?HIDDEN),
+    KRaw = linear_fp8_w8a16(XNorm1Fp16, K, ?KV_DIM),
+    VRaw = linear_fp8_w8a16(XNorm1Fp16, V, ?KV_DIM),
+    dump("Q proj raw", QRaw),
+    dump("K proj raw", KRaw),
+    dump("V proj raw", VRaw),
+
+    QRot = apply_rope(QRaw, 0, RopeTable, ?NUM_HEADS, ?HEAD_DIM),
+    KRot = apply_rope(KRaw, 0, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    {AttnOut, _, _} = attention_gqa(QRot, KRot, VRaw, [], []),
+    dump("attention output", AttnOut),
+
+    AttnOutFp16 = floats_to_fp16(AttnOut),
+    OOut = linear_fp8_w8a16(AttnOutFp16, O, ?HIDDEN),
+    dump("O proj", OOut),
+    H1 = list_add(X, OOut),
+    dump("residual 1", H1),
+
+    XNorm2 = rmsnorm(H1, Norm2, ?EPS),
+    dump("after post_attention_layernorm", XNorm2),
+
+    %% SwiGLU intermediate using W8A16 manually (gate + up separately,
+    %% then silu*up in Erlang) to exercise the blocked path on gate/up.
+    XNorm2Fp16 = floats_to_fp16(XNorm2),
+    GateOut = linear_fp8_w8a16(XNorm2Fp16, _G, ?FFN),
+    UpOut   = linear_fp8_w8a16(XNorm2Fp16, _U, ?FFN),
+    SwInter = lists:zipwith(fun(G, U) -> silu(G) * U end, GateOut, UpOut),
+    dump("silu(gate) * up (manual)", SwInter),
+
+    SwInterFp16 = floats_to_fp16(SwInter),
+    Ffn = linear_fp8_w8a16(SwInterFp16, D, ?HIDDEN),
+    dump("down proj (FFN out)", Ffn),
+    H2 = list_add(H1, Ffn),
+    dump("residual 2 (block 0 hidden)", H2),
+    ok.
+
+silu(X) when is_float(X) ->
+    X / (1.0 + math:exp(-X)).
 
 bisect_w8a16() ->
     io:format("~n=== viva_tensor W8A16 bisect — layer 0, BOS (pos=0) ===~n~n"),
@@ -445,6 +523,112 @@ build_layer(Header, LayerIdx) ->
     io:format("[~5w ms]   layer ~2.. p loaded~n", [ms() - T0, LayerIdx]),
     Layer.
 
+%% Same as build_layer/2 but per-block FP8 prepack (block_size along K).
+build_layer_blocked(Header, LayerIdx, BlockSize) ->
+    T0 = ms(),
+    Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
+    P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+
+    QProj    = load_linear(Header, P("self_attn.q_proj.weight"), ?HIDDEN, ?HIDDEN),
+    KProj    = load_linear(Header, P("self_attn.k_proj.weight"), ?KV_DIM, ?HIDDEN),
+    VProj    = load_linear(Header, P("self_attn.v_proj.weight"), ?KV_DIM, ?HIDDEN),
+    OProj    = load_linear(Header, P("self_attn.o_proj.weight"), ?HIDDEN, ?HIDDEN),
+    GateProj = load_linear(Header, P("mlp.gate_proj.weight"),    ?FFN,    ?HIDDEN),
+    UpProj   = load_linear(Header, P("mlp.up_proj.weight"),      ?FFN,    ?HIDDEN),
+    DownProj = load_linear(Header, P("mlp.down_proj.weight"),    ?HIDDEN, ?FFN),
+
+    Layer = #{
+        norm1 => load_rmsnorm(Header, P("input_layernorm.weight")),
+        norm2 => load_rmsnorm(Header, P("post_attention_layernorm.weight")),
+        q     => prepack_blocked(QProj,    ?HIDDEN, ?HIDDEN, BlockSize),
+        k     => prepack_blocked(KProj,    ?HIDDEN, ?KV_DIM, BlockSize),
+        v     => prepack_blocked(VProj,    ?HIDDEN, ?KV_DIM, BlockSize),
+        o     => prepack_blocked(OProj,    ?HIDDEN, ?HIDDEN, BlockSize),
+        gate  => prepack_blocked(GateProj, ?HIDDEN, ?FFN,    BlockSize),
+        up    => prepack_blocked(UpProj,   ?HIDDEN, ?FFN,    BlockSize),
+        down  => prepack_blocked(DownProj, ?FFN,    ?HIDDEN, BlockSize)
+    },
+    io:format("[~5w ms]   layer ~2.. p loaded (block=~p)~n",
+              [ms() - T0, LayerIdx, BlockSize]),
+    Layer.
+
+%% Full 22-layer forward using per-block FP8 prepack + W8A16 GEMM.
+%% Validates against HF reference token (529 after BOS).
+run_n_w8a16(NumLayers, BlockSize) ->
+    io:format("~n=== TinyLlama-1.1B W8A16 BLOCKED forward (N=~p, block=~p) ===~n~n",
+              [NumLayers, BlockSize]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layers = [build_layer_blocked(Header, I, BlockSize)
+              || I <- lists:seq(0, NumLayers - 1)],
+    io:format("[~5w ms] All ~p layers prepacked~n", [ms() - T0, NumLayers]),
+
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    EmbedTbl  = load_embed_table(Header),
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack_blocked(LmHead, ?HIDDEN, ?VOCAB, BlockSize),
+    RopeTable = precompute_rope_table(64, ?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Helpers loaded~n", [ms() - T0]),
+
+    Token = ?BOS_TOKEN,
+    HiddenIn = embed_row(EmbedTbl, Token),
+    Pos = 0,
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+
+    %% Forward through all blocks using w8a16 linears.
+    {HiddenOut, _} = lists:foldl(
+        fun(LayerIdx, {H, CL}) ->
+            {KC, VC} = lists:nth(LayerIdx + 1, CL),
+            {HOut, KC2, VC2} = forward_block_w8a16(
+                H, lists:nth(LayerIdx + 1, Layers),
+                LayerIdx, Pos, RopeTable, KC, VC),
+            {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, CL)}
+        end,
+        {HiddenIn, EmptyCaches},
+        lists:seq(0, NumLayers - 1)
+    ),
+
+    NormFinal = rmsnorm(HiddenOut, FinalNorm, ?EPS),
+    NormFp16  = floats_to_fp16(NormFinal),
+    Logits    = linear_fp8_w8a16(NormFp16, LmHeadPk, ?VOCAB),
+    {Top1Token, Top1Logit} = argmax(Logits),
+    io:format("~nFinal mean_abs=~p~n", [mean_abs(HiddenOut)]),
+    io:format("argmax token id = ~p (logit ~p)  [HF reference: 529]~n",
+              [Top1Token, Top1Logit]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    {ok, Top1Token, Top1Logit}.
+
+%% Same shape as forward_block/7 but uses linear_fp8_w8a16 throughout.
+forward_block_w8a16(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
+    #{norm1 := N1, norm2 := N2,
+      q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer,
+
+    X1 = rmsnorm(H, N1, ?EPS),
+    X1Fp16 = floats_to_fp16(X1),
+    QOutRaw = linear_fp8_w8a16(X1Fp16, Q, ?HIDDEN),
+    KOutRaw = linear_fp8_w8a16(X1Fp16, K, ?KV_DIM),
+    VOut    = linear_fp8_w8a16(X1Fp16, V, ?KV_DIM),
+
+    QOut = apply_rope(QOutRaw, Pos, RopeTable, ?NUM_HEADS,    ?HEAD_DIM),
+    KOut = apply_rope(KOutRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    {AttnOut, KCache2, VCache2} = attention_gqa(QOut, KOut, VOut, KCache, VCache),
+
+    AttnOutFp16 = floats_to_fp16(AttnOut),
+    OOut = linear_fp8_w8a16(AttnOutFp16, O, ?HIDDEN),
+    H1 = list_add(H, OOut),
+
+    X2 = rmsnorm(H1, N2, ?EPS),
+    X2Fp16 = floats_to_fp16(X2),
+    GateOut = linear_fp8_w8a16(X2Fp16, G, ?FFN),
+    UpOut   = linear_fp8_w8a16(X2Fp16, U, ?FFN),
+    SwInter = lists:zipwith(fun(Gv, Uv) -> silu(Gv) * Uv end, GateOut, UpOut),
+    SwInterFp16 = floats_to_fp16(SwInter),
+    Ffn = linear_fp8_w8a16(SwInterFp16, D, ?HIDDEN),
+
+    HOut = list_add(H1, Ffn),
+    {HOut, KCache2, VCache2}.
+
 %% ---------------------------------------------------------------------------
 %% Single transformer block forward
 %% ---------------------------------------------------------------------------
@@ -671,6 +855,15 @@ prepack(Bin, InF, OutF) when is_binary(Bin) ->
         {ok, {Resource, _, _, _}} -> Resource;
         {ok, Resource} when is_reference(Resource) -> Resource;
         Other -> error({prepack_failed, Other})
+    end.
+
+%% Per-block FP8 prepack. block_size must divide InF.
+%% Recommended: 128 (DeepSeek/TRT-LLM/vLLM standard).
+prepack_blocked(Bin, InF, OutF, BlockSize) when is_binary(Bin) ->
+    case viva_tensor_zig:nt_prepack_fp8_blocked(Bin, [InF, OutF], BlockSize) of
+        {ok, {Resource, _, _, _}} -> Resource;
+        {ok, Resource} when is_reference(Resource) -> Resource;
+        Other -> error({prepack_blocked_failed, Other})
     end.
 
 %% ---------------------------------------------------------------------------
