@@ -1,0 +1,290 @@
+%%% Multi-block forward through TinyLlama-1.1B using viva_tensor's FP8
+%%% linears. Extends the single-block smoke test to iterate over every
+%%% transformer layer + final norm + LM head + argmax sampling.
+%%%
+%%% Scope of this iteration (task #61):
+%%%   - Load all 22 transformer layers + final norm + embedding + lm_head.
+%%%   - Forward a token through every block sequentially.
+%%%   - Apply final RMSNorm and lm_head projection (hidden_size -> vocab).
+%%%   - Argmax over the logits to pick the next token.
+%%%
+%%% Not yet (follow-up tasks):
+%%%   - RoPE (task #62): rotary positional embedding for Q/K
+%%%   - Real GQA + KV cache (task #63): currently uses the single-token
+%%%     attention shortcut (V replicated across Q heads), which is correct
+%%%     for the very first forward step but degenerate for longer contexts.
+%%%
+%%% Run: erlc -o /tmp dev/llama_forward.erl
+%%%      erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
+%%%          -s llama_forward run -s init stop
+
+-module(llama_forward).
+-export([run/0, run_n/1, build_layer/2]).
+
+-define(PATH, <<"tmp/tinyllama/model.safetensors">>).
+-define(HIDDEN, 2048).
+-define(KV_DIM, 256).
+-define(NUM_HEADS, 32).
+-define(NUM_KV_HEADS, 4).
+-define(HEAD_DIM, 64).
+-define(FFN, 5632).
+-define(NUM_LAYERS, 22).
+-define(VOCAB, 32000).
+-define(EPS, 1.0e-5).
+-define(BOS_TOKEN, 1).        %% <s> in TinyLlama tokenizer
+
+run() -> run_n(?NUM_LAYERS).
+
+%% Same as run/0 but with a configurable number of layers — handy for
+%% incremental validation (start with 2 layers, then go up to 22).
+run_n(NumLayers) ->
+    io:format("~n=== TinyLlama-1.1B multi-block forward (N=~p) ===~n~n", [NumLayers]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    io:format("[~5w ms] Header opened~n", [ms() - T0]),
+
+    %% --- Build the requested number of layers (load + transpose + prepack). --
+    TL0 = ms(),
+    Layers = build_layers(Header, NumLayers),
+    io:format("[~5w ms] All ~p layers prepacked~n", [ms() - TL0, NumLayers]),
+
+    %% --- Final RMSNorm + embedding table. --------------------------------
+    %% LM head is deferred to task #64: transposing the 32000×2048 weight
+    %% in pure Erlang explodes Erlang's tuple builder. Needs a NIF transpose
+    %% to scale. For now we only validate the forward depth.
+    TF0 = ms(),
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    EmbedTbl  = load_embed_table(Header),     %% lazy: index -> row
+    io:format("[~5w ms] Final norm + embed table loaded~n", [ms() - TF0]),
+
+    %% --- Initial hidden state: embedding row for BOS token. --------------
+    Token = ?BOS_TOKEN,
+    HiddenIn = embed_row(EmbedTbl, Token),
+    io:format("~nToken in: ~p   embedding mean_abs=~p~n",
+              [Token, mean_abs(HiddenIn)]),
+
+    %% --- Forward through all transformer blocks. -------------------------
+    TF1 = ms(),
+    HiddenOut = lists:foldl(
+        fun(LayerIdx, H) ->
+            forward_block(H, lists:nth(LayerIdx + 1, Layers), LayerIdx)
+        end,
+        HiddenIn,
+        lists:seq(0, NumLayers - 1)
+    ),
+    io:format("[~5w ms] Forward over ~p blocks done. Final mean_abs=~p~n",
+              [ms() - TF1, NumLayers, mean_abs(HiddenOut)]),
+
+    %% --- Final norm only (LM head deferred to task #64). -----------------
+    NormFinal = rmsnorm(HiddenOut, FinalNorm, ?EPS),
+    Finite = lists:foldl(
+        fun(X, A) -> case is_float(X) andalso abs(X) < 1.0e30 of
+            true -> A + 1; false -> A end end, 0, NormFinal),
+    io:format("~nFinal normed hidden mean_abs=~p  finite=~p / ~p~n",
+              [mean_abs(NormFinal), Finite, length(NormFinal)]),
+    io:format("~n[~5w ms] Total elapsed~n", [ms() - T0]),
+    ok.
+
+%% ---------------------------------------------------------------------------
+%% Layer construction
+%% ---------------------------------------------------------------------------
+
+%% Returns a list of #{...} layer maps, one per transformer block.
+build_layers(Header, N) ->
+    [build_layer(Header, I) || I <- lists:seq(0, N - 1)].
+
+build_layer(Header, LayerIdx) ->
+    T0 = ms(),
+    Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
+    P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+
+    QProj    = load_linear(Header, P("self_attn.q_proj.weight"), ?HIDDEN, ?HIDDEN),
+    KProj    = load_linear(Header, P("self_attn.k_proj.weight"), ?KV_DIM, ?HIDDEN),
+    VProj    = load_linear(Header, P("self_attn.v_proj.weight"), ?KV_DIM, ?HIDDEN),
+    OProj    = load_linear(Header, P("self_attn.o_proj.weight"), ?HIDDEN, ?HIDDEN),
+    GateProj = load_linear(Header, P("mlp.gate_proj.weight"),    ?FFN,    ?HIDDEN),
+    UpProj   = load_linear(Header, P("mlp.up_proj.weight"),      ?FFN,    ?HIDDEN),
+    DownProj = load_linear(Header, P("mlp.down_proj.weight"),    ?HIDDEN, ?FFN),
+
+    Layer = #{
+        norm1 => load_rmsnorm(Header, P("input_layernorm.weight")),
+        norm2 => load_rmsnorm(Header, P("post_attention_layernorm.weight")),
+        q     => prepack(QProj,    ?HIDDEN, ?HIDDEN),
+        k     => prepack(KProj,    ?HIDDEN, ?KV_DIM),
+        v     => prepack(VProj,    ?HIDDEN, ?KV_DIM),
+        o     => prepack(OProj,    ?HIDDEN, ?HIDDEN),
+        gate  => prepack(GateProj, ?HIDDEN, ?FFN),
+        up    => prepack(UpProj,   ?HIDDEN, ?FFN),
+        down  => prepack(DownProj, ?FFN,    ?HIDDEN)
+    },
+    io:format("[~5w ms]   layer ~2.. p loaded~n", [ms() - T0, LayerIdx]),
+    Layer.
+
+%% ---------------------------------------------------------------------------
+%% Single transformer block forward
+%% ---------------------------------------------------------------------------
+%% Input  : H = list(float)  [hidden_size]
+%% Output : H' = list(float) [hidden_size]
+%%
+%% Steps (HuggingFace Llama convention):
+%%   x1 = norm1(x)
+%%   q, k, v = linear(x1, q_proj), linear(x1, k_proj), linear(x1, v_proj)
+%%   attn_out = attention(q, k, v)        -- single-token shortcut here
+%%   x = x + linear(attn_out, o_proj)
+%%   x2 = norm2(x)
+%%   ffn = down(silu(gate(x2)) * up(x2))
+%%   x = x + ffn
+forward_block(H, Layer, _LayerIdx) ->
+    #{norm1 := N1, norm2 := N2,
+      q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer,
+
+    %% Self-attention path
+    X1 = rmsnorm(H, N1, ?EPS),
+    X1Fp16 = floats_to_fp16(X1),
+    QOut = linear_fp8(X1Fp16, Q, ?HIDDEN),
+    _KOut = linear_fp8(X1Fp16, K, ?KV_DIM),
+    VOut = linear_fp8(X1Fp16, V, ?KV_DIM),
+
+    %% Single-token attention degenerates: softmax(1 scalar)=1, attn=V_head
+    %% broadcast across the 8 Q heads sharing each KV head.
+    AttnOut = attention_single_token(QOut, VOut),
+    AttnOutFp16 = floats_to_fp16(AttnOut),
+    OOut = linear_fp8(AttnOutFp16, O, ?HIDDEN),
+
+    %% Residual 1
+    H1 = list_add(H, OOut),
+
+    %% FFN path
+    X2 = rmsnorm(H1, N2, ?EPS),
+    SwInter = linear_swiglu_intermediate(X2, 1, ?HIDDEN, G, U, ?FFN),
+    SwInterFp16 = floats_to_fp16(SwInter),
+    Ffn = linear_fp8(SwInterFp16, D, ?HIDDEN),
+
+    %% Residual 2
+    list_add(H1, Ffn).
+
+%% Single-token attention: with one position in the KV cache, softmax of the
+%% lone scaled QK dot product is 1, so attn_out per Q-head equals the V-head
+%% it points at (GQA: 32 Q heads / 4 KV heads = 8 Q per KV).
+attention_single_token(_Q, V) ->
+    VHeads = chunks(V, ?HEAD_DIM),
+    lists:flatten(
+        [lists:nth(QHead div (?NUM_HEADS div ?NUM_KV_HEADS) + 1, VHeads)
+         || QHead <- lists:seq(0, ?NUM_HEADS - 1)]
+    ).
+
+chunks([], _) -> [];
+chunks(L, N) ->
+    {Head, Tail} = lists:split(N, L),
+    [Head | chunks(Tail, N)].
+
+%% ---------------------------------------------------------------------------
+%% Loaders
+%% ---------------------------------------------------------------------------
+
+load_linear(Header, Name, OutF, InF) ->
+    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
+    Fp32 = viva_tensor_safetensors_ffi:bf16_to_fp32_binary(Bf16),
+    %% HF stores [out, in] row-major. viva_tensor prepack expects
+    %% [in, out] row-major — transpose.
+    {ok, Trans} = viva_tensor_safetensors_ffi:transpose_fp32(Fp32, OutF, InF),
+    Trans.
+
+load_rmsnorm(Header, Name) ->
+    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
+    viva_tensor_safetensors_ffi:rmsnorm_weight_to_fp32_list(Bf16).
+
+%% Embedding table loaded lazily: stash the bf16 binary + meta, look up
+%% row by index on demand to avoid materializing all 32000×2048 floats.
+load_embed_table(Header) ->
+    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header,
+        <<"model.embed_tokens.weight">>),
+    {Bf16, ?HIDDEN}.
+
+embed_row({Bf16, RowLen}, TokenId) ->
+    ByteOff = TokenId * RowLen * 2,    %% bf16 = 2 bytes/elem
+    RowBytes = binary:part(Bf16, ByteOff, RowLen * 2),
+    viva_tensor_safetensors_ffi:rmsnorm_weight_to_fp32_list(RowBytes).
+
+prepack(Bin, InF, OutF) when is_binary(Bin) ->
+    case viva_tensor_zig:nt_prepack_fp8(Bin, [InF, OutF]) of
+        {ok, {Resource, _, _, _}} -> Resource;
+        {ok, Resource} when is_reference(Resource) -> Resource;
+        Other -> error({prepack_failed, Other})
+    end.
+
+%% ---------------------------------------------------------------------------
+%% Linear NIF wrappers
+%% ---------------------------------------------------------------------------
+
+linear_fp8(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
+    case viva_tensor_zig:nt_linear_fp8(InputFp16, Packed, nil, 0) of
+        {ok, OutBin} ->
+            Vals = viva_tensor_inference_ffi:fp16_binary_to_floats(OutBin),
+            verify_size(Vals, OutF),
+            Vals;
+        Error ->
+            error({linear_fp8_failed, Error})
+    end.
+
+linear_swiglu_intermediate(InputFp32List, B, InF, Gate, Up, FfnDim) ->
+    case viva_tensor_zig:nt_linear_swiglu_fp8(InputFp32List, [B, InF], Gate, Up, nil) of
+        {ok, OutList} when is_list(OutList) ->
+            verify_size(OutList, B * FfnDim),
+            OutList;
+        Error ->
+            error({swiglu_failed, Error})
+    end.
+
+verify_size(L, Expected) ->
+    case length(L) of
+        Expected -> ok;
+        N -> error({size_mismatch, got, N, expected, Expected})
+    end.
+
+%% ---------------------------------------------------------------------------
+%% Math helpers
+%% ---------------------------------------------------------------------------
+
+rmsnorm(X, Gamma, Eps) ->
+    SumSq = lists:foldl(fun(V, A) -> A + V * V end, 0.0, X),
+    N = length(X),
+    InvRms = 1.0 / math:sqrt(SumSq / N + Eps),
+    lists:zipwith(fun(V, Gv) -> V * InvRms * Gv end, X, Gamma).
+
+list_add(A, B) ->
+    lists:zipwith(fun(X, Y) -> X + Y end, A, B).
+
+mean_abs(L) ->
+    case L of
+        [] -> 0.0;
+        _ ->
+            {Sum, _Inf} = lists:foldl(
+                fun(X, {S, Inf}) ->
+                    A = abs(X),
+                    case A > 1.0e30 of
+                        true  -> {S, Inf + 1};
+                        false -> {S + A, Inf}
+                    end
+                end, {0.0, 0}, L),
+            Sum / length(L)
+    end.
+
+floats_to_fp16(L) when is_list(L) ->
+    viva_tensor_inference_ffi:floats_to_fp16_binary(L).
+
+%% Returns {index_zero_based, value} of the max-value entry.
+argmax(L) ->
+    {_, BestI, BestV} = lists:foldl(
+        fun(X, {I, BI, BV}) ->
+            case X > BV of
+                true  -> {I + 1, I, X};
+                false -> {I + 1, BI, BV}
+            end
+        end,
+        {0, 0, -1.0e308},
+        L),
+    {BestI, BestV}.
+
+ms() -> erlang:monotonic_time(millisecond).
