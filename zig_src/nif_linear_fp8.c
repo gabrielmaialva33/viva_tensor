@@ -51,7 +51,11 @@
 #endif
 
 /* Mirror of nif_prepack_fp8.c — must match. */
-#define FP8_E4M3_MAX 128.0f
+/* FP8 E4M3 max finite value: 1.75 × 2^8 = 448. Previously this was set to
+ * 128, which silently dropped 8× of the dynamic range and made FP8-quantized
+ * outputs ~50% smaller than HF reference. Confirmed via bisect against
+ * transformers in dev/hf_bisect.py. */
+#define FP8_E4M3_MAX 448.0f
 
 /* FP8 E4M3 quantization (host-side). Local duplicate of the prepack
  * routine — kept here to avoid an extra header file. If the math is

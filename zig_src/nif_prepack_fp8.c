@@ -41,11 +41,11 @@
  * symmetric scale on Ada; see cutlass/numeric_types.h. */
 /* FP8 E4M3 quantization target. Empirical sweet spot for the
  * per-row × per-channel scaling pattern: T=128 trades a bit of
- * outlier headroom for substantially better precision on small
- * values (which dominate cancellation-heavy random workloads).
- * For real LLM weights with per-channel outliers, raise to 448
- * via a callable parameter in a future revision. */
-#define FP8_E4M3_MAX 128.0f
+ * FP8 E4M3 max finite: 1.75 × 2^8 = 448. Must match nif_linear_fp8.c.
+ * Previously was 128 (which intentionally traded range for precision in
+ * small-magnitude workloads) but that scaled outputs ~50% below HF
+ * reference for real LLM weights — confirmed via dev/hf_bisect.py. */
+#define FP8_E4M3_MAX 448.0f
 
 /* =========================================================================
  * FP8 E4M3 quantization (host-side)
