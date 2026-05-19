@@ -270,3 +270,156 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
   return make_ok(env, tuple);
 #endif
 }
+
+/* =========================================================================
+ * nt_prepack_fp8_blocked(WeightBinary, [InFeatures, OutFeatures], BlockSize)
+ *
+ * Per-block FP8 E4M3 quantization along the K axis.
+ *
+ * Storage:
+ *   weight: [out_features * in_features] FP8 bytes, packed [out, in] row-major
+ *           (col-major when viewed as the GEMM B operand).
+ *   scales: [out_features * num_blocks] FP32, where
+ *           num_blocks = in_features / block_size,
+ *           indexed by [n * num_blocks + (k / block_size)].
+ *
+ * Compared to per-channel (nt_prepack_fp8), this captures sub-channel
+ * variation in the K direction — a 2048-wide channel's effective range
+ * is no longer dominated by the worst-case absolute value across the
+ * whole row. Memory overhead: 4 bytes per `block_size` weight bytes.
+ * For block_size=128 on a 2048×2048 weight: 256 KB scales vs 4 MB weight = 6%.
+ *
+ * Mirrors what TensorRT-LLM and vLLM call "K-axis block scales".
+ * ========================================================================= */
+ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc,
+                                     const ERL_NIF_TERM argv[]) {
+  (void)argc;
+
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  return make_error(env, "cuda_not_available");
+#else
+  ErlNifBinary weight_bin;
+  if (!enif_inspect_binary(env, argv[0], &weight_bin))
+    return make_error(env, "invalid_weight_binary");
+
+  unsigned shape_len = 0;
+  if (!enif_get_list_length(env, argv[1], &shape_len) || shape_len != 2)
+    return make_error(env, "invalid_shape_list");
+
+  int in_features = 0, out_features = 0;
+  ERL_NIF_TERM head, tail = argv[1];
+  if (!enif_get_list_cell(env, tail, &head, &tail) ||
+      !enif_get_int(env, head, &in_features))
+    return make_error(env, "invalid_in_features");
+  if (!enif_get_list_cell(env, tail, &head, &tail) ||
+      !enif_get_int(env, head, &out_features))
+    return make_error(env, "invalid_out_features");
+
+  int block_size = 0;
+  if (!enif_get_int(env, argv[2], &block_size))
+    return make_error(env, "invalid_block_size");
+
+  if (in_features <= 0 || out_features <= 0)
+    return make_error(env, "invalid_dimensions");
+  if (block_size <= 0 || (in_features % block_size) != 0)
+    return make_error(env, "block_size_must_divide_in_features");
+
+  size_t n_elems = (size_t)in_features * (size_t)out_features;
+  if (weight_bin.size != n_elems * sizeof(float))
+    return make_error(env, "weight_size_mismatch");
+
+  const float *src = (const float *)weight_bin.data;
+  int num_blocks = in_features / block_size;
+  size_t total_scales = (size_t)out_features * (size_t)num_blocks;
+
+  /* Pass 1: per-(channel, block) absmax + scale.
+   * scales[n*num_blocks + b] = absmax(W[b*B..(b+1)*B-1, n]) / 448 */
+  float *h_scales = (float *)malloc(total_scales * sizeof(float));
+  if (!h_scales) return make_error(env, "out_of_memory");
+
+  for (int n = 0; n < out_features; ++n) {
+    for (int b = 0; b < num_blocks; ++b) {
+      float absmax = 0.0f;
+      for (int j = 0; j < block_size; ++j) {
+        int k = b * block_size + j;
+        float a = fabsf(src[(size_t)k * out_features + n]);
+        if (a > absmax) absmax = a;
+      }
+      h_scales[(size_t)n * num_blocks + b] =
+          (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+    }
+  }
+
+  /* Pass 2: quantize + transpose. Each (k, n) uses its own block scale. */
+  uint8_t *h_packed = (uint8_t *)malloc(n_elems);
+  if (!h_packed) { free(h_scales); return make_error(env, "out_of_memory"); }
+
+  for (int n = 0; n < out_features; ++n) {
+    for (int b = 0; b < num_blocks; ++b) {
+      float scale_nb = h_scales[(size_t)n * num_blocks + b];
+      float inv_scale = 1.0f / scale_nb;
+      for (int j = 0; j < block_size; ++j) {
+        int k = b * block_size + j;
+        float v = src[(size_t)k * out_features + n] * inv_scale;
+        h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+      }
+    }
+  }
+
+  float scale_mean = 0.0f;
+  for (size_t i = 0; i < total_scales; ++i) scale_mean += h_scales[i];
+  scale_mean /= (float)total_scales;
+
+  PackedWeight *w = alloc_packed_weight();
+  if (!w) {
+    free(h_packed); free(h_scales);
+    return make_error(env, "resource_alloc_failed");
+  }
+
+  w->dtype = PW_FP8;
+  w->in_features = in_features;
+  w->out_features = out_features;
+  w->block_size = block_size;
+  w->weight_bytes = n_elems;
+  w->scales_count = total_scales;
+
+  cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
+  if (err != cudaSuccess) {
+    free(h_packed); free(h_scales);
+    enif_release_resource(w);
+    return make_error(env, "cuda_malloc_weight_failed");
+  }
+  err = cudaMemcpy(w->d_weight, h_packed, w->weight_bytes,
+                    cudaMemcpyHostToDevice);
+  free(h_packed);
+  if (err != cudaSuccess) {
+    free(h_scales);
+    enif_release_resource(w);
+    return make_error(env, "cuda_upload_weight_failed");
+  }
+
+  size_t scales_bytes = total_scales * sizeof(float);
+  err = cudaMalloc(&w->d_scales, scales_bytes);
+  if (err != cudaSuccess) {
+    free(h_scales);
+    enif_release_resource(w);
+    return make_error(env, "cuda_malloc_scale_failed");
+  }
+  err = cudaMemcpy(w->d_scales, h_scales, scales_bytes,
+                    cudaMemcpyHostToDevice);
+  free(h_scales);
+  if (err != cudaSuccess) {
+    enif_release_resource(w);
+    return make_error(env, "cuda_upload_scale_failed");
+  }
+
+  ERL_NIF_TERM res_term = make_packed_weight_term(env, w);
+  ERL_NIF_TERM tuple = enif_make_tuple4(
+      env,
+      res_term,
+      enif_make_int(env, in_features),
+      enif_make_int(env, out_features),
+      enif_make_double(env, (double)scale_mean));
+  return make_ok(env, tuple);
+#endif
+}
