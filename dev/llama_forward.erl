@@ -20,7 +20,8 @@
 
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0,
-         build_layer/2,
+         bisect_calibrated/0, run_n_calibrated/1,
+         build_layer/2, build_layer_calibrated/3,
          precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
@@ -108,9 +109,11 @@ bisect() ->
     ok.
 
 dump(Label, L) ->
-    First5 = [io_lib:format("~.6f", [X]) || X <- lists:sublist(L, 5)],
-    io:format("  ~-40s mean_abs=~.6f  [~s, ...]~n",
-              [Label, mean_abs(L), string:join(First5, ", ")]).
+    First5 = [io_lib:format("~.6e", [X]) || X <- lists:sublist(L, 5)],
+    Zeros = length([X || X <- L, X == 0.0]),
+    io:format("  ~-40s mean_abs=~.6f  zeros=~p/~p  [~s, ...]~n",
+              [Label, mean_abs(L), Zeros, length(L),
+               string:join(First5, ", ")]).
 
 %% End-to-end text generation: encode prompt → forward each token, threading
 %% the KV cache → sample next token via dev/llama_sampling → decode.
@@ -668,3 +671,265 @@ ms() -> erlang:monotonic_time(millisecond).
 lists_replace_nth(N, NewVal, List) ->
     {Before, [_Old | After]} = lists:split(N - 1, List),
     Before ++ [NewVal | After].
+
+%% ---------------------------------------------------------------------------
+%% SmoothQuant calibration (host-side, pure Erlang)
+%% ---------------------------------------------------------------------------
+%%
+%% Walks ~10 synthetic calibration tokens through layer 0's pre-projection
+%% stages (input_layernorm output -> Q/K/V; attn output -> O; post-attn
+%% layernorm output -> gate/up; silu*up -> down), accumulating per-input-
+%% channel max-abs vectors. Feeds llama_calibration:smoothquant_scale/5 to
+%% produce per-input-channel scales s[c] for each layer-0 linear.
+%%
+%% Weights are scaled by s before prepack. At forward time, inputs are
+%% divided by s (multiplied by 1/s) before linear_fp8 so the matmul stays
+%% mathematically identical to the unscaled version.
+
+-define(CAL_TOKEN_IDS, [1, 2, 3, 5, 10, 25, 50, 100, 200, 400]).
+
+%% Load layer N raw FP32 weights ([InFeatures, OutFeatures] row-major).
+load_layer_raw(Header, LayerIdx) ->
+    Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
+    P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+    #{
+        q_raw    => load_linear(Header, P("self_attn.q_proj.weight"), ?HIDDEN, ?HIDDEN),
+        k_raw    => load_linear(Header, P("self_attn.k_proj.weight"), ?KV_DIM, ?HIDDEN),
+        v_raw    => load_linear(Header, P("self_attn.v_proj.weight"), ?KV_DIM, ?HIDDEN),
+        o_raw    => load_linear(Header, P("self_attn.o_proj.weight"), ?HIDDEN, ?HIDDEN),
+        gate_raw => load_linear(Header, P("mlp.gate_proj.weight"),    ?FFN,    ?HIDDEN),
+        up_raw   => load_linear(Header, P("mlp.up_proj.weight"),      ?FFN,    ?HIDDEN),
+        down_raw => load_linear(Header, P("mlp.down_proj.weight"),    ?HIDDEN, ?FFN)
+    }.
+
+%% Collect per-input-channel max-abs activations for each linear's input,
+%% across the CAL_TOKEN_IDS set, using the *unscaled* layer 0 weights.
+collect_calibration_stats(Header, Layer0Raw) ->
+    EmbedTbl = load_embed_table(Header),
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    Norm2 = load_rmsnorm(Header, <<"model.layers.0.post_attention_layernorm.weight">>),
+    #{q_raw := QRaw, k_raw := KRaw, v_raw := VRaw,
+      gate_raw := GRaw, up_raw := URaw} = Layer0Raw,
+    QPk = prepack(QRaw, ?HIDDEN, ?HIDDEN),
+    KPk = prepack(KRaw, ?HIDDEN, ?KV_DIM),
+    VPk = prepack(VRaw, ?HIDDEN, ?KV_DIM),
+    GPk = prepack(GRaw, ?HIDDEN, ?FFN),
+    UPk = prepack(URaw, ?HIDDEN, ?FFN),
+
+    Init1 = lists:duplicate(?HIDDEN, 0.0),
+    Init2 = lists:duplicate(?HIDDEN, 0.0),
+    Init3 = lists:duplicate(?HIDDEN, 0.0),
+    Init4 = lists:duplicate(?FFN, 0.0),
+    lists:foldl(
+        fun(TokId, {M1, M2, M3, M4}) ->
+            X = embed_row(EmbedTbl, TokId),
+            XN1 = rmsnorm(X, Norm1, ?EPS),
+            M1New = list_max_abs_elem(M1, XN1),
+            X1Fp16 = floats_to_fp16(XN1),
+            %% Q/K not needed for stats; V drives attn output stats.
+            VOut = linear_fp8(X1Fp16, VPk, ?KV_DIM),
+            _ = linear_fp8(X1Fp16, QPk, ?HIDDEN),
+            _ = linear_fp8(X1Fp16, KPk, ?KV_DIM),
+            AttnOut = expand_v_to_q_heads(VOut),
+            M2New = list_max_abs_elem(M2, AttnOut),
+            %% For Norm2 input we'd need real attention out + residual.
+            %% Approximation: use X (residual without O contribution).
+            H1 = X,
+            XN2 = rmsnorm(H1, Norm2, ?EPS),
+            M3New = list_max_abs_elem(M3, XN2),
+            SwInter = linear_swiglu_intermediate(
+                XN2, 1, ?HIDDEN, GPk, UPk, ?FFN),
+            M4New = list_max_abs_elem(M4, SwInter),
+            {M1New, M2New, M3New, M4New}
+        end,
+        {Init1, Init2, Init3, Init4},
+        ?CAL_TOKEN_IDS).
+
+%% Build layer 0 with SmoothQuant scaling, returns same-shape map as
+%% build_layer/2 plus the seven inverse-scale lists (one per linear).
+build_layer_calibrated(Header, 0, Stats) ->
+    Layer0Raw = load_layer_raw(Header, 0),
+    #{q_raw := QRaw, k_raw := KRaw, v_raw := VRaw, o_raw := ORaw,
+      gate_raw := GRaw, up_raw := URaw, down_raw := DRaw} = Layer0Raw,
+    {ANorm1, AAttn, ANorm2, ASw} = Stats,
+    Alpha = 0.5,
+    SQ = llama_calibration:smoothquant_scale(QRaw, ANorm1, ?HIDDEN, ?HIDDEN, Alpha),
+    SK = llama_calibration:smoothquant_scale(KRaw, ANorm1, ?HIDDEN, ?KV_DIM, Alpha),
+    SV = llama_calibration:smoothquant_scale(VRaw, ANorm1, ?HIDDEN, ?KV_DIM, Alpha),
+    SO = llama_calibration:smoothquant_scale(ORaw, AAttn,  ?HIDDEN, ?HIDDEN, Alpha),
+    SG = llama_calibration:smoothquant_scale(GRaw, ANorm2, ?HIDDEN, ?FFN,    Alpha),
+    SU = llama_calibration:smoothquant_scale(URaw, ANorm2, ?HIDDEN, ?FFN,    Alpha),
+    SD = llama_calibration:smoothquant_scale(DRaw, ASw,    ?FFN,    ?HIDDEN, Alpha),
+    {QAdj, _} = llama_calibration:apply_smoothquant(QRaw, SQ, ?HIDDEN, ?HIDDEN),
+    {KAdj, _} = llama_calibration:apply_smoothquant(KRaw, SK, ?HIDDEN, ?KV_DIM),
+    {VAdj, _} = llama_calibration:apply_smoothquant(VRaw, SV, ?HIDDEN, ?KV_DIM),
+    {OAdj, _} = llama_calibration:apply_smoothquant(ORaw, SO, ?HIDDEN, ?HIDDEN),
+    {GAdj, _} = llama_calibration:apply_smoothquant(GRaw, SG, ?HIDDEN, ?FFN),
+    {UAdj, _} = llama_calibration:apply_smoothquant(URaw, SU, ?HIDDEN, ?FFN),
+    {DAdj, _} = llama_calibration:apply_smoothquant(DRaw, SD, ?FFN, ?HIDDEN),
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    Norm2 = load_rmsnorm(Header, <<"model.layers.0.post_attention_layernorm.weight">>),
+    #{
+        norm1 => Norm1, norm2 => Norm2,
+        q => prepack(QAdj, ?HIDDEN, ?HIDDEN),
+        k => prepack(KAdj, ?HIDDEN, ?KV_DIM),
+        v => prepack(VAdj, ?HIDDEN, ?KV_DIM),
+        o => prepack(OAdj, ?HIDDEN, ?HIDDEN),
+        gate => prepack(GAdj, ?HIDDEN, ?FFN),
+        up   => prepack(UAdj, ?HIDDEN, ?FFN),
+        down => prepack(DAdj, ?FFN, ?HIDDEN),
+        sq_inv => list_reciprocal(SQ),
+        sk_inv => list_reciprocal(SK),
+        sv_inv => list_reciprocal(SV),
+        so_inv => list_reciprocal(SO),
+        sg_inv => list_reciprocal(SG),
+        su_inv => list_reciprocal(SU),
+        sd_inv => list_reciprocal(SD)
+    };
+build_layer_calibrated(Header, LayerIdx, _Stats) ->
+    build_layer(Header, LayerIdx).
+
+list_reciprocal(L) ->
+    [case S > 0.0 of true -> 1.0 / S; false -> 1.0 end || S <- L].
+
+list_max_abs_elem([], []) -> [];
+list_max_abs_elem([M | RM], [X | RX]) ->
+    A = abs(X),
+    [case A > M of true -> A; false -> M end | list_max_abs_elem(RM, RX)].
+
+list_max_abs(L) ->
+    lists:foldl(fun(X, M) ->
+        A = abs(X),
+        case A > M of true -> A; false -> M end
+    end, 0.0, L).
+
+%% Single-token attention shortcut: V replicated NumHeads/NumKVHeads times.
+expand_v_to_q_heads(VFlat) ->
+    QPerKV = ?NUM_HEADS div ?NUM_KV_HEADS,
+    KvChunks = chunks(VFlat, ?HEAD_DIM),
+    lists:flatten([lists:duplicate(QPerKV, Chunk) || Chunk <- KvChunks]).
+
+list_mul(A, B) ->
+    lists:zipwith(fun(X, Y) -> X * Y end, A, B).
+
+avg_lists(A, B) ->
+    lists:zipwith(fun(X, Y) -> 0.5 * (X + Y) end, A, B).
+
+%% Calibrated bisect — same shape as bisect/0 but layer 0 is SmoothQuant-
+%% prepacked and inputs are divided by per-linear scale before FP8.
+bisect_calibrated() ->
+    io:format("~n=== viva_tensor bisect [CALIBRATED] — layer 0, BOS (pos=0) ===~n~n"),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layer0Raw = load_layer_raw(Header, 0),
+    io:format("[cal] collecting activation stats over ~p tokens...~n",
+              [length(?CAL_TOKEN_IDS)]),
+    Stats = collect_calibration_stats(Header, Layer0Raw),
+    {ANorm1, _, _, _} = Stats,
+    io:format("[cal] act_max(norm1) mean=~.6f max=~.6f~n",
+              [lists:sum(ANorm1) / length(ANorm1), lists:max(ANorm1)]),
+    Layer = build_layer_calibrated(Header, 0, Stats),
+    EmbedTbl = load_embed_table(Header),
+    RopeTable = precompute_rope_table(16, ?HEAD_DIM, ?ROPE_THETA),
+
+    X = embed_row(EmbedTbl, ?BOS_TOKEN),
+    dump("embed[BOS]", X),
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    Norm2 = load_rmsnorm(Header, <<"model.layers.0.post_attention_layernorm.weight">>),
+    XNorm1 = rmsnorm(X, Norm1, ?EPS),
+    dump("after input_layernorm", XNorm1),
+
+    #{q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D,
+      sq_inv := SQinv, sk_inv := SKinv, sv_inv := SVinv,
+      so_inv := SOinv, sg_inv := SGinv, su_inv := SUinv,
+      sd_inv := SDinv} = Layer,
+
+    QInput = list_mul(XNorm1, SQinv),
+    KInput = list_mul(XNorm1, SKinv),
+    VInput = list_mul(XNorm1, SVinv),
+    io:format("  [diag] XNorm1 absmax=~.6f V-input absmax=~.6f~n",
+              [list_max_abs(XNorm1), list_max_abs(VInput)]),
+    QRaw = linear_fp8(floats_to_fp16(QInput), Q, ?HIDDEN),
+    KRaw = linear_fp8(floats_to_fp16(KInput), K, ?KV_DIM),
+    VRaw = linear_fp8(floats_to_fp16(VInput), V, ?KV_DIM),
+    dump("Q proj raw", QRaw),
+    dump("K proj raw", KRaw),
+    dump("V proj raw", VRaw),
+
+    QRot = apply_rope(QRaw, 0, RopeTable, ?NUM_HEADS, ?HEAD_DIM),
+    KRot = apply_rope(KRaw, 0, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    dump("Q after RoPE", QRot),
+    dump("K after RoPE", KRot),
+    {AttnOut, _, _} = attention_gqa(QRot, KRot, VRaw, [], []),
+    dump("attention output", AttnOut),
+
+    OInput = list_mul(AttnOut, SOinv),
+    OOut = linear_fp8(floats_to_fp16(OInput), O, ?HIDDEN),
+    dump("O proj", OOut),
+    H1 = list_add(X, OOut),
+    dump("residual 1", H1),
+    XNorm2 = rmsnorm(H1, Norm2, ?EPS),
+    dump("after post_attention_layernorm", XNorm2),
+
+    %% Fused swiglu can only accept one input — average gate/up scales.
+    AvgGU = avg_lists(SGinv, SUinv),
+    XNorm2Gu = list_mul(XNorm2, AvgGU),
+    SwInter = linear_swiglu_intermediate(XNorm2Gu, 1, ?HIDDEN, G, U, ?FFN),
+    dump("silu(gate) * up (fused)", SwInter),
+    SwInterIn = list_mul(SwInter, SDinv),
+    Ffn = linear_fp8(floats_to_fp16(SwInterIn), D, ?HIDDEN),
+    dump("down proj (FFN out)", Ffn),
+    H2 = list_add(H1, Ffn),
+    dump("residual 2 (block 0 hidden)", H2),
+    ok.
+
+%% Run a single calibrated layer-0 forward (does not chain other layers).
+run_n_calibrated(NumLayers) ->
+    io:format("~n=== TinyLlama-1.1B [CALIBRATED layer 0] (N=~p) ===~n~n",
+              [NumLayers]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layer0Raw = load_layer_raw(Header, 0),
+    Stats = collect_calibration_stats(Header, Layer0Raw),
+    Layer0 = build_layer_calibrated(Header, 0, Stats),
+    case NumLayers of
+        1 -> ok;
+        _ -> io:format("[warn] only layer 0 is calibrated; layers 1.. are vanilla~n", [])
+    end,
+    EmbedTbl = load_embed_table(Header),
+    HiddenIn = embed_row(EmbedTbl, ?BOS_TOKEN),
+    RopeTable = precompute_rope_table(16, ?HEAD_DIM, ?ROPE_THETA),
+    {HiddenOut, _, _} = forward_block_calibrated(
+        HiddenIn, Layer0, 0, 0, RopeTable, [], []),
+    io:format("[~5w ms] Layer 0 calibrated forward done. mean_abs=~p~n",
+              [ms() - T0, mean_abs(HiddenOut)]),
+    ok.
+
+forward_block_calibrated(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
+    #{norm1 := N1, norm2 := N2,
+      q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D,
+      sq_inv := SQinv, sk_inv := SKinv, sv_inv := SVinv,
+      so_inv := SOinv, sg_inv := SGinv, su_inv := SUinv,
+      sd_inv := SDinv} = Layer,
+    X1 = rmsnorm(H, N1, ?EPS),
+    QInput = list_mul(X1, SQinv),
+    KInput = list_mul(X1, SKinv),
+    VInput = list_mul(X1, SVinv),
+    QOutRaw = linear_fp8(floats_to_fp16(QInput), Q, ?HIDDEN),
+    KOutRaw = linear_fp8(floats_to_fp16(KInput), K, ?KV_DIM),
+    VOut    = linear_fp8(floats_to_fp16(VInput), V, ?KV_DIM),
+    QOut = apply_rope(QOutRaw, Pos, RopeTable, ?NUM_HEADS, ?HEAD_DIM),
+    KOut = apply_rope(KOutRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    {AttnOut, KCache2, VCache2} = attention_gqa(QOut, KOut, VOut, KCache, VCache),
+    OInput = list_mul(AttnOut, SOinv),
+    OOut = linear_fp8(floats_to_fp16(OInput), O, ?HIDDEN),
+    H1 = list_add(H, OOut),
+    X2 = rmsnorm(H1, N2, ?EPS),
+    AvgGU = avg_lists(SGinv, SUinv),
+    X2Gu = list_mul(X2, AvgGU),
+    SwInter = linear_swiglu_intermediate(X2Gu, 1, ?HIDDEN, G, U, ?FFN),
+    SwInterIn = list_mul(SwInter, SDinv),
+    Ffn = linear_fp8(floats_to_fp16(SwInterIn), D, ?HIDDEN),
+    HOut = list_add(H1, Ffn),
+    {HOut, KCache2, VCache2}.
