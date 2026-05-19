@@ -19,7 +19,8 @@
 %%%          -s llama_forward run -s init stop
 
 -module(llama_forward).
--export([run/0, run_n/1, run_seq/2, build_layer/2,
+-export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0,
+         build_layer/2,
          precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
@@ -36,6 +37,185 @@
 -define(ROPE_THETA, 10000.0). %% From config.json
 
 run() -> run_n(?NUM_LAYERS).
+
+%% Bisect: walk layer 0 stage-by-stage on the BOS token, printing the
+%% same mean_abs + first-5 values that dev/hf_bisect.py prints for the
+%% HuggingFace fp32 reference. Compare side-by-side to find where the
+%% two pipelines first diverge.
+bisect() ->
+    io:format("~n=== viva_tensor bisect — layer 0, BOS (pos=0) ===~n~n"),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layer = build_layer(Header, 0),
+    EmbedTbl = load_embed_table(Header),
+    RopeTable = precompute_rope_table(16, ?HEAD_DIM, ?ROPE_THETA),
+
+    %% 0: embedding
+    X = embed_row(EmbedTbl, ?BOS_TOKEN),
+    dump("embed[BOS]", X),
+
+    %% Need access to the *raw* RMSNorm weights (not just packed). Reload.
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    Norm2 = load_rmsnorm(Header, <<"model.layers.0.post_attention_layernorm.weight">>),
+
+    %% 1: input_layernorm
+    XNorm1 = rmsnorm(X, Norm1, ?EPS),
+    dump("after input_layernorm", XNorm1),
+
+    #{q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer,
+
+    %% 2: Q/K/V projections (raw, pre-RoPE)
+    XNorm1Fp16 = floats_to_fp16(XNorm1),
+    QRaw = linear_fp8(XNorm1Fp16, Q, ?HIDDEN),
+    KRaw = linear_fp8(XNorm1Fp16, K, ?KV_DIM),
+    VRaw = linear_fp8(XNorm1Fp16, V, ?KV_DIM),
+    dump("Q proj raw", QRaw),
+    dump("K proj raw", KRaw),
+    dump("V proj raw", VRaw),
+
+    %% 3: RoPE at pos=0
+    QRot = apply_rope(QRaw, 0, RopeTable, ?NUM_HEADS, ?HEAD_DIM),
+    KRot = apply_rope(KRaw, 0, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    dump("Q after RoPE", QRot),
+    dump("K after RoPE", KRot),
+
+    %% 4: single-token attention with KV cache empty (just appends and reads back)
+    {AttnOut, _, _} = attention_gqa(QRot, KRot, VRaw, [], []),
+    dump("attention output", AttnOut),
+
+    %% 5: O proj + residual 1
+    AttnOutFp16 = floats_to_fp16(AttnOut),
+    OOut = linear_fp8(AttnOutFp16, O, ?HIDDEN),
+    dump("O proj", OOut),
+    H1 = list_add(X, OOut),
+    dump("residual 1", H1),
+
+    %% 6: post_attention_layernorm
+    XNorm2 = rmsnorm(H1, Norm2, ?EPS),
+    dump("after post_attention_layernorm", XNorm2),
+
+    %% 7: SwiGLU FFN — we use the fused NIF which returns silu(gate)*up.
+    %% Dump it directly; the agent's path is gate+up+silu*mul internally.
+    SwInter = linear_swiglu_intermediate(XNorm2, 1, ?HIDDEN, G, U, ?FFN),
+    dump("silu(gate) * up (fused)", SwInter),
+
+    SwInterFp16 = floats_to_fp16(SwInter),
+    Ffn = linear_fp8(SwInterFp16, D, ?HIDDEN),
+    dump("down proj (FFN out)", Ffn),
+
+    H2 = list_add(H1, Ffn),
+    dump("residual 2 (block 0 hidden)", H2),
+    ok.
+
+dump(Label, L) ->
+    First5 = [io_lib:format("~.6f", [X]) || X <- lists:sublist(L, 5)],
+    io:format("  ~-40s mean_abs=~.6f  [~s, ...]~n",
+              [Label, mean_abs(L), string:join(First5, ", ")]).
+
+%% End-to-end text generation: encode prompt → forward each token, threading
+%% the KV cache → sample next token via dev/llama_sampling → decode.
+%%
+%% Args:
+%%   NumLayers : 1..22 — how many transformer blocks to use (22 = full model).
+%%   Prompt    : binary or string — text to feed in.
+%%   MaxNew    : integer — number of tokens to generate after the prompt.
+%%   SampOpts  : map — passed as-is to llama_sampling:sample/2 (e.g.
+%%               #{temperature => 0.8, top_k => 40}). Use #{} for argmax-style.
+run_generate(NumLayers, Prompt, MaxNew, SampOpts) ->
+    io:format("~n=== TinyLlama-1.1B text generation (N_layers=~p) ===~n~n",
+              [NumLayers]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(
+        <<"tmp/tinyllama/tokenizer.json">>),
+    Layers = build_layers(Header, NumLayers),
+    EmbedTbl = load_embed_table(Header),
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack(LmHead, ?HIDDEN, ?VOCAB),
+    RopeTable = precompute_rope_table(256, ?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Model + tokenizer ready~n", [ms() - T0]),
+
+    %% Encode the prompt; prepend BOS (Llama convention).
+    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    io:format("Prompt: ~ts~n", [Prompt]),
+    io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
+
+    %% Initial pass: process the prompt tokens to fill the KV cache.
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+    TPrompt = ms(),
+    {LastHidden, Caches} = prefill(
+        PromptTokens, Layers, EmbedTbl, RopeTable, EmptyCaches, NumLayers),
+    io:format("[~5w ms] Prefill of ~p prompt tokens done~n",
+              [ms() - TPrompt, length(PromptTokens)]),
+
+    %% Iteratively decode MaxNew tokens.
+    TGen = ms(),
+    GeneratedIds = decode_loop(LastHidden, Caches, Layers,
+                                EmbedTbl, FinalNorm, LmHeadPk,
+                                RopeTable, NumLayers,
+                                length(PromptTokens), MaxNew, SampOpts,
+                                EOS, []),
+    io:format("[~5w ms] Generated ~p tokens~n",
+              [ms() - TGen, length(GeneratedIds)]),
+
+    %% Decode back to text.
+    AllText = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    io:format("~n--- generated ---~n~ts~n--- end ---~n", [AllText]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    {ok, GeneratedIds, AllText}.
+
+%% Run the prompt through the model to populate KV caches. Returns the
+%% hidden state after the LAST prompt token + the populated caches.
+prefill(Tokens, Layers, EmbedTbl, RopeTable, Caches, NumLayers) ->
+    lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            HiddenIn = embed_row(EmbedTbl, TokenId),
+            forward_all_blocks(HiddenIn, Layers, RopeTable,
+                               CL, NumLayers, Pos)
+        end,
+        {[], Caches},
+        lists:zip(lists:seq(0, length(Tokens) - 1), Tokens)
+    ).
+
+forward_all_blocks(HiddenIn, Layers, RopeTable, Caches, NumLayers, Pos) ->
+    lists:foldl(
+        fun(LayerIdx, {H, CL}) ->
+            {KC, VC} = lists:nth(LayerIdx + 1, CL),
+            {HOut, KC2, VC2} = forward_block(
+                H, lists:nth(LayerIdx + 1, Layers),
+                LayerIdx, Pos, RopeTable, KC, VC),
+            {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, CL)}
+        end,
+        {HiddenIn, Caches},
+        lists:seq(0, NumLayers - 1)
+    ).
+
+decode_loop(_Hidden, _Caches, _Layers, _EmbedTbl, _FinalNorm, _LmHeadPk,
+            _RopeTable, _NumLayers, _Pos, 0, _SampOpts, _EOS, Acc) ->
+    lists:reverse(Acc);
+decode_loop(Hidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
+            RopeTable, NumLayers, Pos, Remaining, SampOpts, EOS, Acc) ->
+    NormFinal = rmsnorm(Hidden, FinalNorm, ?EPS),
+    NormFp16  = floats_to_fp16(NormFinal),
+    Logits    = linear_fp8(NormFp16, LmHeadPk, ?VOCAB),
+    NextTok   = case maps:size(SampOpts) of
+        0 -> {Id, _} = argmax(Logits), Id;
+        _ -> llama_sampling:sample(Logits, SampOpts)
+    end,
+    io:format("  pos=~p -> token ~p~n", [Pos, NextTok]),
+    case NextTok of
+        EOS -> lists:reverse([NextTok | Acc]);
+        _ ->
+            NextHidden = embed_row(EmbedTbl, NextTok),
+            {HiddenOut, NewCaches} = forward_all_blocks(
+                NextHidden, Layers, RopeTable, Caches, NumLayers, Pos),
+            decode_loop(HiddenOut, NewCaches, Layers, EmbedTbl, FinalNorm,
+                        LmHeadPk, RopeTable, NumLayers, Pos + 1,
+                        Remaining - 1, SampOpts, EOS, [NextTok | Acc])
+    end.
 
 %% Sequential multi-token decode: feed N hardcoded tokens through N forward
 %% passes, threading the KV cache. Validates that the cache + GQA softmax
