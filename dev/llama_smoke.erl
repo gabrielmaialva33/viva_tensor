@@ -71,13 +71,10 @@ run() ->
     AttnOut = attention_single_token(Q, K, V),
     io:format("Attention out mean_abs=~p~n", [mean_abs(AttnOut)]),
 
-    %% Output projection.
+    %% Output projection. Both CUTLASS and cuBLASLt FP8 paths now write
+    %% FP32 device buffers, so no Inf saturation from FP16 cast.
     AttnOutFp16 = floats_to_fp16(AttnOut),
-    ORaw = time_stage("Linear O", fun() -> linear_fp8(AttnOutFp16, OPacked, ?HIDDEN) end),
-    %% cuBLASLt FP8 path can still produce Inf on edge values (FP16 output
-    %% buffer not yet ported to FP32 like CUTLASS). Clamp to FP16-max so the
-    %% rest of the block can continue.
-    O = clamp_inf(ORaw, 65504.0),
+    O = time_stage("Linear O", fun() -> linear_fp8(AttnOutFp16, OPacked, ?HIDDEN) end),
     io:format("O proj mean_abs=~p~n", [mean_abs(O)]),
 
     %% Residual.
@@ -94,10 +91,10 @@ run() ->
     %% runtime, so do gate + up + silu*mul + down manually in 3 separate
     %% linear_fp8 calls. Slower but functionally identical.
     XNorm2Fp16 = floats_to_fp16(XNorm2),
-    GateOut = clamp_inf(time_stage("Linear Gate",
-        fun() -> linear_fp8(XNorm2Fp16, GatePacked, ?FFN) end), 65504.0),
-    UpOut   = clamp_inf(time_stage("Linear Up",
-        fun() -> linear_fp8(XNorm2Fp16, UpPacked, ?FFN) end), 65504.0),
+    GateOut = time_stage("Linear Gate",
+        fun() -> linear_fp8(XNorm2Fp16, GatePacked, ?FFN) end),
+    UpOut   = time_stage("Linear Up",
+        fun() -> linear_fp8(XNorm2Fp16, UpPacked, ?FFN) end),
     io:format("Gate out mean_abs=~p  Up out mean_abs=~p~n",
               [mean_abs(GateOut), mean_abs(UpOut)]),
 
@@ -106,8 +103,8 @@ run() ->
     io:format("SwiGLU intermediate mean_abs=~p~n", [mean_abs(SwiGluInter)]),
 
     SwiGluInterFp16 = floats_to_fp16(SwiGluInter),
-    FfnOut = clamp_inf(time_stage("Linear Down",
-        fun() -> linear_fp8(SwiGluInterFp16, DownPacked, ?HIDDEN) end), 65504.0),
+    FfnOut = time_stage("Linear Down",
+        fun() -> linear_fp8(SwiGluInterFp16, DownPacked, ?HIDDEN) end),
     io:format("FFN out mean_abs=~p~n", [mean_abs(FfnOut)]),
 
     %% Residual 2.

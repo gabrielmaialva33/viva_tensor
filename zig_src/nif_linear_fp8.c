@@ -298,11 +298,15 @@ static int run_cublaslt_path(const PackedWeight *w,
                               int batch,
                               const uint16_t *d_bias /* may be NULL */,
                               int epilogue,
-                              uint16_t **out_d_C) {
+                              float **out_d_C) {
   if (ensure_lt_ctx() != 0) return -1;
 
-  uint16_t *d_C = NULL;
-  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(uint16_t);
+  /* FP32 output buffer eliminates the FP16 cast saturation that the
+   * previous FP16-output path suffered at large K — same fix already
+   * applied to the CUTLASS f32acc_out_f32 path. Per-row × per-channel
+   * dequant runs on FP32 host afterwards. */
+  float *d_C = NULL;
+  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
   if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -2;
   if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
     cudaFree(d_C);
@@ -339,7 +343,7 @@ static int run_cublaslt_path(const PackedWeight *w,
                               (uint64_t)w->in_features,
                               (uint64_t)batch,
                               (int64_t)w->in_features);
-  cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_16F,
+  cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F,
                               (uint64_t)w->out_features,
                               (uint64_t)batch,
                               (int64_t)w->out_features);
@@ -537,20 +541,18 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
     }
   }
 
-  /* Dispatch on epilogue: plain CUTLASS for the fast path (FP32 output
-   * buffer), cublasLt for any fused variant (FP16 output buffer). */
-  uint16_t *d_C_fp16 = NULL;
-  float    *d_C_fp32 = NULL;
+  /* Both CUTLASS and cublasLt now produce FP32 output buffers — the
+   * dequant + FP16 cast happens uniformly on host afterwards. */
+  float *d_C_fp32 = NULL;
   int use_cublaslt = has_bias || (epilogue != 1);
   if (use_cublaslt) {
-    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C_fp16);
+    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C_fp32);
   } else {
     rc = run_cutlass_path(w, d_input, batch, &d_C_fp32);
   }
   cudaFree(d_input);
   if (rc != 0) {
     if (d_bias) cudaFree(d_bias);
-    if (d_C_fp16) cudaFree(d_C_fp16);
     if (d_C_fp32) cudaFree(d_C_fp32);
     char err[64];
     snprintf(err, sizeof(err), "gemm_failed_%d", rc);
@@ -563,24 +565,17 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
   if (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0
       || w_scales_count != (size_t)w->out_features) {
     if (d_bias) cudaFree(d_bias);
-    if (d_C_fp16) cudaFree(d_C_fp16);
     if (d_C_fp32) cudaFree(d_C_fp32);
     if (w_scales) free(w_scales);
     return make_error(env, "weight_scale_read_failed");
   }
 
   ERL_NIF_TERM out_term;
-  if (use_cublaslt) {
-    rc = download_and_make_binary(env, d_C_fp16, batch, w->out_features,
-                                   act_scales, w_scales, 0.0f, &out_term);
-  } else {
-    rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features,
-                                        act_scales, w_scales, &out_term);
-  }
+  rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features,
+                                      act_scales, w_scales, &out_term);
   free(act_scales);
   free(w_scales);
   if (d_bias) cudaFree(d_bias);
-  if (d_C_fp16) cudaFree(d_C_fp16);
   if (d_C_fp32) cudaFree(d_C_fp32);
   if (rc != 0) return make_error(env, "output_download_failed");
 
@@ -641,7 +636,7 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
 
   int epilogue = has_bias ? CUBLASLT_EPILOGUE_GELU_BIAS
                           : CUBLASLT_EPILOGUE_GELU;
-  uint16_t *d_C = NULL;
+  float *d_C = NULL;
   rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C);
   cudaFree(d_input);
   if (rc != 0) {
@@ -652,8 +647,7 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
     return make_error(env, err);
   }
 
-  /* cublasLt path with epilogue: still uses per-channel dequant on host
-   * (epilogue scale arg in cublasLt is a single FP32). */
+  /* FP32 output buffer; per-row × per-channel dequant happens on host. */
   float *w_scales2 = NULL;
   size_t w_scales2_count = 0;
   if (read_weight_scales_per_channel(w, &w_scales2, &w_scales2_count) != 0
@@ -665,8 +659,8 @@ ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
   }
 
   ERL_NIF_TERM out_term;
-  rc = download_and_make_binary(env, d_C, batch, w->out_features,
-                                 act_scales, w_scales2, 0.0f, &out_term);
+  rc = download_fp32_and_make_binary(env, d_C, batch, w->out_features,
+                                      act_scales, w_scales2, &out_term);
   free(act_scales);
   free(w_scales2);
   if (d_bias) cudaFree(d_bias);
