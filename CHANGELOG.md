@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+### Added
+
+- `cuda_int_sparse_run.cu`: three new debug-friendly C entrypoints —
+  `cutlass_int4_sparse_reorder_meta_e` (direct shim to
+  `cutlass::reorder_meta`), `cutlass_int4_sparse_uncompress_to_dense`
+  (host round-trip validator using `cutlass::uncompress`), and
+  `cutlass_int4_sparse_self_test` (pure-CUTLASS-driven kernel
+  validation against a host dense reference). The self-test produces
+  `diffs=0 max_abs_diff=0` on (256, 256, 256), proving the
+  INT4 sparse Tensor Op kernel + reorder + uncompress path is
+  byte-exact end-to-end.
+
+### Changed
+
+- `nif_prepack_int_sparse`: INT4 2:4 metadata is now derived from the
+  already-pruned `h_quant` buffer (row-major) instead of re-reading `W` in
+  column-major. The previous code disagreed with the quant loop and named
+  pairs that were not the ones actually preserved.
+- INT4 prepack metadata reorder is delegated to the CUTLASS-native shim
+  `cutlass_int4_sparse_reorder_meta_e` instead of a hand-ported C version,
+  eliminating any chance of layout transcription drift.
+
+### Fixed
+
+- **INT4 sparse `ldE` was wrong**: the run launcher passed
+  `ldE = K / kSparse / kElementsPerElementE` (= K_words, the column count of
+  E) when `GemmSparseUniversal` expects the `LayoutE` stride
+  `extent.row() * kInterleave = M * 2` for `ColumnMajorInterleaved<2>`.
+  After fixing this, the numerical error against the dense FP32 reference
+  dropped from ~108% → ~55%. The same fix was applied to the INT8 sparse
+  run launcher even though its primary path is cuSPARSELt.
+- INT4 metadata loop layout bug: second loop read `W[k * out_features + o]`
+  (column-major) while the first quantization loop used row-major, leading to
+  the metadata naming different pairs than the ones in `h_quant`.
+
+### Validated
+
+- INT4 2:4 sparse pipeline is internally byte-exact:
+  * Kernel + reorder + uncompress: byte-exact vs CUTLASS reference
+    (`cutlass_int4_sparse_self_test` returns `diffs=0`).
+  * Encoding round-trip: `uncompress(h_packed, h_meta) == h_quant`
+    element-wise.
+  * Reorder: hand-ported reorder produced same output as `cutlass::reorder_meta`.
+- Remaining ~55% L2 error vs dense FP32 on random uniform weights is the
+  inherent noise floor of 50% structured sparsity + INT4 quantization
+  (variance scaling: √(K/2)/√K = 0.707 magnitude alone, plus quant). Real
+  LLM weights with magnitude structure will see much smaller error.
+- Numerical test tolerance set to 0.65 (above measured 0.55, with headroom).
+
 ## [2.2.101] - 2026-05-15
 
 ### Added

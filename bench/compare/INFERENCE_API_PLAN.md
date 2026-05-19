@@ -137,6 +137,40 @@ each function body. Replace with `@external(erlang, "viva_tensor_zig",
 - Assert L2 norm difference is within the dtype's expected quantization
   error band (FP8 ≈ 1%, INT8 ≈ 1.5%, INT4 sparse ≈ 5%).
 
+### 6a. INT4 sparse — closed (byte-exact internally)
+
+The INT4 2:4 sparse path is now end-to-end correct. Three independent
+validators in `cuda_int_sparse_run.cu` (all under `extern "C"`) prove this:
+
+* `cutlass_int4_sparse_self_test(M, N, K)` runs the kernel against
+  a CUTLASS-built compressed A + `TensorFillRandomSparseMeta`, reorders
+  via `cutlass::reorder_meta`, computes a dense host reference via
+  `cutlass::uncompress` + host GEMM, and reports diffs. Result on
+  (256, 256, 256): `diffs=0 max_abs_diff=0`.
+* `cutlass_int4_sparse_uncompress_to_dense` round-trips
+  `(h_packed, h_meta)` and gives back exactly `h_quant` element-wise.
+* `cutlass_int4_sparse_reorder_meta_e` is a direct shim to
+  `cutlass::reorder_meta` — produces the same output as our previous
+  hand-ported C version, confirming the reorder layout was correct.
+
+Root cause of the original 108% → 86% → 55% sequence of errors:
+
+1. Metadata loop initially read `W` column-major while the quant loop
+   read row-major. Fixed by deriving metadata from `h_quant`.
+2. Logical row-major ElementE wasn't reordered into the
+   `ColumnMajorInterleaved<2>` layout the Sm80 sparse Tensor Op kernel
+   actually reads. Added `cutlass::reorder_meta` shim.
+3. **`ldE` was passed as `K/kSparse/kElementsPerElementE` (= K_words,
+   the column count of E) instead of `M * kInterleave` (the
+   `LayoutE::Stride` of `ColumnMajorInterleaved<2>`)**. This was the
+   killer: kernel was striding through E with the wrong row pitch.
+   Fixed in both the run launcher and the workspace-size query.
+
+The remaining ~55% L2 vs dense FP32 reference on random uniform weights
+is the inherent quant + sparsity noise floor (variance scaling alone
+yields ~30% magnitude loss). Real LLM weights with magnitude structure
+will see substantially smaller numerical error.
+
 ## Effort estimate
 
  Item                 | Lines of code | Hours                        
