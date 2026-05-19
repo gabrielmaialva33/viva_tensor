@@ -187,6 +187,22 @@ static inline void top2_pairs_of_8(const float* a, int* keep0, int* keep1) {
     *keep1 = (i0 < i1) ? i1 : i0;
 }
 
+/* Provided by cuda_int_sparse_run.cu — calls cutlass::reorder_meta()
+ * directly against a RowMajor src and a ColumnMajorInterleaved<2> dst,
+ * eliminating any layout/permutation transcription error. */
+extern void cutlass_int4_sparse_reorder_meta_e(uint32_t* dst,
+                                               const uint32_t* src,
+                                               int M, int K_words);
+
+/* Round-trip uncompress (debug-only). */
+extern void cutlass_int4_sparse_uncompress_to_dense(int8_t* dst_int8_per_cell,
+                                                    const int8_t* compressed_a,
+                                                    const uint32_t* meta,
+                                                    int M, int K);
+
+/* Pure CUTLASS-driven self-test (debug only). Returns 0 on success. */
+extern int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff);
+
 /* =========================================================================
  * INT8 2:4 sparse prepack
  *
@@ -690,8 +706,67 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     cerr = cudaMalloc(&pw->d_metadata, meta_total);
     if (cerr != cudaSuccess) goto cuda_fail4;
     pw->metadata_bytes = meta_total;
-    cerr = cudaMemcpy(pw->d_metadata, h_meta, meta_total, cudaMemcpyHostToDevice);
-    if (cerr != cudaSuccess) goto cuda_fail4;
+
+    /* DEBUG: pure-CUTLASS self-test of the kernel. If diffs > 0 here, the
+     * problem is in our run launcher, not in our compression pipeline. */
+    {
+        static int self_test_done = 0;
+        if (!self_test_done) {
+            int max_diff = 0;
+            int diffs = cutlass_int4_sparse_self_test(out_features, in_features, in_features, &max_diff);
+            fprintf(stderr, "[INT4-SELFTEST] M=%d N=%d K=%d diffs=%d max_abs_diff=%d\n",
+                    out_features, in_features, in_features, diffs, max_diff);
+            self_test_done = 1;
+        }
+    }
+
+    /* DEBUG: round-trip validation. Uncompress (h_packed + h_meta) to a
+     * dense int4 buffer and compare against h_quant element-wise. If they
+     * match, our compression encoding is correct and any kernel mismatch
+     * is purely in the reorder/launch path. If they differ, the pruning,
+     * packing, or metadata layout is wrong. */
+    {
+        int8_t* uncomp = (int8_t*)malloc((size_t)out_features * (size_t)in_features);
+        if (uncomp) {
+            cutlass_int4_sparse_uncompress_to_dense(
+                uncomp, h_packed, (const uint32_t*)h_meta,
+                out_features, in_features);
+            int total = out_features * in_features;
+            int diffs = 0;
+            int nonzero_q = 0;
+            for (int i = 0; i < total; ++i) {
+                if (h_quant[i] != 0) nonzero_q++;
+                if (uncomp[i] != h_quant[i]) diffs++;
+            }
+            fprintf(stderr,
+                "[INT4-DEBUG] roundtrip: total=%d nonzero_h_quant=%d diffs=%d "
+                "(first 16 of each: ",
+                total, nonzero_q, diffs);
+            for (int i = 0; i < 16 && i < total; ++i)
+                fprintf(stderr, "%d ", (int)h_quant[i]);
+            fprintf(stderr, " | ");
+            for (int i = 0; i < 16 && i < total; ++i)
+                fprintf(stderr, "%d ", (int)uncomp[i]);
+            fprintf(stderr, ")\n");
+            free(uncomp);
+        }
+    }
+
+    /* Sm80 GemmSparseUniversal expects ElementE in an interleaved (warp-lane)
+     * layout. Reorder our logical row-major metadata before upload. */
+    {
+        uint32_t* h_meta_reordered = (uint32_t*)malloc(meta_total);
+        if (!h_meta_reordered) goto cuda_fail4;
+        memset(h_meta_reordered, 0, meta_total);
+        int meta_words_per_row = (int)(meta_bytes_per_row / sizeof(uint32_t));
+        cutlass_int4_sparse_reorder_meta_e(h_meta_reordered,
+                                           (const uint32_t*)h_meta,
+                                           out_features, meta_words_per_row);
+        cerr = cudaMemcpy(pw->d_metadata, h_meta_reordered, meta_total,
+                          cudaMemcpyHostToDevice);
+        free(h_meta_reordered);
+        if (cerr != cudaSuccess) goto cuda_fail4;
+    }
 
     cerr = cudaMalloc(&pw->d_scales, (size_t)out_features * sizeof(float));
     if (cerr != cudaSuccess) goto cuda_fail4;
