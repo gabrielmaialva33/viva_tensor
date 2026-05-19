@@ -229,9 +229,11 @@ CUDA_ARCH ?= sm_89
 CUTLASS_INCLUDE ?= /usr/include
 CUSPARSELT_INCLUDE ?= /opt/cusparselt/include
 CUDA_INCLUDE ?= /usr/local/cuda/include
+NVCC_HOST_COMPILER ?= $(shell command -v g++-15 2>$(NULL) || true)
+NVCC_HOST_FLAG := $(if $(NVCC_HOST_COMPILER),-ccbin $(NVCC_HOST_COMPILER),)
 NVCC_FLAGS := -O3 -std=c++17 -arch=$(CUDA_ARCH) -Xcompiler -fPIC \
-              -I$(CUTLASS_INCLUDE) -I$(CUSPARSELT_INCLUDE) -I$(CUDA_INCLUDE) \
-              -I$(ERL_INCLUDE)
+               -I$(CUTLASS_INCLUDE) -I$(CUSPARSELT_INCLUDE) -I$(CUDA_INCLUDE) \
+               -I$(ERL_INCLUDE) $(NVCC_HOST_FLAG)
 
 ## Build Zig NIF (cross-platform: Windows/Linux/macOS)
 ## Includes: SIMD kernels, Intel MKL, CUDA, Apple Accelerate
