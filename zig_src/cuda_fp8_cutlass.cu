@@ -134,6 +134,39 @@ using GemmFP32AccOutF32 = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 extern "C" {
 
+__global__ void fp8_colmajor_dequant_to_fp16_kernel(
+    const cutlass::float_e4m3_t *src,
+    const float *scales,
+    cutlass::half_t *dst,
+    int K,
+    int N) {
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    int total = K * N;
+    if (idx >= total) return;
+    int col = idx / K;
+    float scale = scales ? scales[col] : 1.0f;
+    dst[idx] = cutlass::half_t(static_cast<float>(src[idx]) * scale);
+}
+
+int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
+                                       const float *d_scales,
+                                       void *d_fp16,
+                                       int K,
+                                       int N) {
+    if (!d_fp8 || !d_fp16 || K <= 0 || N <= 0) return -10;
+    int total = K * N;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads>>>(
+        static_cast<const cutlass::float_e4m3_t *>(d_fp8),
+        d_scales,
+        static_cast<cutlass::half_t *>(d_fp16),
+        K,
+        N);
+    cudaError_t err = cudaGetLastError();
+    return (err == cudaSuccess) ? 0 : -11;
+}
+
 /**
  * FP8 E4M3 GEMM with FP32 output — for the inference path where the
  * caller wants to apply per-row × per-channel dequant scales on FP32
