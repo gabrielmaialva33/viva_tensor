@@ -134,21 +134,18 @@ static int launch_silu_mul(const __half* d_gate, const __half* d_up,
 
 extern "C" ERL_NIF_TERM
 nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
-  fprintf(stderr, "[SWIGLU-DBG] entered argc=%d\n", argc);
   if (argc != 5) return enif_make_badarg(env);
 
   /* --- Parse input shape --- */
   int shape[8];
   int ndim = 0;
   int shape_ok = parse_shape(env, argv[1], shape, &ndim);
-  fprintf(stderr, "[SWIGLU-DBG] shape_ok=%d ndim=%d\n", shape_ok, ndim);
   if (!shape_ok || ndim < 2) {
     return make_error(env, "bad_input_shape");
   }
   int in_features = shape[ndim - 1];
   int batch = 1;
   for (int i = 0; i < ndim - 1; ++i) batch *= shape[i];
-  fprintf(stderr, "[SWIGLU-DBG] batch=%d in_features=%d\n", batch, in_features);
   if (batch <= 0 || in_features <= 0) {
     return make_error(env, "bad_input_dims");
   }
@@ -156,7 +153,6 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   /* --- Parse input data (FP32 host) --- */
   unsigned data_len;
   double* input_doubles = list_to_doubles(env, argv[0], &data_len);
-  fprintf(stderr, "[SWIGLU-DBG] list_to_doubles len=%u (expect=%d), ptr_null=%d\n",
           data_len, batch*in_features, input_doubles == NULL);
   if (!input_doubles || (int)data_len != batch * in_features) {
     if (input_doubles) free(input_doubles);
@@ -167,20 +163,16 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   if (!h_input_fp32) { free(input_doubles); return make_error(env, "oom_host"); }
   for (unsigned i = 0; i < data_len; ++i) h_input_fp32[i] = (float)input_doubles[i];
   free(input_doubles);
-  fprintf(stderr, "[SWIGLU-DBG] before get_packed_weight\n");
 
   /* --- Fetch packed weights --- */
   PackedWeight* gate_w = get_packed_weight(env, argv[2]);
   PackedWeight* up_w   = get_packed_weight(env, argv[3]);
-  fprintf(stderr, "[SWIGLU-DBG] gate_w=%p up_w=%p\n", (void*)gate_w, (void*)up_w);
   if (!gate_w || !up_w) {
     free(h_input_fp32);
     return make_error(env, "bad_packed_weight");
   }
-  fprintf(stderr, "[SWIGLU-DBG] gate.dtype=%d in_f=%d out_f=%d d_weight=%p\n",
           gate_w->dtype, gate_w->in_features, gate_w->out_features, gate_w->d_weight);
 
-  fprintf(stderr, "[SWIGLU-DBG] checking dtypes\n");
   if (gate_w->dtype != PW_FP8 || up_w->dtype != PW_FP8) {
     free(h_input_fp32);
     return make_error(env, "weight_not_fp8");
@@ -211,13 +203,11 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     return make_error(env, "cuda_malloc_input");
   }
   float input_scale = 1.0f;
-  fprintf(stderr, "[SWIGLU-DBG] before quantize input_elems=%zu\n", input_elems);
   if (swiglu_quantize_fp8_e4m3_host(d_input_fp8, h_input_fp32, input_elems, &input_scale) != 0) {
     cudaFree(d_input_fp8);
     free(h_input_fp32);
     return make_error(env, "input_quantize_failed");
   }
-  fprintf(stderr, "[SWIGLU-DBG] after quantize input_scale=%f\n", input_scale);
   free(h_input_fp32);
 
   /* --- Allocate device output buffers --- */
@@ -239,17 +229,14 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
 
   /* --- Two FP8 GEMMs: gate and up --- */
-  fprintf(stderr, "[SWIGLU-DBG] before gate gemm M=%d N=%d K=%d\n", batch, out_features, in_features);
   int rc1 = cutlass_fp8_gemm_f16acc(batch, out_features, in_features,
                                      d_input_fp8, d_gate_weight, d_gate_out);
-  fprintf(stderr, "[SWIGLU-DBG] gate gemm rc=%d\n", rc1);
   if (rc1 != 0) {
     cudaFree(d_out); cudaFree(d_up_out); cudaFree(d_gate_out); cudaFree(d_input_fp8);
     return make_error(env, "cutlass_gate_gemm_failed");
   }
   int rc2 = cutlass_fp8_gemm_f16acc(batch, out_features, in_features,
                                      d_input_fp8, d_up_weight, d_up_out);
-  fprintf(stderr, "[SWIGLU-DBG] up gemm rc=%d\n", rc2);
   if (rc2 != 0) {
     cudaFree(d_out); cudaFree(d_up_out); cudaFree(d_gate_out); cudaFree(d_input_fp8);
     return make_error(env, "cutlass_up_gemm_failed");
@@ -287,9 +274,7 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
 
   /* --- Fused silu+mul (+optional bias) --- */
-  fprintf(stderr, "[SWIGLU-DBG] before silu_mul\n");
   int kc = launch_silu_mul(d_gate_out, d_up_out, d_bias, d_out, batch, out_features);
-  fprintf(stderr, "[SWIGLU-DBG] silu_mul rc=%d\n", kc);
   cudaFree(d_gate_out);
   cudaFree(d_up_out);
   if (d_bias) cudaFree(d_bias);
@@ -353,14 +338,17 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     free(h_out);
     return make_error(env, "oom_output_doubles");
   }
+  /* FP16 silu_mul output can saturate to ±inf at large K with random
+   * activations. Clamp to FP32-finite range so enif_make_double doesn't
+   * reject the value with badarg. */
   for (size_t i = 0; i < total; ++i) {
-    h_out_doubles[i] = (double)__half2float(h_out[i]) * (double)scale_correction;
+    double v = (double)__half2float(h_out[i]) * (double)scale_correction;
+    if (!isfinite(v)) v = (v < 0.0) ? -65504.0 : 65504.0;
+    h_out_doubles[i] = v;
   }
   free(h_out);
 
-  fprintf(stderr, "[SWIGLU-DBG] before doubles_to_list total=%zu\n", total);
   ERL_NIF_TERM out_list = doubles_to_list(env, h_out_doubles, (unsigned)total);
-  fprintf(stderr, "[SWIGLU-DBG] after doubles_to_list\n");
   free(h_out_doubles);
 
   return make_ok(env, out_list);
