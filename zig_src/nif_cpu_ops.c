@@ -813,7 +813,17 @@ uint16_t float_to_half(float f) {
     if (new_exp >= 31) {
       h = (sign << 15) | 0x7C00;  /* Overflow -> Inf */
     } else if (new_exp <= 0) {
-      h = (sign << 15);  /* Underflow -> Zero */
+      /* IEEE-754 binary16 subnormal: representable down to 2^-24 ≈ 5.96e-8.
+       * Naive flush-to-zero used to underflow ~50% of FP8/Llama activations
+       * (any |x| < 2^-14) and caused a ~0.5× pipeline-wide magnitude bias
+       * vs HF reference (see dev/hf_bisect.py). */
+      if (new_exp < -10) {
+        h = (uint16_t)(sign << 15);                  /* truly < 2^-24, flush */
+      } else {
+        uint32_t mant_full = mant | 0x800000;         /* implicit leading 1 */
+        uint32_t shift = (uint32_t)(14 - new_exp);    /* in [14, 24] */
+        h = (uint16_t)((sign << 15) | (mant_full >> shift));
+      }
     } else {
       h = (sign << 15) | (new_exp << 10) | (mant >> 13);
     }

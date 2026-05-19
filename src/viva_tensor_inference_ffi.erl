@@ -44,8 +44,16 @@ fp16_encode(F) when is_float(F) ->
         _ ->
             UnbiasedE = E - 127,
             case UnbiasedE of
+                X when X < -24 ->
+                    (S bsl 15);  %% truly < 2^-24, flush
                 X when X < -14 ->
-                    (S bsl 15);  %% underflow → ±0
+                    %% IEEE-754 binary16 subnormal range [2^-24, 2^-14).
+                    %% Shift the implicit leading 1 into the mantissa field.
+                    %% Mirror nif_cpu_ops.c: shift = 14 - (X + 15) = -1 - X,
+                    %% in [9, 23] for X in [-24, -15].
+                    MantFull = M bor 16#800000,
+                    Shift = -1 - X,
+                    (S bsl 15) bor (MantFull bsr Shift);
                 X when X > 15 ->
                     (S bsl 15) bor (16#1F bsl 10);  %% overflow → ±Inf
                 X ->
