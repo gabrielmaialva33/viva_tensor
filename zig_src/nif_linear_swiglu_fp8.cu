@@ -153,7 +153,6 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   /* --- Parse input data (FP32 host) --- */
   unsigned data_len;
   double* input_doubles = list_to_doubles(env, argv[0], &data_len);
-          data_len, batch*in_features, input_doubles == NULL);
   if (!input_doubles || (int)data_len != batch * in_features) {
     if (input_doubles) free(input_doubles);
     return make_error(env, "input_data_shape_mismatch");
@@ -171,7 +170,6 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     free(h_input_fp32);
     return make_error(env, "bad_packed_weight");
   }
-          gate_w->dtype, gate_w->in_features, gate_w->out_features, gate_w->d_weight);
 
   if (gate_w->dtype != PW_FP8 || up_w->dtype != PW_FP8) {
     free(h_input_fp32);
