@@ -19,7 +19,8 @@
 %%%          -s llama_forward run -s init stop
 
 -module(llama_forward).
--export([run/0, run_n/1, build_layer/2]).
+-export([run/0, run_n/1, build_layer/2,
+         precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
 -define(HIDDEN, 2048).
@@ -142,7 +143,7 @@ build_layer(Header, LayerIdx) ->
 %%   x2 = norm2(x)
 %%   ffn = down(silu(gate(x2)) * up(x2))
 %%   x = x + ffn
-forward_block(H, Layer, _LayerIdx, Pos, RopeTable) ->
+forward_block(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
     #{norm1 := N1, norm2 := N2,
       q := Q, k := K, v := V, o := O,
       gate := G, up := U, down := D} = Layer,
@@ -155,12 +156,12 @@ forward_block(H, Layer, _LayerIdx, Pos, RopeTable) ->
     VOut    = linear_fp8(X1Fp16, V, ?KV_DIM),
 
     %% Apply RoPE to Q and K (NOT V) for positional encoding.
-    _QOut = apply_rope(QOutRaw, Pos, RopeTable, ?NUM_HEADS,    ?HEAD_DIM),
-    _KOut = apply_rope(KOutRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    QOut = apply_rope(QOutRaw, Pos, RopeTable, ?NUM_HEADS,    ?HEAD_DIM),
+    KOut = apply_rope(KOutRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
 
-    %% Single-token attention degenerates: softmax(1 scalar)=1, attn=V_head
-    %% broadcast across the 8 Q heads sharing each KV head.
-    AttnOut = attention_single_token(_QOut, VOut),
+    %% GQA attention with KV cache (real softmax over all positions).
+    {AttnOut, KCache2, VCache2} = attention_gqa(QOut, KOut, VOut, KCache, VCache),
+
     AttnOutFp16 = floats_to_fp16(AttnOut),
     OOut = linear_fp8(AttnOutFp16, O, ?HIDDEN),
 
@@ -174,7 +175,8 @@ forward_block(H, Layer, _LayerIdx, Pos, RopeTable) ->
     Ffn = linear_fp8(SwInterFp16, D, ?HIDDEN),
 
     %% Residual 2
-    list_add(H1, Ffn).
+    HOut = list_add(H1, Ffn),
+    {HOut, KCache2, VCache2}.
 
 %% ---------------------------------------------------------------------------
 %% RoPE (rotary positional embedding)
@@ -229,14 +231,90 @@ rotate_at(HeadTup, I, Half, Rotations) ->
     end.
 
 %% ---------------------------------------------------------------------------
-%% Single-token attention: with one position in the KV cache, softmax of the
-%% lone scaled QK dot product is 1, so attn_out per Q-head equals the V-head
-%% it points at (GQA: 32 Q heads / 4 KV heads = 8 Q per KV).
-attention_single_token(_Q, V) ->
-    VHeads = chunks(V, ?HEAD_DIM),
-    lists:flatten(
-        [lists:nth(QHead div (?NUM_HEADS div ?NUM_KV_HEADS) + 1, VHeads)
-         || QHead <- lists:seq(0, ?NUM_HEADS - 1)]
+%% GQA attention with KV cache.
+%%
+%% Inputs:
+%%   QFlat  : [num_heads * head_dim]      Q at current position (RoPE-applied)
+%%   KFlat  : [num_kv_heads * head_dim]   K at current position (RoPE-applied)
+%%   VFlat  : [num_kv_heads * head_dim]   V at current position
+%%   KCache : list of K vectors, oldest first (positions 0..pos-1)
+%%   VCache : list of V vectors, oldest first
+%% Outputs:
+%%   AttnOut    : [num_heads * head_dim] flat list
+%%   NewKCache  : KCache ++ [KFlat]
+%%   NewVCache  : VCache ++ [VFlat]
+attention_gqa(QFlat, KFlat, VFlat, KCache, VCache) ->
+    NewKCache = KCache ++ [KFlat],
+    NewVCache = VCache ++ [VFlat],
+
+    %% Each cached K/V is split into NumKVHeads chunks of HeadDim. Cache as
+    %% tuple of tuples for O(1) head lookup.
+    %% Layout: KByHeadByPos[kv_head_idx] = list of head-vectors across positions
+    KByHead = transpose_cache(NewKCache, ?NUM_KV_HEADS, ?HEAD_DIM),
+    VByHead = transpose_cache(NewVCache, ?NUM_KV_HEADS, ?HEAD_DIM),
+
+    QHeads = chunks(QFlat, ?HEAD_DIM),
+    Scale  = 1.0 / math:sqrt(float(?HEAD_DIM)),
+    QPerKV = ?NUM_HEADS div ?NUM_KV_HEADS,    %% = 8
+
+    HeadOuts = [
+        begin
+            KvIdx = QHeadIdx div QPerKV,
+            Khead = lists:nth(KvIdx + 1, KByHead),    %% list of pos-len head_dim
+            Vhead = lists:nth(KvIdx + 1, VByHead),
+            QHead = lists:nth(QHeadIdx + 1, QHeads),
+            attn_one_head(QHead, Khead, Vhead, Scale)
+        end
+        || QHeadIdx <- lists:seq(0, ?NUM_HEADS - 1)
+    ],
+
+    AttnOut = lists:flatten(HeadOuts),
+    {AttnOut, NewKCache, NewVCache}.
+
+%% transpose_cache([Flat]) -> [[HeadVecPos0, HeadVecPos1, ...] per head_idx]
+%% Each Flat is [NumHeads * HeadDim]. Output is NumHeads lists, each of
+%% length len(Cache), each element is HeadDim floats.
+transpose_cache(Cache, NumHeads, HeadDim) ->
+    %% First chunk each cached vector into per-head pieces.
+    PerPosHeads = [chunks(Flat, HeadDim) || Flat <- Cache],
+    %% Then pivot: HeadByPos[h] = [PerPosHeads[0][h], PerPosHeads[1][h], ...]
+    [
+        [lists:nth(H + 1, PerPos) || PerPos <- PerPosHeads]
+        || H <- lists:seq(0, NumHeads - 1)
+    ].
+
+%% Single Q head against (Khead, Vhead) lists where Khead is a list of
+%% per-position head_dim vectors (similarly Vhead). Returns a head_dim vector.
+attn_one_head(QVec, Khead, Vhead, Scale) ->
+    %% Scaled dot product scores
+    Scores = [dot(QVec, K) * Scale || K <- Khead],
+    Weights = softmax(Scores),
+    %% Weighted sum of V vectors
+    weighted_sum(Weights, Vhead).
+
+dot(A, B) ->
+    lists:foldl(
+        fun({X, Y}, Acc) -> Acc + X * Y end,
+        0.0,
+        lists:zip(A, B)
+    ).
+
+softmax(Xs) ->
+    M = lists:foldl(fun(X, Mx) -> max(X, Mx) end, -1.0e308, Xs),
+    Exps = [math:exp(X - M) || X <- Xs],
+    S = lists:sum(Exps),
+    [E / S || E <- Exps].
+
+%% weighted_sum([w0, w1, ...], [V0, V1, ...]) -> sum_t w_t * V_t
+weighted_sum(Weights, Vectors) ->
+    HeadDim = length(hd(Vectors)),
+    Init = lists:duplicate(HeadDim, 0.0),
+    lists:foldl(
+        fun({W, V}, Acc) ->
+            lists:zipwith(fun(A, Vi) -> A + W * Vi end, Acc, V)
+        end,
+        Init,
+        lists:zip(Weights, Vectors)
     ).
 
 chunks([], _) -> [];
