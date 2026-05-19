@@ -129,6 +129,8 @@
     nt_prepack_fp8/2,
     nt_prepack_fp8_blocked/3,
     nt_floats_to_fp16_binary/1,
+    nt_silu_mul/2,
+    nt_list_add_fp16/2,
     nt_linear_fp8/4,
     nt_linear_fp8_w8a16/3,
     nt_linear_gelu_fp8/4,
@@ -595,6 +597,8 @@ cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_n
 nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize) -> erlang:nif_error(nif_not_loaded).
 nt_floats_to_fp16_binary(_Floats) -> erlang:nif_error(nif_not_loaded).
+nt_silu_mul(_Gate, _Up) -> erlang:nif_error(nif_not_loaded).
+nt_list_add_fp16(_A, _B) -> erlang:nif_error(nif_not_loaded).
 nt_linear_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
 nt_linear_fp8_w8a16(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_gelu_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).

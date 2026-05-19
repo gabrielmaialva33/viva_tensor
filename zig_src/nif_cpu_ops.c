@@ -874,6 +874,90 @@ ERL_NIF_TERM nt_floats_to_fp16_binary(ErlNifEnv *env, int argc,
 }
 
 
+/** nt_silu_mul(GateList, UpList) -> FP16Binary
+ *
+ * Fused silu(gate) * up over two equal-length lists of floats.
+ * Returns an FP16 binary directly (skips an extra Erlang list build
+ * + fp16 encode step). Used by the SwiGLU intermediate path.
+ *
+ *   silu(x) = x / (1 + exp(-x))
+ *   out[i]  = silu(gate[i]) * up[i]
+ */
+ERL_NIF_TERM nt_silu_mul(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  unsigned ng = 0, nu = 0;
+  if (!enif_get_list_length(env, argv[0], &ng)) return enif_make_badarg(env);
+  if (!enif_get_list_length(env, argv[1], &nu)) return enif_make_badarg(env);
+  if (ng != nu) return enif_make_badarg(env);
+
+  ERL_NIF_TERM out_term;
+  unsigned char *dst = enif_make_new_binary(env, (size_t)ng * 2, &out_term);
+  if (!dst) return enif_make_badarg(env);
+
+  ERL_NIF_TERM g_head, g_tail = argv[0], u_head, u_tail = argv[1];
+  unsigned i = 0;
+  while (enif_get_list_cell(env, g_tail, &g_head, &g_tail) &&
+         enif_get_list_cell(env, u_tail, &u_head, &u_tail)) {
+    double gd, ud;
+    long gi, ui;
+    if (!enif_get_double(env, g_head, &gd)) {
+      if (enif_get_long(env, g_head, &gi)) gd = (double)gi;
+      else return enif_make_badarg(env);
+    }
+    if (!enif_get_double(env, u_head, &ud)) {
+      if (enif_get_long(env, u_head, &ui)) ud = (double)ui;
+      else return enif_make_badarg(env);
+    }
+    float g = (float)gd;
+    float u = (float)ud;
+    float silu_g = g / (1.0f + expf(-g));
+    uint16_t h = float_to_half(silu_g * u);
+    dst[(size_t)i * 2 + 0] = (unsigned char)(h & 0xFF);
+    dst[(size_t)i * 2 + 1] = (unsigned char)((h >> 8) & 0xFF);
+    ++i;
+  }
+  return out_term;
+}
+
+/** nt_list_add_fp16(ListA, ListB) -> FP16Binary
+ *
+ * Adds two equal-length lists element-wise and returns an FP16 binary.
+ * Replaces the Erlang `lists:zipwith(fun(X,Y) -> X+Y end, ...)` followed
+ * by `floats_to_fp16_binary` chain in residual + cast paths.
+ */
+ERL_NIF_TERM nt_list_add_fp16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  unsigned na = 0, nb = 0;
+  if (!enif_get_list_length(env, argv[0], &na)) return enif_make_badarg(env);
+  if (!enif_get_list_length(env, argv[1], &nb)) return enif_make_badarg(env);
+  if (na != nb) return enif_make_badarg(env);
+
+  ERL_NIF_TERM out_term;
+  unsigned char *dst = enif_make_new_binary(env, (size_t)na * 2, &out_term);
+  if (!dst) return enif_make_badarg(env);
+
+  ERL_NIF_TERM a_head, a_tail = argv[0], b_head, b_tail = argv[1];
+  unsigned i = 0;
+  while (enif_get_list_cell(env, a_tail, &a_head, &a_tail) &&
+         enif_get_list_cell(env, b_tail, &b_head, &b_tail)) {
+    double ad, bd;
+    long ai, bi;
+    if (!enif_get_double(env, a_head, &ad)) {
+      if (enif_get_long(env, a_head, &ai)) ad = (double)ai;
+      else return enif_make_badarg(env);
+    }
+    if (!enif_get_double(env, b_head, &bd)) {
+      if (enif_get_long(env, b_head, &bi)) bd = (double)bi;
+      else return enif_make_badarg(env);
+    }
+    uint16_t h = float_to_half((float)(ad + bd));
+    dst[(size_t)i * 2 + 0] = (unsigned char)(h & 0xFF);
+    dst[(size_t)i * 2 + 1] = (unsigned char)((h >> 8) & 0xFF);
+    ++i;
+  }
+  return out_term;
+}
+
 /** nt_matmul_fp16_tc(RefA, RefB, M, N, K) -> {ok, RefC}
  *  FP16 Tensor Cores via cublasGemmEx. Auto-converts f64 <-> FP16.
  */

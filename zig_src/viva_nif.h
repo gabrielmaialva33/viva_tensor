@@ -709,6 +709,8 @@ NIF_FUNC_DECL(nt_matmul_int8_tc);
 NIF_FUNC_DECL(nt_int8_tc_available);
 NIF_FUNC_DECL(nt_matmul_fp16_tc);
 NIF_FUNC_DECL(nt_floats_to_fp16_binary);
+NIF_FUNC_DECL(nt_silu_mul);
+NIF_FUNC_DECL(nt_list_add_fp16);
 NIF_FUNC_DECL(nt_fp16_tc_available);
 NIF_FUNC_DECL(nt_matmul_int8_lt);
 NIF_FUNC_DECL(nt_int8_lt_available);

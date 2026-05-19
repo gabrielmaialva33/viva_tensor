@@ -828,6 +828,8 @@ profile_w8a16(NumLayers, BlockSize) ->
     {ok, Stages, Total}.
 
 %% Same shape as forward_block/7 but uses linear_fp8_w8a16 throughout.
+%% Uses NIF-accelerated silu_mul (skips an Erlang list build + fp16 encode)
+%% and NIF-accelerated fp16 encoding via floats_to_fp16/1.
 forward_block_w8a16(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
     #{norm1 := N1, norm2 := N2,
       q := Q, k := K, v := V, o := O,
@@ -851,12 +853,24 @@ forward_block_w8a16(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
     X2Fp16 = floats_to_fp16(X2),
     GateOut = linear_fp8_w8a16(X2Fp16, G, ?FFN),
     UpOut   = linear_fp8_w8a16(X2Fp16, U, ?FFN),
-    SwInter = lists:zipwith(fun(Gv, Uv) -> silu(Gv) * Uv end, GateOut, UpOut),
-    SwInterFp16 = floats_to_fp16(SwInter),
+    %% Fused silu(gate)*up + fp16 encode in one NIF pass.
+    SwInterFp16 = nif_silu_mul_fp16(GateOut, UpOut),
     Ffn = linear_fp8_w8a16(SwInterFp16, D, ?HIDDEN),
 
     HOut = list_add(H1, Ffn),
     {HOut, KCache2, VCache2}.
+
+%% Fast path silu*mul + fp16 encode via C NIF, with Erlang fallback.
+nif_silu_mul_fp16(Gate, Up) ->
+    try viva_tensor_zig:nt_silu_mul(Gate, Up)
+    catch
+        error:nif_not_loaded ->
+            Inter = lists:zipwith(fun(G, U) -> silu(G) * U end, Gate, Up),
+            floats_to_fp16(Inter);
+        error:undef ->
+            Inter = lists:zipwith(fun(G, U) -> silu(G) * U end, Gate, Up),
+            floats_to_fp16(Inter)
+    end.
 
 %% ---------------------------------------------------------------------------
 %% Single transformer block forward
