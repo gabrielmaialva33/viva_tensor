@@ -19,10 +19,10 @@
 %%%          -s llama_forward run -s init stop
 
 -module(llama_forward).
--export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0,
-         bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
-         build_layer/2, build_layer_calibrated/3,
-         precompute_rope_table/3, apply_rope/5]).
+-export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
+          bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
+          build_layer/2, build_layer_calibrated/3,
+          precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
 -define(HIDDEN, 2048).
@@ -104,6 +104,57 @@ bisect() ->
     Ffn = linear_fp8(SwInterFp16, D, ?HIDDEN),
     dump("down proj (FFN out)", Ffn),
 
+    H2 = list_add(H1, Ffn),
+    dump("residual 2 (block 0 hidden)", H2),
+    ok.
+
+bisect_w8a16() ->
+    io:format("~n=== viva_tensor W8A16 bisect — layer 0, BOS (pos=0) ===~n~n"),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layer = build_layer(Header, 0),
+    EmbedTbl = load_embed_table(Header),
+    RopeTable = precompute_rope_table(16, ?HEAD_DIM, ?ROPE_THETA),
+
+    X = embed_row(EmbedTbl, ?BOS_TOKEN),
+    dump("embed[BOS]", X),
+
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    Norm2 = load_rmsnorm(Header, <<"model.layers.0.post_attention_layernorm.weight">>),
+    XNorm1 = rmsnorm(X, Norm1, ?EPS),
+    dump("after input_layernorm", XNorm1),
+
+    #{q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer,
+
+    XNorm1Fp16 = floats_to_fp16(XNorm1),
+    QRaw = linear_fp8_w8a16(XNorm1Fp16, Q, ?HIDDEN),
+    KRaw = linear_fp8_w8a16(XNorm1Fp16, K, ?KV_DIM),
+    VRaw = linear_fp8_w8a16(XNorm1Fp16, V, ?KV_DIM),
+    dump("Q proj raw", QRaw),
+    dump("K proj raw", KRaw),
+    dump("V proj raw", VRaw),
+
+    QRot = apply_rope(QRaw, 0, RopeTable, ?NUM_HEADS, ?HEAD_DIM),
+    KRot = apply_rope(KRaw, 0, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
+    dump("Q after RoPE", QRot),
+    dump("K after RoPE", KRot),
+    {AttnOut, _, _} = attention_gqa(QRot, KRot, VRaw, [], []),
+    dump("attention output", AttnOut),
+
+    AttnOutFp16 = floats_to_fp16(AttnOut),
+    OOut = linear_fp8_w8a16(AttnOutFp16, O, ?HIDDEN),
+    dump("O proj", OOut),
+    H1 = list_add(X, OOut),
+    dump("residual 1", H1),
+
+    XNorm2 = rmsnorm(H1, Norm2, ?EPS),
+    dump("after post_attention_layernorm", XNorm2),
+    SwInter = linear_swiglu_intermediate(XNorm2, 1, ?HIDDEN, G, U, ?FFN),
+    dump("silu(gate) * up (fused)", SwInter),
+
+    SwInterFp16 = floats_to_fp16(SwInter),
+    Ffn = linear_fp8_w8a16(SwInterFp16, D, ?HIDDEN),
+    dump("down proj (FFN out)", Ffn),
     H2 = list_add(H1, Ffn),
     dump("residual 2 (block 0 hidden)", H2),
     ok.
@@ -634,6 +685,16 @@ linear_fp8(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
             Vals;
         Error ->
             error({linear_fp8_failed, Error})
+    end.
+
+linear_fp8_w8a16(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
+    case viva_tensor_zig:nt_linear_fp8_w8a16(InputFp16, Packed, nil) of
+        {ok, OutBin} ->
+            Vals = viva_tensor_inference_ffi:fp16_binary_to_floats(OutBin),
+            verify_size(Vals, OutF),
+            Vals;
+        Error ->
+            error({linear_fp8_w8a16_failed, Error})
     end.
 
 linear_swiglu_intermediate(InputFp32List, B, InF, Gate, Up, FfnDim) ->
