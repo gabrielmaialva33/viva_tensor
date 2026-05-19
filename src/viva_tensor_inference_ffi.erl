@@ -29,6 +29,16 @@ floats_to_fp32_binary(Floats) when is_list(Floats) ->
 %% Round-to-nearest-even on the mantissa, clamp infinities to FP16-max.
 %% Used to feed the cuBLASLt FP8 NIFs which expect FP16 input binaries.
 floats_to_fp16_binary(Floats) when is_list(Floats) ->
+    %% Fast path: C NIF (single C pass, ~14× faster than per-element Erlang).
+    %% Fallback to Erlang if the NIF isn't loaded.
+    try viva_tensor_zig:nt_floats_to_fp16_binary(Floats)
+    catch
+        error:nif_not_loaded -> floats_to_fp16_binary_erlang(Floats);
+        error:undef          -> floats_to_fp16_binary_erlang(Floats);
+        error:badarg         -> floats_to_fp16_binary_erlang(Floats)
+    end.
+
+floats_to_fp16_binary_erlang(Floats) ->
     iolist_to_binary([<<(fp16_encode(F)):16/unsigned-little>> || F <- Floats]).
 
 %% float64 -> uint16 IEEE-754 binary16
