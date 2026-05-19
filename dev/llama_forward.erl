@@ -71,9 +71,11 @@ run_n(NumLayers) ->
 
     %% --- Forward through all transformer blocks. -------------------------
     TF1 = ms(),
+    Pos = 0,    %% single-token forward: position 0
     HiddenOut = lists:foldl(
         fun(LayerIdx, H) ->
-            forward_block(H, lists:nth(LayerIdx + 1, Layers), LayerIdx)
+            forward_block(H, lists:nth(LayerIdx + 1, Layers),
+                          LayerIdx, Pos, RopeTable)
         end,
         HiddenIn,
         lists:seq(0, NumLayers - 1)
@@ -140,7 +142,7 @@ build_layer(Header, LayerIdx) ->
 %%   x2 = norm2(x)
 %%   ffn = down(silu(gate(x2)) * up(x2))
 %%   x = x + ffn
-forward_block(H, Layer, _LayerIdx) ->
+forward_block(H, Layer, _LayerIdx, Pos, RopeTable) ->
     #{norm1 := N1, norm2 := N2,
       q := Q, k := K, v := V, o := O,
       gate := G, up := U, down := D} = Layer,
@@ -148,13 +150,17 @@ forward_block(H, Layer, _LayerIdx) ->
     %% Self-attention path
     X1 = rmsnorm(H, N1, ?EPS),
     X1Fp16 = floats_to_fp16(X1),
-    QOut = linear_fp8(X1Fp16, Q, ?HIDDEN),
-    _KOut = linear_fp8(X1Fp16, K, ?KV_DIM),
-    VOut = linear_fp8(X1Fp16, V, ?KV_DIM),
+    QOutRaw = linear_fp8(X1Fp16, Q, ?HIDDEN),
+    KOutRaw = linear_fp8(X1Fp16, K, ?KV_DIM),
+    VOut    = linear_fp8(X1Fp16, V, ?KV_DIM),
+
+    %% Apply RoPE to Q and K (NOT V) for positional encoding.
+    _QOut = apply_rope(QOutRaw, Pos, RopeTable, ?NUM_HEADS,    ?HEAD_DIM),
+    _KOut = apply_rope(KOutRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM),
 
     %% Single-token attention degenerates: softmax(1 scalar)=1, attn=V_head
     %% broadcast across the 8 Q heads sharing each KV head.
-    AttnOut = attention_single_token(QOut, VOut),
+    AttnOut = attention_single_token(_QOut, VOut),
     AttnOutFp16 = floats_to_fp16(AttnOut),
     OOut = linear_fp8(AttnOutFp16, O, ?HIDDEN),
 
