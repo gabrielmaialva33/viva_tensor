@@ -400,7 +400,7 @@ static int run_cublaslt_path(const PackedWeight *w,
     cublasLtMatrixLayoutDestroy(layout_a);
     cublasLtMatrixLayoutDestroy(layout_c);
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
+    /* d_C is cached (g_d_outC); do not free. */
     return -5;
   }
 
@@ -464,7 +464,7 @@ static int run_w8a16_cublaslt_impl(const PackedWeight *w,
                                (int64_t)w->in_features);
   if (st != CUBLAS_STATUS_SUCCESS) {
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
+    /* d_C is cached (g_d_outC); do not free. */
     return -5;
   }
   st = cublasLtMatrixLayoutCreate(&layout_a, CUDA_R_16F,
@@ -474,7 +474,7 @@ static int run_w8a16_cublaslt_impl(const PackedWeight *w,
   if (st != CUBLAS_STATUS_SUCCESS) {
     cublasLtMatrixLayoutDestroy(layout_bt);
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
+    /* d_C is cached (g_d_outC); do not free. */
     return -6;
   }
   st = cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F,
@@ -485,7 +485,7 @@ static int run_w8a16_cublaslt_impl(const PackedWeight *w,
     cublasLtMatrixLayoutDestroy(layout_bt);
     cublasLtMatrixLayoutDestroy(layout_a);
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
+    /* d_C is cached (g_d_outC); do not free. */
     return -7;
   }
 
@@ -507,7 +507,7 @@ static int run_w8a16_cublaslt_impl(const PackedWeight *w,
     cublasLtMatrixLayoutDestroy(layout_a);
     cublasLtMatrixLayoutDestroy(layout_c);
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
+    /* d_C is cached (g_d_outC); do not free. */
     return -8;
   }
 
