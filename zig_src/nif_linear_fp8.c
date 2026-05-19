@@ -298,9 +298,9 @@ static int run_cutlass_path(const PackedWeight *w,
  * we keep the same TN swap (m_lt=N, n_lt=M, k_lt=K).
  * ========================================================================= */
 static int run_cublaslt_path(const PackedWeight *w,
-                              const uint8_t *d_input,
-                              int batch,
-                              const uint16_t *d_bias /* may be NULL */,
+                               const uint8_t *d_input,
+                               int batch,
+                               const uint16_t *d_bias /* may be NULL */,
                               int epilogue,
                               float **out_d_C) {
   if (ensure_lt_ctx() != 0) return -1;
@@ -397,6 +397,145 @@ static int run_cublaslt_path(const PackedWeight *w,
   return 0;
 }
 
+static int run_w8a16_cublaslt_impl(const PackedWeight *w,
+                                    const void *d_weight,
+                                    cudaDataType_t weight_type,
+                                    const uint16_t *d_input,
+                                    int batch,
+                                    float **out_d_C) {
+  if (ensure_lt_ctx() != 0) return -1;
+
+  float *d_C = NULL;
+  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
+  if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -2;
+  if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
+    cudaFree(d_C);
+    return -3;
+  }
+
+  cublasLtMatmulDesc_t desc;
+  if (cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) !=
+      CUBLAS_STATUS_SUCCESS) {
+    cudaFree(d_C);
+    return -4;
+  }
+
+  cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t,
+                                  sizeof(op_t));
+  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n,
+                                  sizeof(op_n));
+
+  cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+  cublasStatus_t st = cublasLtMatrixLayoutCreate(&layout_bt, weight_type,
+                               (uint64_t)w->in_features,
+                               (uint64_t)w->out_features,
+                               (int64_t)w->in_features);
+  if (st != CUBLAS_STATUS_SUCCESS) {
+    cublasLtMatmulDescDestroy(desc);
+    cudaFree(d_C);
+    return -5;
+  }
+  st = cublasLtMatrixLayoutCreate(&layout_a, CUDA_R_16F,
+                               (uint64_t)w->in_features,
+                               (uint64_t)batch,
+                               (int64_t)w->in_features);
+  if (st != CUBLAS_STATUS_SUCCESS) {
+    cublasLtMatrixLayoutDestroy(layout_bt);
+    cublasLtMatmulDescDestroy(desc);
+    cudaFree(d_C);
+    return -6;
+  }
+  st = cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F,
+                               (uint64_t)w->out_features,
+                               (uint64_t)batch,
+                               (int64_t)w->out_features);
+  if (st != CUBLAS_STATUS_SUCCESS) {
+    cublasLtMatrixLayoutDestroy(layout_bt);
+    cublasLtMatrixLayoutDestroy(layout_a);
+    cublasLtMatmulDescDestroy(desc);
+    cudaFree(d_C);
+    return -7;
+  }
+
+  cublasLtMatmulPreference_t pref;
+  cublasLtMatmulPreferenceCreate(&pref);
+  cublasLtMatmulPreferenceSetAttribute(pref,
+                                        CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                        &g_lt_workspace_size,
+                                        sizeof(g_lt_workspace_size));
+
+  cublasLtMatmulHeuristicResult_t heur;
+  int returned = 0;
+  st = cublasLtMatmulAlgoGetHeuristic(
+      g_lt_ctx, desc, layout_bt, layout_a, layout_c, layout_c, pref, 1, &heur,
+      &returned);
+  if (st != CUBLAS_STATUS_SUCCESS || returned == 0) {
+    cublasLtMatmulPreferenceDestroy(pref);
+    cublasLtMatrixLayoutDestroy(layout_bt);
+    cublasLtMatrixLayoutDestroy(layout_a);
+    cublasLtMatrixLayoutDestroy(layout_c);
+    cublasLtMatmulDescDestroy(desc);
+    cudaFree(d_C);
+    return -8;
+  }
+
+  float alpha = 1.0f, beta = 0.0f;
+  st = cublasLtMatmul(g_lt_ctx, desc, &alpha,
+                       d_weight, layout_bt,
+                       d_input,  layout_a,
+                       &beta,
+                       d_C, layout_c, d_C, layout_c,
+                       &heur.algo, g_lt_workspace, g_lt_workspace_size,
+                       (cudaStream_t)0);
+
+  cublasLtMatmulPreferenceDestroy(pref);
+  cublasLtMatrixLayoutDestroy(layout_bt);
+  cublasLtMatrixLayoutDestroy(layout_a);
+  cublasLtMatrixLayoutDestroy(layout_c);
+  cublasLtMatmulDescDestroy(desc);
+
+  if (st != CUBLAS_STATUS_SUCCESS) {
+    cudaFree(d_C);
+    return -1000 - (int)st;
+  }
+  *out_d_C = d_C;
+  return 0;
+}
+
+static int run_w8a16_cublaslt_mixed(const PackedWeight *w,
+                                     const uint16_t *d_input,
+                                     int batch,
+                                     float **out_d_C) {
+  return run_w8a16_cublaslt_impl(w, w->d_weight, CUDA_R_8F_E4M3, d_input,
+                                  batch, out_d_C);
+}
+
+static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
+                                       const uint16_t *d_input,
+                                       int batch,
+                                       float **out_d_C) {
+  uint16_t *d_weight_fp16 = NULL;
+  size_t bytes = (size_t)w->in_features * (size_t)w->out_features *
+                 sizeof(uint16_t);
+  if (cudaMalloc((void **)&d_weight_fp16, bytes) != cudaSuccess) return -20;
+
+  int rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight,
+                                             (const float *)w->d_scales,
+                                             d_weight_fp16,
+                                             w->in_features,
+                                             w->out_features);
+  if (rc != 0) {
+    cudaFree(d_weight_fp16);
+    return -30 + rc;
+  }
+
+  rc = run_w8a16_cublaslt_impl(w, d_weight_fp16, CUDA_R_16F, d_input, batch,
+                                out_d_C);
+  cudaFree(d_weight_fp16);
+  return (rc == 0) ? 0 : (-40 + rc);
+}
+
 /* Download an FP32 device buffer (output of the CUTLASS f32acc_out_f32
  * GEMM), apply per-row × per-channel dequant on FP32, cast to FP16, and
  * emit a FP16 binary. The FP32 accumulator skips the cast saturation
@@ -429,6 +568,48 @@ static int download_fp32_and_make_binary(ErlNifEnv *env, float *d_C, int batch,
       size_t i = (size_t)b * (size_t)out_features + (size_t)c;
       float wsc = weight_scales ? weight_scales[c] : 1.0f;
       dst[i] = float_to_half(h_C[i] * a * wsc);
+    }
+  }
+  free(h_C);
+
+  *out_term = enif_make_binary(env, &outbin);
+  return 0;
+}
+
+static int download_fp32_scaled_bias_and_make_binary(ErlNifEnv *env,
+                                                      float *d_C,
+                                                      int batch,
+                                                      int out_features,
+                                                      const float *act_scales,
+                                                      const float *weight_scales,
+                                                      const ErlNifBinary *bias,
+                                                      ERL_NIF_TERM *out_term) {
+  size_t n = (size_t)batch * (size_t)out_features;
+  size_t in_bytes = n * sizeof(float);
+  size_t out_bytes = n * sizeof(uint16_t);
+  float *h_C = (float *)malloc(in_bytes);
+  if (!h_C) return -1;
+  if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+    free(h_C);
+    return -2;
+  }
+
+  ErlNifBinary outbin;
+  if (!enif_alloc_binary(out_bytes, &outbin)) {
+    free(h_C);
+    return -3;
+  }
+  uint16_t *dst = (uint16_t *)outbin.data;
+  const uint16_t *bias_fp16 = bias ? (const uint16_t *)bias->data : NULL;
+
+  for (int b = 0; b < batch; ++b) {
+    float a = act_scales ? act_scales[b] : 1.0f;
+    for (int c = 0; c < out_features; ++c) {
+      size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+      float wsc = weight_scales ? weight_scales[c] : 1.0f;
+      float v = h_C[i] * a * wsc;
+      if (bias_fp16) v += f16_to_f32(bias_fp16[c]);
+      dst[i] = float_to_half(v);
     }
   }
   free(h_C);
@@ -493,7 +674,7 @@ static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
  * NIF entry: nt_linear_fp8(InputBin, PackedWeight, BiasOrNil, Epilogue)
  * ========================================================================= */
 ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
+                             const ERL_NIF_TERM argv[]) {
   (void)argc;
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
   return make_error(env, "cuda_not_available");
@@ -582,6 +763,83 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
   free(w_scales);
   if (d_bias) cudaFree(d_bias);
   if (d_C_fp32) cudaFree(d_C_fp32);
+  if (rc != 0) return make_error(env, "output_download_failed");
+
+  return make_ok(env, out_term);
+#endif
+}
+
+/* =========================================================================
+ * NIF entry: nt_linear_fp8_w8a16(InputBin, PackedWeight, BiasOrNil)
+ *
+ * Keeps activations in FP16 and only uses the FP8 prepacked weight. This
+ * avoids the activation-side FP8 quantization noise that causes cancellation
+ * on Llama-scale K while preserving the existing PackedWeight format.
+ * ========================================================================= */
+ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
+                                  const ERL_NIF_TERM argv[]) {
+  (void)argc;
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  return make_error(env, "cuda_not_available");
+#else
+  ErlNifBinary input_bin;
+  if (!enif_inspect_binary(env, argv[0], &input_bin))
+    return make_error(env, "invalid_input_binary");
+
+  PackedWeight *w = get_packed_weight(env, argv[1]);
+  if (!w) return make_error(env, "invalid_packed_weight");
+  if (w->dtype != PW_FP8) return make_error(env, "weight_not_fp8");
+
+  size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
+  if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
+    return make_error(env, "input_size_mismatch");
+  int batch = (int)(input_bin.size / expected_per_row);
+  if (batch <= 0) return make_error(env, "input_batch_zero");
+
+  ErlNifBinary bias_bin;
+  int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
+  if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
+    return make_error(env, "bias_size_mismatch");
+
+  uint16_t *d_input = NULL;
+  if (cudaMalloc((void **)&d_input, input_bin.size) != cudaSuccess)
+    return make_error(env, "cuda_malloc_input_failed");
+  if (cudaMemcpy(d_input, input_bin.data, input_bin.size,
+                  cudaMemcpyHostToDevice) != cudaSuccess) {
+    cudaFree(d_input);
+    return make_error(env, "cuda_upload_input_failed");
+  }
+
+  float *d_C = NULL;
+  int rc = run_w8a16_cublaslt_mixed(w, d_input, batch, &d_C);
+  int used_mixed = (rc == 0);
+  if (rc != 0) {
+    rc = run_w8a16_dequant_cublaslt(w, d_input, batch, &d_C);
+  }
+  cudaFree(d_input);
+  if (rc != 0) {
+    if (d_C) cudaFree(d_C);
+    char err[64];
+    snprintf(err, sizeof(err), "w8a16_gemm_failed_%d", rc);
+    return make_error(env, err);
+  }
+
+  float *w_scales = NULL;
+  size_t w_scales_count = 0;
+  if (used_mixed &&
+      (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0 ||
+       w_scales_count != (size_t)w->out_features)) {
+    if (w_scales) free(w_scales);
+    cudaFree(d_C);
+    return make_error(env, "weight_scale_read_failed");
+  }
+
+  ERL_NIF_TERM out_term;
+  rc = download_fp32_scaled_bias_and_make_binary(
+      env, d_C, batch, w->out_features, NULL, used_mixed ? w_scales : NULL,
+      has_bias ? &bias_bin : NULL, &out_term);
+  if (w_scales) free(w_scales);
+  cudaFree(d_C);
   if (rc != 0) return make_error(env, "output_download_failed");
 
   return make_ok(env, out_term);

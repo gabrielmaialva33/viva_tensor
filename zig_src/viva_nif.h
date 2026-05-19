@@ -547,8 +547,13 @@ extern int cutlass_fp8_gemm_f32acc(int M, int N, int K,
 extern int cutlass_fp8_bench(int M, int N, int K, int iters, int mode);
 /* Inference path: FP8 GEMM with FP32 output buffer (caller-allocated). */
 extern int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K,
-                                            const void *d_A, const void *d_B,
-                                            float *d_C);
+                                             const void *d_A, const void *d_B,
+                                             float *d_C);
+extern int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
+                                             const float *d_scales,
+                                             void *d_fp16,
+                                             int K,
+                                             int N);
 /* cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core ~165 TFLOPS). */
 extern int cublaslt_fp16_bench(int M, int N, int K, int iters);
 /* N axpy kernels as N stream launches (baseline). */
@@ -769,6 +774,7 @@ NIF_FUNC_DECL(cublaslt_fp8_algo_sweep_nif);
 /* Inference API — PackedWeight + FP8 / INT8 / INT4 prepack + linear / SwiGLU. */
 NIF_FUNC_DECL(nt_prepack_fp8);
 NIF_FUNC_DECL(nt_linear_fp8);
+NIF_FUNC_DECL(nt_linear_fp8_w8a16);
 NIF_FUNC_DECL(nt_linear_gelu_fp8);
 NIF_FUNC_DECL(nt_prepack_int8_sparse);
 NIF_FUNC_DECL(nt_prepack_int4_sparse);

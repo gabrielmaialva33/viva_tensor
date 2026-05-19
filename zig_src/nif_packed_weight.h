@@ -65,6 +65,7 @@ PackedWeight *get_packed_weight(ErlNifEnv *env, ERL_NIF_TERM term);
  * in nif_funcs[] inside nif_entry.c. Stubs in viva_tensor_zig.erl. */
 ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 
 #ifdef __cplusplus

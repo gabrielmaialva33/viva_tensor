@@ -128,6 +128,7 @@
     %% Inference API — PackedWeight resource + prepack/linear NIFs
     nt_prepack_fp8/2,
     nt_linear_fp8/4,
+    nt_linear_fp8_w8a16/3,
     nt_linear_gelu_fp8/4,
     nt_prepack_int8_sparse/2,
     nt_prepack_int4_sparse/2,
@@ -591,6 +592,7 @@ cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_n
 %% Inference API — PackedWeight + prepack + linear forward + SwiGLU
 nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_linear_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
+nt_linear_fp8_w8a16(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_gelu_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_int8_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_int4_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).

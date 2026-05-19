@@ -338,6 +338,7 @@ static ErlNifFunc nif_funcs[] = {
     /* Inference API — PackedWeight + prepack + linear forward + SwiGLU */
     {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8", 4, nt_linear_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_linear_fp8_w8a16", 3, nt_linear_fp8_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_prepack_int8_sparse", 2, nt_prepack_int8_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_prepack_int4_sparse", 2, nt_prepack_int4_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
