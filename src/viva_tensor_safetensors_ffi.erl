@@ -95,18 +95,22 @@ transpose_fp32(Bin, Rows, Cols) when is_binary(Bin) ->
     Elems = Rows * Cols,
     case byte_size(Bin) of
         Sz when Sz =:= Elems * 4 ->
-            Arr = list_to_tuple(
-                [F || <<F:32/float-little>> <= Bin]
-            ),
+            %% Iterate columns of the input (becomes rows of the output).
+            %% For each output row c, build a contiguous Rows×4-byte chunk
+            %% by reading `binary_part(Bin, (r*Cols+c)*4, 4)` for r=0..Rows-1.
+            %% Avoids the O(Rows*Cols) tuple allocation that blew up the
+            %% Erlang scheduler for 32000×2048 matrices.
             Out = iolist_to_binary(
-                [<<(element(R * Cols + C + 1, Arr)):32/float-little>>
-                 || C <- lists:seq(0, Cols - 1),
-                    R <- lists:seq(0, Rows - 1)]
+                [transpose_col(Bin, C, Rows, Cols)
+                 || C <- lists:seq(0, Cols - 1)]
             ),
             {ok, Out};
         _ ->
             {error, size_mismatch}
     end.
+
+transpose_col(Bin, C, Rows, Cols) ->
+    [binary_part(Bin, (R * Cols + C) * 4, 4) || R <- lists:seq(0, Rows - 1)].
 
 %% RMSNorm weights are 1-D vectors of length hidden_size, typically only
 %% 2-8 KB. Convert directly to a Gleam-friendly List(Float).

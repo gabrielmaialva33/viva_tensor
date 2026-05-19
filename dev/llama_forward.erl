@@ -19,7 +19,7 @@
 %%%          -s llama_forward run -s init stop
 
 -module(llama_forward).
--export([run/0, run_n/1, build_layer/2,
+-export([run/0, run_n/1, run_seq/2, build_layer/2,
          precompute_rope_table/3, apply_rope/5]).
 
 -define(PATH, <<"tmp/tinyllama/model.safetensors">>).
@@ -36,6 +36,55 @@
 -define(ROPE_THETA, 10000.0). %% From config.json
 
 run() -> run_n(?NUM_LAYERS).
+
+%% Sequential multi-token decode: feed N hardcoded tokens through N forward
+%% passes, threading the KV cache. Validates that the cache + GQA softmax
+%% behave correctly when there's more than one position to attend to.
+run_seq(NumLayers, NumTokens) ->
+    io:format("~n=== TinyLlama-1.1B sequential decode (N_layers=~p, N_tokens=~p) ===~n~n",
+              [NumLayers, NumTokens]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layers = build_layers(Header, NumLayers),
+    EmbedTbl = load_embed_table(Header),
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    RopeTable = precompute_rope_table(64, ?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] All ~p layers + helpers loaded~n", [ms() - T0, NumLayers]),
+
+    %% Use BOS, then arbitrary token ids — for now we just want to exercise
+    %% the cache; sampling lands in task #64.
+    Tokens = [?BOS_TOKEN | lists:seq(100, 100 + NumTokens - 2)],
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+
+    {LastHidden, _Caches} = lists:foldl(
+        fun({Pos, TokenId}, {_, Caches}) ->
+            TF = ms(),
+            HiddenIn = embed_row(EmbedTbl, TokenId),
+            {HiddenOut, NewCaches} = lists:foldl(
+                fun(LayerIdx, {H, CL}) ->
+                    {KC, VC} = lists:nth(LayerIdx + 1, CL),
+                    {HOut, KC2, VC2} = forward_block(
+                        H, lists:nth(LayerIdx + 1, Layers),
+                        LayerIdx, Pos, RopeTable, KC, VC),
+                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, CL)}
+                end,
+                {HiddenIn, Caches},
+                lists:seq(0, NumLayers - 1)
+            ),
+            io:format("  pos=~p token=~p  forward=~p ms  hidden mean_abs=~p~n",
+                      [Pos, TokenId, ms() - TF, mean_abs(HiddenOut)]),
+            {HiddenOut, NewCaches}
+        end,
+        {[], EmptyCaches},
+        lists:zip(lists:seq(0, length(Tokens) - 1), Tokens)
+    ),
+
+    NormFinal = rmsnorm(LastHidden, FinalNorm, ?EPS),
+    io:format("~nFinal normed hidden  mean_abs=~p  finite=~p~n",
+              [mean_abs(NormFinal),
+               lists:foldl(fun(X, A) -> case is_float(X) of true -> A + 1; false -> A end end, 0, NormFinal)]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    ok.
 
 %% Same as run/0 but with a configurable number of layers — handy for
 %% incremental validation (start with 2 layers, then go up to 22).
@@ -73,12 +122,18 @@ run_n(NumLayers) ->
     %% --- Forward through all transformer blocks. -------------------------
     TF1 = ms(),
     Pos = 0,    %% single-token forward: position 0
-    HiddenOut = lists:foldl(
-        fun(LayerIdx, H) ->
-            forward_block(H, lists:nth(LayerIdx + 1, Layers),
-                          LayerIdx, Pos, RopeTable)
+    %% Per-layer KV caches start empty; each layer accumulates its own.
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+    {HiddenOut, _FinalCaches} = lists:foldl(
+        fun(LayerIdx, {H, Caches}) ->
+            {KC, VC} = lists:nth(LayerIdx + 1, Caches),
+            {HOut, KC2, VC2} = forward_block(
+                H, lists:nth(LayerIdx + 1, Layers),
+                LayerIdx, Pos, RopeTable, KC, VC),
+            UpdatedCaches = lists_replace_nth(LayerIdx + 1, {KC2, VC2}, Caches),
+            {HOut, UpdatedCaches}
         end,
-        HiddenIn,
+        {HiddenIn, EmptyCaches},
         lists:seq(0, NumLayers - 1)
     ),
     io:format("[~5w ms] Forward over ~p blocks done. Final mean_abs=~p~n",
@@ -431,3 +486,8 @@ argmax(L) ->
     {BestI, BestV}.
 
 ms() -> erlang:monotonic_time(millisecond).
+
+%% lists:nth-style 1-based replacement.
+lists_replace_nth(N, NewVal, List) ->
+    {Before, [_Old | After]} = lists:split(N - 1, List),
+    Before ++ [NewVal | After].
