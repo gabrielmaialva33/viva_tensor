@@ -15,11 +15,28 @@ pub type TensorStorage {
 pub type TensorDevice {
   BeamCpu
   NativeCpu
+  CudaDevice(Int)
 }
 
 /// Element type for this tensor value.
 pub type TensorDtype {
   Float64
+  Float32
+  Float16
+  BFloat16
+  Float8E4M3
+  Int8
+  Int4
+  SparseFloat16
+}
+
+/// Logical memory layout used by runtime planning.
+pub type TensorMemoryLayout {
+  RowMajor
+  ColumnMajor
+  StridedLayout
+  PackedFp8Layout
+  PackedSparse24Layout
 }
 
 /// Canonical metadata for interpreting tensor storage.

@@ -6,7 +6,6 @@ import viva_tensor as t
 import viva_tensor/axis
 import viva_tensor/core/ops
 import viva_tensor/core/tensor as core_tensor
-import viva_tensor/layout
 import viva_tensor/named
 import viva_tensor/native/cuda.{CpuFallback}
 import viva_tensor/tensor
@@ -1359,8 +1358,8 @@ pub fn matmul_backend_plan_has_safe_fallback_test() {
 pub fn tensor_device_and_dtype_test() {
   let values = t.from_list([1.0, 2.0, 3.0])
 
-  t.device(values) |> should.equal(layout.BeamCpu)
-  t.dtype(values) |> should.equal(layout.Float64)
+  t.device(values) |> should.equal(t.BeamCpu)
+  t.dtype(values) |> should.equal(t.Float64)
 }
 
 pub fn matmul_backend_plan_reports_rejections_test() {

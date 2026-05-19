@@ -14,7 +14,6 @@ import gleam/int
 import gleam/io
 import gleam/list
 import gleam/order
-import gleam/result
 import gleam/string
 
 pub fn main() {

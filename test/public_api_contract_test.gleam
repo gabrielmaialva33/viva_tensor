@@ -2,7 +2,6 @@ import gleam/list
 import gleeunit
 import gleeunit/should
 import viva_tensor as t
-import viva_tensor/layout
 
 pub fn main() {
   gleeunit.main()
@@ -17,8 +16,8 @@ pub fn stable_creation_and_layout_contract_test() {
   t.to_list(tensor) |> should.equal([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
   t.try_to_list(tensor) |> should.equal(Ok([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]))
   t.try_sum(tensor) |> should.equal(Ok(6.0))
-  t.device(tensor) |> should.equal(layout.BeamCpu)
-  t.dtype(tensor) |> should.equal(layout.Float64)
+  t.device(tensor) |> should.equal(t.BeamCpu)
+  t.dtype(tensor) |> should.equal(t.Float64)
   t.linspace(0.0, 1.0, 3) |> t.to_list() |> should.equal([0.0, 0.5, 1.0])
   t.zeros_like(tensor) |> t.shape() |> should.equal([2, 3])
   t.eye(2) |> t.to_list() |> should.equal([1.0, 0.0, 0.0, 1.0])

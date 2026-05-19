@@ -22,6 +22,7 @@
 //// ```
 
 import gleam/dict.{type Dict}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option}
 import gleam/result
@@ -67,6 +68,8 @@ import viva_tensor/nn/scheduler as nn_scheduler
 import viva_tensor/nn/transformer as nn_transformer
 import viva_tensor/quant/hadamard as quant_hadamard
 import viva_tensor/quant/layout as quant_layout
+import viva_tensor/runtime
+import viva_tensor/spec as tensor_spec
 import viva_tensor/tensor
 import viva_tensor/text/tokenizer as text_tokenizer
 import viva_tensor/text/unigram as text_unigram
@@ -80,20 +83,56 @@ pub type Tensor =
   tensor.Tensor
 
 /// Tensor payload representation.
-pub type TensorStorage =
-  tensor_layout.TensorStorage
+pub type TensorStorage {
+  DenseStorage
+  StridedStorage
+  NativeStorage
+}
 
 /// Tensor payload location.
-pub type TensorDevice =
-  tensor_layout.TensorDevice
+pub type TensorDevice {
+  BeamCpu
+  NativeCpu
+  CudaDevice(Int)
+}
 
 /// Tensor element type.
-pub type TensorDtype =
-  tensor_layout.TensorDtype
+pub type TensorDtype {
+  Float64
+  Float32
+  Float16
+  BFloat16
+  Float8E4M3
+  Int8
+  Int4
+  SparseFloat16
+}
 
 /// Canonical tensor layout metadata.
 pub type TensorLayout =
   tensor_layout.TensorLayout
+
+/// Logical memory layout used by runtime planning.
+pub type TensorMemoryLayout {
+  RowMajor
+  ColumnMajor
+  StridedLayout
+  PackedFp8Layout
+  PackedSparse24Layout
+}
+
+/// Shape, dtype, device, storage, and layout metadata for compiled execution.
+pub type TensorSpec {
+  TensorSpec(
+    shape: List(Int),
+    dtype: TensorDtype,
+    device: TensorDevice,
+    storage: TensorStorage,
+    memory_layout: TensorMemoryLayout,
+    rank: Int,
+    size: Int,
+  )
+}
 
 /// Error returned by fallible tensor constructors and operations.
 pub type TensorError =
@@ -168,6 +207,34 @@ pub type TensorBackendPlan {
     fallbacks: List(TensorBackend),
     rejected: List(BackendRejection),
     reason: String,
+  )
+}
+
+/// Runtime operation planned against a concrete tensor spec.
+pub type RuntimeOp {
+  RuntimeElementwise
+  RuntimeBroadcast
+  RuntimeReduction
+  RuntimeSoftmax
+  RuntimeMatmul(m: Int, n: Int, k: Int)
+  RuntimeLinear(batch: Int, in_features: Int, out_features: Int)
+}
+
+/// Backend rejection in a runtime plan.
+pub type RuntimeRejection {
+  RuntimeRejection(backend: TensorBackend, reason: String)
+}
+
+/// Runtime plan cacheable by shape, dtype, device, layout, and op.
+pub type RuntimePlan {
+  RuntimePlan(
+    spec: TensorSpec,
+    operation: RuntimeOp,
+    selected: TensorBackend,
+    fallbacks: List(TensorBackend),
+    rejected: List(RuntimeRejection),
+    reason: String,
+    cache_key: String,
   )
 }
 
@@ -1288,13 +1355,13 @@ pub fn layout(t: Tensor) -> TensorLayout {
 /// Inspect where a tensor payload lives.
 pub fn device(t: Tensor) -> TensorDevice {
   let info = layout(t)
-  info.device
+  to_public_device(info.device)
 }
 
 /// Inspect the tensor element type.
 pub fn dtype(t: Tensor) -> TensorDtype {
   let info = layout(t)
-  info.dtype
+  to_public_dtype(info.dtype)
 }
 
 /// Convert to list
@@ -2593,18 +2660,7 @@ pub fn try_normalized_walsh_hadamard(
 pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
   let caps = capabilities()
   let available =
-    caps.backend_capabilities
-    |> list.map(fn(capability) {
-      backend_dispatch.Capability(
-        backend: capability.backend,
-        available: capability.available,
-        device: capability.device,
-        dtypes: capability.dtypes,
-        operations: capability.operations,
-        reason: capability.reason,
-      )
-    })
-    |> backend_dispatch.available_backends
+    available_backends_from_capabilities(caps.backend_capabilities)
 
   backend_dispatch.plan_backend(
     operation,
@@ -2616,8 +2672,287 @@ pub fn plan_backend(operation: TensorOperation) -> TensorBackendPlan {
   |> to_tensor_backend_plan
 }
 
+/// Build a runtime spec from an existing tensor.
+pub fn tensor_spec(t: Tensor) -> TensorSpec {
+  let metadata = tensor.layout(t)
+  TensorSpec(
+    shape: metadata.shape,
+    dtype: to_public_dtype(metadata.dtype),
+    device: to_public_device(metadata.device),
+    storage: to_public_storage(metadata.storage),
+    memory_layout: case metadata.contiguous {
+      True -> RowMajor
+      False -> StridedLayout
+    },
+    rank: metadata.rank,
+    size: metadata.size,
+  )
+}
+
+/// Build a runtime spec from explicit metadata.
+pub fn spec_from_parts(
+  shape shape: List(Int),
+  dtype dtype: TensorDtype,
+  device device: TensorDevice,
+  storage storage: TensorStorage,
+  memory_layout memory_layout: TensorMemoryLayout,
+) -> TensorSpec {
+  TensorSpec(
+    shape: shape,
+    dtype: dtype,
+    device: device,
+    storage: storage,
+    memory_layout: memory_layout,
+    rank: list.length(shape),
+    size: list.fold(shape, 1, fn(acc, dim) { acc * dim }),
+  )
+}
+
+/// Stable dtype label used by runtime cache keys.
+pub fn dtype_name(dtype: TensorDtype) -> String {
+  case dtype {
+    Float64 -> "float64"
+    Float32 -> "float32"
+    Float16 -> "float16"
+    BFloat16 -> "bfloat16"
+    Float8E4M3 -> "float8_e4m3"
+    Int8 -> "int8"
+    Int4 -> "int4"
+    SparseFloat16 -> "sparse_float16"
+  }
+}
+
+/// Stable device label used by runtime cache keys.
+pub fn device_name(device: TensorDevice) -> String {
+  case device {
+    BeamCpu -> "beam_cpu"
+    NativeCpu -> "native_cpu"
+    CudaDevice(index) -> "cuda:" <> int.to_string(index)
+  }
+}
+
+/// Stable tensor spec cache key.
+pub fn spec_key(spec: TensorSpec) -> String {
+  shape_key(spec.shape)
+  <> ":"
+  <> dtype_name(spec.dtype)
+  <> ":"
+  <> device_name(spec.device)
+  <> ":"
+  <> storage_name(spec.storage)
+  <> ":"
+  <> memory_layout_name(spec.memory_layout)
+}
+
+/// Plan a runtime operation from dtype/device/layout metadata.
+pub fn plan_runtime(spec: TensorSpec, operation: RuntimeOp) -> RuntimePlan {
+  let caps = capabilities()
+  let internal_plan =
+    runtime.plan_runtime(
+      to_internal_spec(spec),
+      to_internal_runtime_op(operation),
+      available_backends_from_capabilities(caps.backend_capabilities),
+      runtime_backend_set(),
+    )
+  RuntimePlan(
+    spec: spec,
+    operation: operation,
+    selected: internal_plan.selected,
+    fallbacks: internal_plan.fallbacks,
+    rejected: list.map(internal_plan.rejected, fn(rejection) {
+      RuntimeRejection(backend: rejection.backend, reason: rejection.reason)
+    }),
+    reason: internal_plan.reason,
+    cache_key: runtime_cache_key_for(spec, operation),
+  )
+}
+
+/// Return the stable cache key for a runtime plan.
+pub fn runtime_cache_key(plan: RuntimePlan) -> String {
+  plan.cache_key
+}
+
+/// Return the stable cache key for a runtime plan.
+pub fn cache_key(plan: RuntimePlan) -> String {
+  runtime_cache_key(plan)
+}
+
+fn available_backends_from_capabilities(
+  capabilities: List(BackendCapability),
+) -> List(TensorBackend) {
+  capabilities
+  |> list.map(fn(capability) {
+    backend_dispatch.Capability(
+      backend: capability.backend,
+      available: capability.available,
+      device: capability.device,
+      dtypes: capability.dtypes,
+      operations: capability.operations,
+      reason: capability.reason,
+    )
+  })
+  |> backend_dispatch.available_backends
+}
+
+fn runtime_cache_key_for(spec: TensorSpec, operation: RuntimeOp) -> String {
+  spec_key(spec) <> "|" <> runtime_op_key(operation)
+}
+
+fn runtime_op_key(operation: RuntimeOp) -> String {
+  case operation {
+    RuntimeElementwise -> "elementwise"
+    RuntimeBroadcast -> "broadcast"
+    RuntimeReduction -> "reduction"
+    RuntimeSoftmax -> "softmax"
+    RuntimeMatmul(m, n, k) ->
+      "matmul:"
+      <> int.to_string(m)
+      <> "x"
+      <> int.to_string(n)
+      <> "x"
+      <> int.to_string(k)
+    RuntimeLinear(batch, in_features, out_features) ->
+      "linear:"
+      <> int.to_string(batch)
+      <> "x"
+      <> int.to_string(in_features)
+      <> "x"
+      <> int.to_string(out_features)
+  }
+}
+
+fn shape_key(shape: List(Int)) -> String {
+  case shape {
+    [] -> "scalar"
+    [dim] -> int.to_string(dim)
+    [dim, ..rest] -> int.to_string(dim) <> "x" <> shape_key(rest)
+  }
+}
+
+fn storage_name(storage: TensorStorage) -> String {
+  case storage {
+    DenseStorage -> "dense"
+    StridedStorage -> "strided"
+    NativeStorage -> "native"
+  }
+}
+
+fn memory_layout_name(memory_layout: TensorMemoryLayout) -> String {
+  case memory_layout {
+    RowMajor -> "row_major"
+    ColumnMajor -> "column_major"
+    StridedLayout -> "strided"
+    PackedFp8Layout -> "packed_fp8"
+    PackedSparse24Layout -> "packed_sparse24"
+  }
+}
+
+fn to_internal_spec(spec: TensorSpec) -> tensor_spec.TensorSpec {
+  tensor_spec.spec_from_parts(
+    shape: spec.shape,
+    dtype: to_layout_dtype(spec.dtype),
+    device: to_layout_device(spec.device),
+    storage: to_layout_storage(spec.storage),
+    memory_layout: to_layout_memory_layout(spec.memory_layout),
+  )
+}
+
+fn to_internal_runtime_op(operation: RuntimeOp) -> runtime.RuntimeOp {
+  case operation {
+    RuntimeElementwise -> runtime.RuntimeElementwise
+    RuntimeBroadcast -> runtime.RuntimeBroadcast
+    RuntimeReduction -> runtime.RuntimeReduction
+    RuntimeSoftmax -> runtime.RuntimeSoftmax
+    RuntimeMatmul(m, n, k) -> runtime.RuntimeMatmul(m, n, k)
+    RuntimeLinear(batch, in_features, out_features) ->
+      runtime.RuntimeLinear(batch, in_features, out_features)
+  }
+}
+
+fn to_public_storage(storage: tensor_layout.TensorStorage) -> TensorStorage {
+  case storage {
+    tensor_layout.DenseStorage -> DenseStorage
+    tensor_layout.StridedStorage -> StridedStorage
+    tensor_layout.NativeStorage -> NativeStorage
+  }
+}
+
+fn to_layout_storage(storage: TensorStorage) -> tensor_layout.TensorStorage {
+  case storage {
+    DenseStorage -> tensor_layout.DenseStorage
+    StridedStorage -> tensor_layout.StridedStorage
+    NativeStorage -> tensor_layout.NativeStorage
+  }
+}
+
+fn to_public_device(device: tensor_layout.TensorDevice) -> TensorDevice {
+  case device {
+    tensor_layout.BeamCpu -> BeamCpu
+    tensor_layout.NativeCpu -> NativeCpu
+    tensor_layout.CudaDevice(index) -> CudaDevice(index)
+  }
+}
+
+fn to_layout_device(device: TensorDevice) -> tensor_layout.TensorDevice {
+  case device {
+    BeamCpu -> tensor_layout.BeamCpu
+    NativeCpu -> tensor_layout.NativeCpu
+    CudaDevice(index) -> tensor_layout.CudaDevice(index)
+  }
+}
+
+fn to_public_dtype(dtype: tensor_layout.TensorDtype) -> TensorDtype {
+  case dtype {
+    tensor_layout.Float64 -> Float64
+    tensor_layout.Float32 -> Float32
+    tensor_layout.Float16 -> Float16
+    tensor_layout.BFloat16 -> BFloat16
+    tensor_layout.Float8E4M3 -> Float8E4M3
+    tensor_layout.Int8 -> Int8
+    tensor_layout.Int4 -> Int4
+    tensor_layout.SparseFloat16 -> SparseFloat16
+  }
+}
+
+fn to_layout_dtype(dtype: TensorDtype) -> tensor_layout.TensorDtype {
+  case dtype {
+    Float64 -> tensor_layout.Float64
+    Float32 -> tensor_layout.Float32
+    Float16 -> tensor_layout.Float16
+    BFloat16 -> tensor_layout.BFloat16
+    Float8E4M3 -> tensor_layout.Float8E4M3
+    Int8 -> tensor_layout.Int8
+    Int4 -> tensor_layout.Int4
+    SparseFloat16 -> tensor_layout.SparseFloat16
+  }
+}
+
+fn to_layout_memory_layout(
+  memory_layout: TensorMemoryLayout,
+) -> tensor_layout.TensorMemoryLayout {
+  case memory_layout {
+    RowMajor -> tensor_layout.RowMajor
+    ColumnMajor -> tensor_layout.ColumnMajor
+    StridedLayout -> tensor_layout.StridedLayout
+    PackedFp8Layout -> tensor_layout.PackedFp8Layout
+    PackedSparse24Layout -> tensor_layout.PackedSparse24Layout
+  }
+}
+
 fn backend_set() -> backend_dispatch.BackendSet(TensorBackend) {
   backend_dispatch.BackendSet(
+    pure_gleam: BackendPureGleam,
+    zig_simd: BackendZigSimd,
+    mkl: BackendMkl,
+    cuda_fp32: BackendCudaFp32,
+    cuda_fp16: BackendCudaFp16,
+    cuda_int8: BackendCudaInt8,
+    cuda_sparse: BackendCudaSparse,
+  )
+}
+
+fn runtime_backend_set() -> runtime.RuntimeBackendSet(TensorBackend) {
+  runtime.RuntimeBackendSet(
     pure_gleam: BackendPureGleam,
     zig_simd: BackendZigSimd,
     mkl: BackendMkl,
