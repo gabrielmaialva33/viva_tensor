@@ -21,7 +21,7 @@
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
           bisect_w8a16_blocked/0, bisect_w8a16_blocked/1,
-          run_n_w8a16/2,
+          run_n_w8a16/2, run_generate_w8a16/5,
           bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
           build_layer/2, build_layer_calibrated/3,
           build_layer_blocked/3,
@@ -597,6 +597,100 @@ run_n_w8a16(NumLayers, BlockSize) ->
               [Top1Token, Top1Logit]),
     io:format("[~5w ms] Total~n", [ms() - T0]),
     {ok, Top1Token, Top1Logit}.
+
+%% End-to-end text generation using per-block FP8 + W8A16 path.
+%% This is the production-quality variant that reproduces HF tokens.
+run_generate_w8a16(NumLayers, Prompt, MaxNew, SampOpts, BlockSize) ->
+    io:format("~n=== TinyLlama-1.1B W8A16 text gen (N=~p, block=~p) ===~n~n",
+              [NumLayers, BlockSize]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(
+        <<"tmp/tinyllama/tokenizer.json">>),
+    Layers = [build_layer_blocked(Header, I, BlockSize)
+              || I <- lists:seq(0, NumLayers - 1)],
+    EmbedTbl = load_embed_table(Header),
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack_blocked(LmHead, ?HIDDEN, ?VOCAB, BlockSize),
+    RopeTable = precompute_rope_table(256, ?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Model + tokenizer ready~n", [ms() - T0]),
+
+    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    io:format("Prompt: ~ts~n", [Prompt]),
+    io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
+
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+    TPrompt = ms(),
+    {LastHidden, Caches} = lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            HiddenIn = embed_row(EmbedTbl, TokenId),
+            lists:foldl(
+                fun(LayerIdx, {H, C}) ->
+                    {KC, VC} = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2, VC2} = forward_block_w8a16(
+                        H, lists:nth(LayerIdx + 1, Layers),
+                        LayerIdx, Pos, RopeTable, KC, VC),
+                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                end,
+                {HiddenIn, CL},
+                lists:seq(0, NumLayers - 1))
+        end,
+        {[], EmptyCaches},
+        lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
+    ),
+    io:format("[~5w ms] Prefill of ~p prompt tokens done~n",
+              [ms() - TPrompt, length(PromptTokens)]),
+
+    %% Decode loop.
+    TGen = ms(),
+    GeneratedIds = decode_loop_w8a16(
+        LastHidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
+        RopeTable, NumLayers,
+        length(PromptTokens), MaxNew, SampOpts, EOS, []),
+    io:format("[~5w ms] Generated ~p tokens~n",
+              [ms() - TGen, length(GeneratedIds)]),
+
+    PromptText = viva_tensor_tokenizer_ffi:decode(Tokenizer, PromptTokens),
+    GenText = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    io:format("~n--- prompt ---~n~ts~n--- generated ---~n~ts~n--- end ---~n",
+              [PromptText, GenText]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    {ok, GeneratedIds, GenText}.
+
+decode_loop_w8a16(_H, _C, _L, _E, _FN, _LH, _R, _NL, _P, 0, _O, _EOS, Acc) ->
+    lists:reverse(Acc);
+decode_loop_w8a16(Hidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
+                   RopeTable, NumLayers, Pos, Remaining, SampOpts, EOS, Acc) ->
+    NormFinal = rmsnorm(Hidden, FinalNorm, ?EPS),
+    NormFp16  = floats_to_fp16(NormFinal),
+    Logits    = linear_fp8_w8a16(NormFp16, LmHeadPk, ?VOCAB),
+    NextTok   = case maps:size(SampOpts) of
+        0 -> {Id, _} = argmax(Logits), Id;
+        _ -> llama_sampling:sample(Logits, SampOpts)
+    end,
+    io:format("  pos=~p -> token ~p~n", [Pos, NextTok]),
+    case NextTok of
+        EOS -> lists:reverse([NextTok | Acc]);
+        _ ->
+            NextHidden = embed_row(EmbedTbl, NextTok),
+            {HiddenOut, NewCaches} = lists:foldl(
+                fun(LayerIdx, {H, C}) ->
+                    {KC, VC} = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2, VC2} = forward_block_w8a16(
+                        H, lists:nth(LayerIdx + 1, Layers),
+                        LayerIdx, Pos, RopeTable, KC, VC),
+                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                end,
+                {NextHidden, Caches},
+                lists:seq(0, NumLayers - 1)),
+            decode_loop_w8a16(HiddenOut, NewCaches, Layers, EmbedTbl,
+                              FinalNorm, LmHeadPk, RopeTable, NumLayers,
+                              Pos + 1, Remaining - 1, SampOpts, EOS,
+                              [NextTok | Acc])
+    end.
 
 %% Same shape as forward_block/7 but uses linear_fp8_w8a16 throughout.
 forward_block_w8a16(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
