@@ -87,7 +87,7 @@ fn rescue_call_tensor(
 /// weight scaling + FP32-accum + FP16 output cast. Tighter targets
 /// require an FP32 output buffer (CUTLASS template change) and/or
 /// block-wise (ggml q*_K-style) quantization with per-block scales.
-const fp8_l2_tolerance: Float = 0.10
+const fp8_l2_tolerance: Float = 0.1
 
 const int8_sparse_l2_tolerance: Float = 0.04
 

@@ -609,12 +609,12 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     for (int o = 0; o < out_features; ++o) {
         uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
         for (int k = 0; k < in_features; k += 8) {
-            float group[8];
+            float vals[8];
             for (int j = 0; j < 8; ++j) {
-                group[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
+                vals[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
             }
             int keep_pair0, keep_pair1;
-            top2_pairs_of_8(group, &keep_pair0, &keep_pair1);
+            top2_pairs_of_8(vals, &keep_pair0, &keep_pair1);
             size_t group = (size_t)k / 8;
             size_t word = group / 8;
             size_t nibble = group % 8;
