@@ -289,8 +289,18 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
    *  in the FP16 silu_mul kernel — same speed either way; we keep host-side
    *  for simplicity and so that the kernel stays one fp32 mul. The autotune
    *  cache (agent A) can fold this into the epilogue if it pays.) */
-  float gate_scale = packed_weight_scale(gate_w);
-  float up_scale   = packed_weight_scale(up_w);
+  /* PackedWeight stores per-channel weight scales on device (`d_scales`).
+   * For FP8 the scales_count is 1 (single per-tensor scale folded during
+   * prepack). Read that scalar value down. If for any reason d_scales is
+   * empty, fall back to 1.0. */
+  float gate_scale = 1.0f;
+  float up_scale   = 1.0f;
+  if (gate_w->d_scales && gate_w->scales_count > 0) {
+    cudaMemcpy(&gate_scale, gate_w->d_scales, sizeof(float), cudaMemcpyDeviceToHost);
+  }
+  if (up_w->d_scales && up_w->scales_count > 0) {
+    cudaMemcpy(&up_scale, up_w->d_scales, sizeof(float), cudaMemcpyDeviceToHost);
+  }
   /* silu(α x) ≠ α silu(x), so we apply per-path scales before silu in a
    * dedicated post-kernel pass. For now, since CUTLASS already multiplies by
    * alpha=1 and the prepack scale is folded into the weight on agent A's
