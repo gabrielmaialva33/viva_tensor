@@ -32,7 +32,7 @@ open_header(Path) ->
             {ok, <<HdrSize:64/little>>} = file:read(F, 8),
             {ok, HdrBin} = file:read(F, HdrSize),
             file:close(F),
-            Header = jsone:decode(HdrBin),
+            Header = json:decode(HdrBin),
             %% Strip metadata pseudo-key emitted by HF.
             Tensors = maps:filter(
                 fun(K, _) -> K =/= <<"__metadata__">> end,
