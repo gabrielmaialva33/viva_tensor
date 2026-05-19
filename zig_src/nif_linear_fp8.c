@@ -117,6 +117,36 @@ static cublasLtHandle_t g_lt_ctx = NULL;
 static void *g_lt_workspace = NULL;
 static const size_t g_lt_workspace_size = 32 * 1024 * 1024;
 
+/* Device buffer cache: avoids cudaMalloc/cudaFree thrashing per linear
+ * call. Each slot lazily grows to the largest requested size. Profile
+ * showed 3-4 cudaMallocs per linear taking ~50-100us each = 200-400us
+ * pure malloc/free overhead per call. With 7 linears/layer × 22 layers,
+ * that's ~50ms/token saved by reusing these slots.
+ *
+ * Slots:
+ *   g_d_input    : FP16 input upload buffer (raw bytes, up to FFN size = ~12 KB)
+ *   g_d_weight16 : FP16 weight dequant buffer (largest: 5632*2048*2 = 22 MB)
+ *   g_d_outC     : FP32 GEMM output buffer (largest: 5632 * sizeof(float) = ~22 KB)
+ *   g_d_bias     : FP16 bias buffer (typically nil; small)
+ */
+static void   *g_d_input = NULL;     static size_t g_d_input_cap = 0;
+static void   *g_d_weight16 = NULL;  static size_t g_d_weight16_cap = 0;
+static float  *g_d_outC = NULL;      static size_t g_d_outC_cap = 0;
+static void   *g_d_bias = NULL;      static size_t g_d_bias_cap = 0;
+
+static int ensure_cached_buf(void **ptr, size_t *cap, size_t needed) {
+  if (*cap >= needed) return 0;
+  /* Grow with hysteresis (1.5×) to avoid frequent reallocs as shapes climb. */
+  size_t new_cap = needed + (needed >> 1);
+  void *old = *ptr;
+  void *fresh = NULL;
+  if (cudaMalloc(&fresh, new_cap) != cudaSuccess) return -1;
+  if (old) cudaFree(old);
+  *ptr = fresh;
+  *cap = new_cap;
+  return 0;
+}
+
 static int ensure_lt_ctx(void) {
   if (g_lt_ctx) return 0;
   if (cublasLtCreate(&g_lt_ctx) != CUBLAS_STATUS_SUCCESS) return -1;
@@ -405,11 +435,12 @@ static int run_w8a16_cublaslt_impl(const PackedWeight *w,
                                     float **out_d_C) {
   if (ensure_lt_ctx() != 0) return -1;
 
-  float *d_C = NULL;
   size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
-  if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -2;
+  /* Reuse a persistent device output buffer instead of malloc/free per call. */
+  if (ensure_cached_buf((void **)&g_d_outC, &g_d_outC_cap, bytes_C) != 0)
+    return -2;
+  float *d_C = g_d_outC;
   if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
-    cudaFree(d_C);
     return -3;
   }
 
