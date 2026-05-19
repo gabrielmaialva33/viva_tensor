@@ -423,20 +423,6 @@ static int download_fp32_and_make_binary(ErlNifEnv *env, float *d_C, int batch,
   }
   uint16_t *dst = (uint16_t *)outbin.data;
 
-  /* DEBUG: dump h_C and the dequant components to diagnose 50% zeros. */
-  static int dbg_count = 0;
-  if (dbg_count < 1 && out_features >= 5) {
-    fprintf(stderr, "[FP8-DBG] first 5 h_C: %.6e %.6e %.6e %.6e %.6e\n",
-            h_C[0], h_C[1], h_C[2], h_C[3], h_C[4]);
-    fprintf(stderr, "[FP8-DBG] act_scale=%.6e weight_scales[0..4]=%.6e %.6e %.6e %.6e %.6e\n",
-            act_scales ? act_scales[0] : 1.0f,
-            weight_scales ? weight_scales[0] : 0.0f,
-            weight_scales ? weight_scales[1] : 0.0f,
-            weight_scales ? weight_scales[2] : 0.0f,
-            weight_scales ? weight_scales[3] : 0.0f,
-            weight_scales ? weight_scales[4] : 0.0f);
-    dbg_count++;
-  }
   for (int b = 0; b < batch; ++b) {
     float a = act_scales ? act_scales[b] : 1.0f;
     for (int c = 0; c < out_features; ++c) {
