@@ -21,7 +21,7 @@
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
           bisect_w8a16_blocked/0, bisect_w8a16_blocked/1,
-          run_n_w8a16/2, run_generate_w8a16/5,
+          run_n_w8a16/2, run_generate_w8a16/5, profile_w8a16/2,
           bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
           build_layer/2, build_layer_calibrated/3,
           build_layer_blocked/3,
@@ -691,6 +691,80 @@ decode_loop_w8a16(Hidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
                               Pos + 1, Remaining - 1, SampOpts, EOS,
                               [NextTok | Acc])
     end.
+
+%% Profile a single layer forward — accumulate microsecond timing per stage
+%% across N repetitions to surface the dominant cost. Returns {Stage, AvgUs} pairs.
+profile_w8a16(NumLayers, BlockSize) ->
+    io:format("~n=== Profile W8A16 forward (N=~p layers, block=~p) ===~n~n",
+              [NumLayers, BlockSize]),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layers = [build_layer_blocked(Header, I, BlockSize)
+              || I <- lists:seq(0, NumLayers - 1)],
+    EmbedTbl = load_embed_table(Header),
+    RopeTable = precompute_rope_table(64, ?HEAD_DIM, ?ROPE_THETA),
+
+    HiddenIn = embed_row(EmbedTbl, ?BOS_TOKEN),
+    Pos = 0,
+    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
+
+    %% Run one forward with stage-level timing.
+    Layer0 = hd(Layers),
+    #{norm1 := N1, norm2 := N2,
+      q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer0,
+
+    UsNow = fun() -> erlang:monotonic_time(microsecond) end,
+    T0 = UsNow(),
+
+    T1 = UsNow(), X1 = rmsnorm(HiddenIn, N1, ?EPS), T1b = UsNow(),
+    X1Fp16 = floats_to_fp16(X1), T1c = UsNow(),
+    QRaw = linear_fp8_w8a16(X1Fp16, Q, ?HIDDEN), T2 = UsNow(),
+    KRaw = linear_fp8_w8a16(X1Fp16, K, ?KV_DIM), T3 = UsNow(),
+    VOut = linear_fp8_w8a16(X1Fp16, V, ?KV_DIM), T4 = UsNow(),
+    QOut = apply_rope(QRaw, Pos, RopeTable, ?NUM_HEADS,    ?HEAD_DIM), T5 = UsNow(),
+    KOut = apply_rope(KRaw, Pos, RopeTable, ?NUM_KV_HEADS, ?HEAD_DIM), T6 = UsNow(),
+    {AttnOut, _, _} = attention_gqa(QOut, KOut, VOut, [], []), T7 = UsNow(),
+    AttnOutFp16 = floats_to_fp16(AttnOut), T8 = UsNow(),
+    OOut = linear_fp8_w8a16(AttnOutFp16, O, ?HIDDEN), T9 = UsNow(),
+    H1 = list_add(HiddenIn, OOut), T10 = UsNow(),
+    X2 = rmsnorm(H1, N2, ?EPS), T11 = UsNow(),
+    X2Fp16 = floats_to_fp16(X2), T12 = UsNow(),
+    GateOut = linear_fp8_w8a16(X2Fp16, G, ?FFN), T13 = UsNow(),
+    UpOut   = linear_fp8_w8a16(X2Fp16, U, ?FFN), T14 = UsNow(),
+    SwInter = lists:zipwith(fun(Gv, Uv) -> silu(Gv) * Uv end, GateOut, UpOut), T15 = UsNow(),
+    SwInterFp16 = floats_to_fp16(SwInter), T16 = UsNow(),
+    Ffn = linear_fp8_w8a16(SwInterFp16, D, ?HIDDEN), T17 = UsNow(),
+    _HOut = list_add(H1, Ffn), T18 = UsNow(),
+
+    Stages = [
+        {rmsnorm_1,           T1b - T1},
+        {floats_to_fp16_x1,   T1c - T1b},
+        {linear_Q,            T2 - T1c},
+        {linear_K,            T3 - T2},
+        {linear_V,            T4 - T3},
+        {rope_Q,              T5 - T4},
+        {rope_K,              T6 - T5},
+        {attention_gqa,       T7 - T6},
+        {floats_to_fp16_attn, T8 - T7},
+        {linear_O,            T9 - T8},
+        {residual_1,          T10 - T9},
+        {rmsnorm_2,           T11 - T10},
+        {floats_to_fp16_x2,   T12 - T11},
+        {linear_gate,         T13 - T12},
+        {linear_up,           T14 - T13},
+        {silu_mul,            T15 - T14},
+        {floats_to_fp16_sw,   T16 - T15},
+        {linear_down,         T17 - T16},
+        {residual_2,          T18 - T17}
+    ],
+    Total = T18 - T0,
+    io:format("Stage                       us    pct~n"),
+    [io:format("~-25s ~6w  ~6.2f~n",
+               [Name, Us, 100.0 * Us / float(Total)])
+     || {Name, Us} <- Stages],
+    io:format("~-25s ~6w~n", ["TOTAL (single layer)", Total]),
+    io:format("Projected per-token (22 layers): ~p ms~n", [Total * 22 div 1000]),
+    {ok, Stages, Total}.
 
 %% Same shape as forward_block/7 but uses linear_fp8_w8a16 throughout.
 forward_block_w8a16(H, Layer, _LayerIdx, Pos, RopeTable, KCache, VCache) ->
