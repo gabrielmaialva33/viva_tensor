@@ -44,8 +44,80 @@
 #include <float.h>
 #include <math.h>
 
+/* Proper FP8 E4M3 host quantizer with round-to-nearest-even mantissa and
+ * full subnormal support (down to 2^-9). Mirrors `lin_float_to_fp8_e4m3`
+ * in nif_linear_fp8.c verbatim, so the dense linear and the fused SwiGLU
+ * paths produce bit-identical FP8 input bytes for the same activation.
+ *
+ * DO NOT call `float_to_fp8_e4m3_batch` from cuda_sage.c here. That
+ * helper (a) truncates the mantissa instead of rounding, biasing
+ * |q| downward, and (b) flushes everything with |x| < 2^-6 to zero,
+ * skipping the entire E4M3 subnormal range 2^-9..2^-7. Combined with
+ * the FP8_E4M3_MAX=448 fix, the truncation+subnormal-flush produced a
+ * lopsided distribution on the gate/up FFN GEMMs whose nonlinearity
+ * via silu(g)*u landed at 1.35x of the HF reference (bisected
+ * against transformers — see dev/hf_bisect.py). */
+static inline uint8_t swiglu_float_to_fp8_e4m3(float val) {
+  if (val == 0.0f) return 0x00;
+  if (val != val) return 0x7F;
+
+  uint32_t bits;
+  memcpy(&bits, &val, sizeof(bits));
+  uint32_t sign = (bits >> 31) & 0x1;
+  int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
+  uint32_t f32_mant = bits & 0x7FFFFF;
+
+  /* Hard overflow: f32_exp >= 9 means |x| >= 512, definitely beyond
+   * E4M3 max finite 448 → saturate.
+   * Underflow: f32_exp < -9 means |x| < 2^-9, below the smallest E4M3
+   * subnormal → flush to zero. */
+  if (f32_exp >= 9) return (uint8_t)((sign << 7) | 0x7E);
+  if (f32_exp < -9) return (uint8_t)(sign << 7);
+
+  int32_t e_exp;
+  uint32_t e_mant;
+  if (f32_exp >= -6) {
+    /* Normal range covers fp8_exp 1..15 (i.e. f32_exp -6..8). At
+     * f32_exp=8 the mantissa selects 256, 288, ..., 448. Round to
+     * nearest even, then saturate to 0x7E (mantissa=6 → 448) if the
+     * rounded mantissa exceeds 6 — i.e. true |x| in [464, 512). */
+    e_exp = f32_exp + 7;
+    uint32_t round_bit = (f32_mant >> 19) & 0x1;
+    uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
+    e_mant = (f32_mant >> 20) & 0x7;
+    if (round_bit && (sticky || (e_mant & 0x1))) {
+      e_mant += 1;
+      if (e_mant == 8) {
+        e_mant = 0;
+        e_exp += 1;
+      }
+    }
+    if (e_exp >= 15 && e_mant > 6) {
+      return (uint8_t)((sign << 7) | 0x7E);
+    }
+    if (e_exp > 15) return (uint8_t)((sign << 7) | 0x7E);
+  } else {
+    int32_t shift = -6 - f32_exp;
+    uint32_t mant_with_implicit = f32_mant | 0x800000;
+    e_exp = 0;
+    uint32_t total_shift = 20 + shift;
+    uint32_t round_bit = (mant_with_implicit >> (total_shift - 1)) & 0x1;
+    uint32_t sticky =
+        (mant_with_implicit & ((1u << (total_shift - 1)) - 1)) != 0;
+    e_mant = (mant_with_implicit >> total_shift) & 0x7;
+    if (round_bit && (sticky || (e_mant & 0x1))) {
+      e_mant += 1;
+      if (e_mant == 8) {
+        e_mant = 0;
+        e_exp = 1;
+      }
+    }
+  }
+  return (uint8_t)((sign << 7) | ((uint32_t)e_exp << 3) | e_mant);
+}
+
 /* Inline per-tensor E4M3 host quantization (same as in nif_linear_fp8.c).
- * input_scale = absmax / 448, then qx = float_to_fp8(x / input_scale).
+ * input_scale = absmax / 448, then qx = swiglu_float_to_fp8_e4m3(x / input_scale).
  * Returns 0 on success. */
 static int swiglu_quantize_fp8_e4m3_host(uint8_t* d_out,
                                           const float* h_in,
@@ -61,12 +133,10 @@ static int swiglu_quantize_fp8_e4m3_host(uint8_t* d_out,
 
   uint8_t* h_q = (uint8_t*)malloc(n);
   if (!h_q) return -1;
-  float* tmp = (float*)malloc(n * sizeof(float));
-  if (!tmp) { free(h_q); return -1; }
   float inv = 1.0f / s;
-  for (size_t i = 0; i < n; ++i) tmp[i] = h_in[i] * inv;
-  float_to_fp8_e4m3_batch(h_q, tmp, n);
-  free(tmp);
+  for (size_t i = 0; i < n; ++i) {
+    h_q[i] = swiglu_float_to_fp8_e4m3(h_in[i] * inv);
+  }
 
   cudaError_t cerr = cudaMemcpy(d_out, h_q, n, cudaMemcpyHostToDevice);
   free(h_q);
@@ -297,6 +367,59 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     }
     cudaMemcpy(d_bias, h_bias, sizeof(__half) * out_features, cudaMemcpyHostToDevice);
     free(h_bias);
+  }
+
+  /* --- DEBUG: dump gate_out / up_out mean_abs post-dequant --- */
+  if (getenv("VIVA_SWIGLU_DEBUG")) {
+    size_t n_out = (size_t)batch * out_features;
+    float* h_g = (float*)malloc(sizeof(float) * n_out);
+    float* h_u = (float*)malloc(sizeof(float) * n_out);
+    float* h_gs = (float*)malloc(sizeof(float) * out_features);
+    float* h_us = (float*)malloc(sizeof(float) * out_features);
+    cudaMemcpy(h_g, d_gate_out, sizeof(float) * n_out, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_u, d_up_out, sizeof(float) * n_out, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_gs, gate_w->d_scales, sizeof(float) * out_features, cudaMemcpyDeviceToHost);
+    cudaMemcpy(h_us, up_w->d_scales, sizeof(float) * out_features, cudaMemcpyDeviceToHost);
+    double sum_g_raw = 0.0, sum_u_raw = 0.0;
+    double sum_g_deq = 0.0, sum_u_deq = 0.0;
+    double sum_sg = 0.0, sum_su = 0.0;
+    for (size_t i = 0; i < n_out; ++i) {
+      int col = i % out_features;
+      sum_g_raw += fabs(h_g[i]);
+      sum_u_raw += fabs(h_u[i]);
+      double dg = h_g[i] * input_scale * h_gs[col];
+      double du = h_u[i] * input_scale * h_us[col];
+      sum_g_deq += fabs(dg);
+      sum_u_deq += fabs(du);
+      sum_sg += fabs(h_gs[col]);
+      sum_su += fabs(h_us[col]);
+    }
+    double sum_g_w = 0.0, sum_u_w = 0.0;
+    for (int c = 0; c < out_features; ++c) {
+      sum_g_w += fabs(h_gs[c]);
+      sum_u_w += fabs(h_us[c]);
+    }
+    fprintf(stderr, "[swiglu] in_scale=%.6e gate_raw_mean=%.6e up_raw_mean=%.6e gate_deq_mean=%.6e up_deq_mean=%.6e mean_gscale=%.6e mean_uscale=%.6e\n",
+            (double)input_scale,
+            sum_g_raw / n_out, sum_u_raw / n_out,
+            sum_g_deq / n_out, sum_u_deq / n_out,
+            sum_g_w / out_features, sum_u_w / out_features);
+    fprintf(stderr, "[swiglu] first5 gate_deq: ");
+    for (int k = 0; k < 5; ++k) {
+      double dg = h_g[k] * input_scale * h_gs[k];
+      fprintf(stderr, "%.6f ", dg);
+    }
+    fprintf(stderr, "\n[swiglu] first5 up_deq:   ");
+    for (int k = 0; k < 5; ++k) {
+      double du = h_u[k] * input_scale * h_us[k];
+      fprintf(stderr, "%.6f ", du);
+    }
+    fprintf(stderr, "\n[swiglu] first5 gscale: ");
+    for (int k = 0; k < 5; ++k) fprintf(stderr, "%.6e ", h_gs[k]);
+    fprintf(stderr, "\n[swiglu] first5 gate_raw_fp32: ");
+    for (int k = 0; k < 5; ++k) fprintf(stderr, "%.4f ", h_g[k]);
+    fprintf(stderr, "\n");
+    free(h_g); free(h_u); free(h_gs); free(h_us);
   }
 
   /* --- Fused silu+mul (+optional bias) --- */
