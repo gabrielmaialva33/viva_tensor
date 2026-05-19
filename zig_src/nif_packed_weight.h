@@ -36,11 +36,16 @@ typedef struct {
   void *d_metadata;     /* 2:4 sparsity metadata `E` — NULL for FP8 */
   size_t metadata_bytes;
 
-  void *d_scales;       /* FP32 dequant scales: `out_features` entries for current backends */
+  void *d_scales;       /* FP32 dequant scales. Layout depends on block_size:
+                         *   block_size == 0: [out_features] (per-channel, legacy)
+                         *   block_size  > 0: [out_features * (in_features/block_size)]
+                         *                    indexed by [n * num_blocks + (k/block_size)]
+                         */
   size_t scales_count;
 
   int in_features;
   int out_features;
+  int block_size;       /* 0 = per-channel (default); 32/128 = per-block along K. */
 
   /* cuSPARSELt-only fields. Populated by INT8/INT4 sparse prepack paths.
    * `plan_destroy` is a deleter installed by the prepack code (typically
@@ -64,6 +69,7 @@ PackedWeight *get_packed_weight(ErlNifEnv *env, ERL_NIF_TERM term);
 /* NIF entry points (defined in the per-dtype files). Each is registered
  * in nif_funcs[] inside nif_entry.c. Stubs in viva_tensor_zig.erl. */
 ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
