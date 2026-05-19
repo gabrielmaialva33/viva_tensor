@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **cuBLASLt FP8 path now writes FP32 output buffers** (was FP16): the
+  earlier path cast the f32 accumulator down to FP16 inside cuBLASLt and
+  saturated ~5 cells per linear at large K, producing Inf for outlier
+  activations. The fix mirrors what the CUTLASS path already did — use
+  `CUDA_R_32F` for `layout_c`, return `float**` from `run_cublaslt_path`,
+  and run per-row × per-channel dequant on FP32 host before the FP16 cast.
+  Validated on the TinyLlama-1.1B smoke test: O proj output went from
+  `mean_abs=160 + 5 Inf` to `mean_abs=0.0013`, final hidden state from
+  `352` to `0.504` (now matches input magnitude as a healthy transformer
+  block should). The same change applies to the GELU epilogue path.
+
 ### Added
 
 - **TinyLlama-1.1B layer-0 forward smoke test** (`dev/llama_smoke.erl`):
