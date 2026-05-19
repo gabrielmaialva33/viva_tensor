@@ -65,18 +65,12 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
       setenv("KMP_AFFINITY", "granularity=fine,compact,1,0", 0);
     }
 
-    /* 4. Flush denormals to zero (DAZ+FTZ) — avoids 100x penalty on subnormals.
-     *    Standard practice for BLAS/ML workloads. */
-    #if defined(__x86_64__) || defined(_M_X64)
-    {
-      unsigned int mxcsr = __builtin_ia32_stmxcsr();
-      mxcsr |= (1 << 6)  /* DAZ - Denormals Are Zero */
-             | (1 << 15); /* FTZ - Flush To Zero */
-      __builtin_ia32_ldmxcsr(mxcsr);
-    }
-    #endif
-
-    fprintf(stderr, "[viva_tensor] Intel MKL direct, %d threads (%d physical cores), compact affinity, DAZ+FTZ\n", threads, phys);
+    /* 4. (Previously set DAZ+FTZ for BLAS perf. Disabled here because it
+     *    silently flushes FP32 subnormals to zero in the per-channel
+     *    dequant path, which propagates into ~50% of FP8 GEMM output
+     *    channels becoming exactly zero. Trade ~100× penalty on subnormals
+     *    for correct numerical behavior in the inference path.) */
+    fprintf(stderr, "[viva_tensor] Intel MKL direct, %d threads (%d physical cores), compact affinity\n", threads, phys);
   }
 #endif
 

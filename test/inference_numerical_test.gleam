@@ -108,6 +108,15 @@ const gelu_fp8_l2_tolerance: Float = 0.7
 // The fused SwiGLU path runs through real FP32-output FP8 GEMMs and applies
 // per-channel dequant before SiLU. With FP8_E4M3_MAX=448, the random-uniform
 // fixture amplifies quantization error through silu(gate)*up. Measured ~125%.
+//
+// Note: the host-side input FP8 quantizer was switched from cuda_sage.c's
+// truncating helper to a proper round-to-nearest-even + subnormal-supporting
+// implementation (bit-identical to `lin_float_to_fp8_e4m3` in
+// nif_linear_fp8.c). The proper rounding marginally increases the synthetic
+// fixture L2 by a few percent vs the old truncating quantizer (truncation
+// was downward-biasing values, partially canceling FP8's upward saturation
+// bias). Tolerance stays at 1.3 — still well above the observed peak.
+//
 // Real LLM activations behave much better — the synthetic distribution is
 // outlier-free and underutilizes FP8 range. See dev/hf_bisect.py for the
 // realistic Llama-1.1B layer comparison.
