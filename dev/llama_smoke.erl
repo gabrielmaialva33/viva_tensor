@@ -153,10 +153,12 @@ linear_fp8(InputFp16, Packed, OutF) when is_binary(InputFp16) ->
 %% projection. Caller must apply linear_fp8 with down_proj afterwards.
 linear_swiglu_intermediate(InputFp32List, B, InF, Gate, Up, FfnDim) ->
     case viva_tensor_zig:nt_linear_swiglu_fp8(InputFp32List, [B, InF], Gate, Up, nil) of
-        {ok, OutBin} ->
-            Vals = viva_tensor_inference_ffi:fp16_binary_to_floats(OutBin),
-            verify_size(Vals, B * FfnDim),
-            Vals;
+        {ok, OutList} when is_list(OutList) ->
+            verify_size(OutList, B * FfnDim),
+            %% The NIF clamps Inf to FP16-max for marshalling safety. Re-clamp
+            %% to a sane range here so downstream layers don't carry forward
+            %% the saturation noise.
+            [clamp_one(X, 32.0) || X <- OutList];
         Error ->
             error({swiglu_failed, Error})
     end.
