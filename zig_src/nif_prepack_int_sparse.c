@@ -548,10 +548,9 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
 
     /* Per-output-channel absmax → scale (INT4 qmax = 7). */
     for (int o = 0; o < out_features; ++o) {
-        const float* row = W + (size_t)o * (size_t)in_features;
         float amax = 0.0f;
         for (int k = 0; k < in_features; ++k) {
-            float a = fabsf(row[k]);
+            float a = fabsf(W[(size_t)k * (size_t)out_features + (size_t)o]);
             if (a > amax) amax = a;
         }
         h_scales[o] = (amax > 0.0f) ? (amax / 7.0f) : 1.0f;
@@ -561,17 +560,20 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
      * CUTLASS INT4 sparse metadata indexes 2-int4 pairs, not individual
      * scalar int4 lanes, so the pruning unit is 2 kept pairs per 8 values. */
     for (int o = 0; o < out_features; ++o) {
-        const float* row = W + (size_t)o * (size_t)in_features;
         int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
         float inv_scale = 1.0f / h_scales[o];
         for (int k = 0; k < in_features; k += 8) {
+            float group[8];
+            for (int j = 0; j < 8; ++j) {
+                group[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
+            }
             int keep_pair0, keep_pair1;
-            top2_pairs_of_8(row + k, &keep_pair0, &keep_pair1);
+            top2_pairs_of_8(group, &keep_pair0, &keep_pair1);
             for (int pair = 0; pair < 4; ++pair) {
                 for (int lane = 0; lane < 2; ++lane) {
                     int j = pair * 2 + lane;
                     if (pair == keep_pair0 || pair == keep_pair1) {
-                        qrow[k + j] = f32_to_int4_sat(row[k + j], inv_scale);
+                        qrow[k + j] = f32_to_int4_sat(group[j], inv_scale);
                     } else {
                         qrow[k + j] = 0;
                     }
@@ -605,11 +607,14 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     memset(h_meta, 0, meta_total);
 
     for (int o = 0; o < out_features; ++o) {
-        const float* row = W + (size_t)o * (size_t)in_features;
         uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
         for (int k = 0; k < in_features; k += 8) {
+            float group[8];
+            for (int j = 0; j < 8; ++j) {
+                group[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
+            }
             int keep_pair0, keep_pair1;
-            top2_pairs_of_8(row + k, &keep_pair0, &keep_pair1);
+            top2_pairs_of_8(group, &keep_pair0, &keep_pair1);
             size_t group = (size_t)k / 8;
             size_t word = group / 8;
             size_t nibble = group % 8;
