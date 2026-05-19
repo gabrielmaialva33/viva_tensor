@@ -211,11 +211,13 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
     return make_error(env, "cuda_malloc_input");
   }
   float input_scale = 1.0f;
+  fprintf(stderr, "[SWIGLU-DBG] before quantize input_elems=%zu\n", input_elems);
   if (swiglu_quantize_fp8_e4m3_host(d_input_fp8, h_input_fp32, input_elems, &input_scale) != 0) {
     cudaFree(d_input_fp8);
     free(h_input_fp32);
     return make_error(env, "input_quantize_failed");
   }
+  fprintf(stderr, "[SWIGLU-DBG] after quantize input_scale=%f\n", input_scale);
   free(h_input_fp32);
 
   /* --- Allocate device output buffers --- */
@@ -237,14 +239,17 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
 
   /* --- Two FP8 GEMMs: gate and up --- */
+  fprintf(stderr, "[SWIGLU-DBG] before gate gemm M=%d N=%d K=%d\n", batch, out_features, in_features);
   int rc1 = cutlass_fp8_gemm_f16acc(batch, out_features, in_features,
                                      d_input_fp8, d_gate_weight, d_gate_out);
+  fprintf(stderr, "[SWIGLU-DBG] gate gemm rc=%d\n", rc1);
   if (rc1 != 0) {
     cudaFree(d_out); cudaFree(d_up_out); cudaFree(d_gate_out); cudaFree(d_input_fp8);
     return make_error(env, "cutlass_gate_gemm_failed");
   }
   int rc2 = cutlass_fp8_gemm_f16acc(batch, out_features, in_features,
                                      d_input_fp8, d_up_weight, d_up_out);
+  fprintf(stderr, "[SWIGLU-DBG] up gemm rc=%d\n", rc2);
   if (rc2 != 0) {
     cudaFree(d_out); cudaFree(d_up_out); cudaFree(d_gate_out); cudaFree(d_input_fp8);
     return make_error(env, "cutlass_up_gemm_failed");
@@ -282,7 +287,9 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   }
 
   /* --- Fused silu+mul (+optional bias) --- */
+  fprintf(stderr, "[SWIGLU-DBG] before silu_mul\n");
   int kc = launch_silu_mul(d_gate_out, d_up_out, d_bias, d_out, batch, out_features);
+  fprintf(stderr, "[SWIGLU-DBG] silu_mul rc=%d\n", kc);
   cudaFree(d_gate_out);
   cudaFree(d_up_out);
   if (d_bias) cudaFree(d_bias);
