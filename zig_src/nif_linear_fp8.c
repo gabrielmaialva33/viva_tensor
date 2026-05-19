@@ -571,13 +571,13 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
                                             w->out_features);
   }
   if (rc != 0) {
-    cudaFree(d_weight_fp16);
+    /* g_d_weight16 is cached; do not free. */
     return -30 + rc;
   }
 
   rc = run_w8a16_cublaslt_impl(w, d_weight_fp16, CUDA_R_16F, d_input, batch,
                                 out_d_C);
-  cudaFree(d_weight_fp16);
+  /* g_d_weight16 is cached; do not free. */
   return (rc == 0) ? 0 : (-40 + rc);
 }
 
