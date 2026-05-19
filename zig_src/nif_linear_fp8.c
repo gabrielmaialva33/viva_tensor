@@ -574,6 +574,7 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
     return make_error(env, "weight_scale_read_failed");
   }
 
+
   ERL_NIF_TERM out_term;
   rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features,
                                       act_scales, w_scales, &out_term);

@@ -20,7 +20,7 @@
 
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0,
-         bisect_calibrated/0, run_n_calibrated/1,
+         bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
          build_layer/2, build_layer_calibrated/3,
          precompute_rope_table/3, apply_rope/5]).
 
@@ -106,6 +106,36 @@ bisect() ->
 
     H2 = list_add(H1, Ffn),
     dump("residual 2 (block 0 hidden)", H2),
+    ok.
+
+%% Same setup as bisect/0 but run Q proj with batch=16 (replicate XNorm1).
+%% If zeros vanish at M=16, the CUTLASS M=1 padding path has a bug.
+%% If zeros remain at M=16, it's accumulator numerical cancellation.
+bisect_batch16() ->
+    io:format("~n=== viva_tensor bisect batch=16 — layer 0, BOS ===~n~n"),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    Layer = build_layer(Header, 0),
+    EmbedTbl = load_embed_table(Header),
+    X = embed_row(EmbedTbl, ?BOS_TOKEN),
+    Norm1 = load_rmsnorm(Header, <<"model.layers.0.input_layernorm.weight">>),
+    XNorm1 = rmsnorm(X, Norm1, ?EPS),
+    Replicated = lists:flatten(lists:duplicate(16, XNorm1)),
+    InBin = viva_tensor_inference_ffi:floats_to_fp16_binary(Replicated),
+    #{q := Q} = Layer,
+    {ok, QBin} = viva_tensor_zig:nt_linear_fp8(InBin, Q, nil, 0),
+    QOut = viva_tensor_inference_ffi:fp16_binary_to_floats(QBin),
+    Row0 = lists:sublist(QOut, ?HIDDEN),
+    Row1 = lists:sublist(QOut, ?HIDDEN + 1, ?HIDDEN),
+    Row15 = lists:sublist(QOut, 15 * ?HIDDEN + 1, ?HIDDEN),
+    Z0 = length([X1 || X1 <- Row0, X1 == 0.0]),
+    Z1 = length([X1 || X1 <- Row1, X1 == 0.0]),
+    Z15 = length([X1 || X1 <- Row15, X1 == 0.0]),
+    io:format("Row 0 zeros=~p/2048  first5=~p~n", [Z0, lists:sublist(Row0, 5)]),
+    io:format("Row 1 zeros=~p/2048  first5=~p~n", [Z1, lists:sublist(Row1, 5)]),
+    io:format("Row 15 zeros=~p/2048 first5=~p~n", [Z15, lists:sublist(Row15, 5)]),
+    %% Compare row 0 vs row 1 — same input, should give identical output.
+    Diff = lists:any(fun({A, B}) -> abs(A - B) > 1.0e-6 end, lists:zip(Row0, Row1)),
+    io:format("Row 0 differs from Row 1? ~p~n", [Diff]),
     ok.
 
 dump(Label, L) ->
