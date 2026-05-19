@@ -842,24 +842,23 @@ ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
   if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
     return make_error(env, "bias_size_mismatch");
 
-  uint16_t *d_input = NULL;
-  if (cudaMalloc((void **)&d_input, input_bin.size) != cudaSuccess)
+  /* Cached input buffer — avoids cudaMalloc/Free per call. */
+  if (ensure_cached_buf(&g_d_input, &g_d_input_cap, input_bin.size) != 0)
     return make_error(env, "cuda_malloc_input_failed");
+  uint16_t *d_input = (uint16_t *)g_d_input;
   if (cudaMemcpy(d_input, input_bin.data, input_bin.size,
                   cudaMemcpyHostToDevice) != cudaSuccess) {
-    cudaFree(d_input);
     return make_error(env, "cuda_upload_input_failed");
   }
 
+  /* run_w8a16_*_cublaslt now writes into the cached g_d_outC buffer. */
   float *d_C = NULL;
   int rc = run_w8a16_cublaslt_mixed(w, d_input, batch, &d_C);
   int used_mixed = (rc == 0);
   if (rc != 0) {
     rc = run_w8a16_dequant_cublaslt(w, d_input, batch, &d_C);
   }
-  cudaFree(d_input);
   if (rc != 0) {
-    if (d_C) cudaFree(d_C);
     char err[64];
     snprintf(err, sizeof(err), "w8a16_gemm_failed_%d", rc);
     return make_error(env, err);
@@ -871,7 +870,6 @@ ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
       (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0 ||
        w_scales_count != (size_t)w->out_features)) {
     if (w_scales) free(w_scales);
-    cudaFree(d_C);
     return make_error(env, "weight_scale_read_failed");
   }
 
@@ -880,7 +878,6 @@ ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
       env, d_C, batch, w->out_features, NULL, used_mixed ? w_scales : NULL,
       has_bias ? &bias_bin : NULL, &out_term);
   if (w_scales) free(w_scales);
-  cudaFree(d_C);
   if (rc != 0) return make_error(env, "output_download_failed");
 
   return make_ok(env, out_term);
