@@ -99,18 +99,14 @@ run_n(NumLayers) ->
     Layers = build_layers(Header, NumLayers),
     io:format("[~5w ms] All ~p layers prepacked~n", [ms() - TL0, NumLayers]),
 
-    %% --- Final RMSNorm + embedding table. --------------------------------
-    %% LM head is deferred to task #64: transposing the 32000×2048 weight
-    %% in pure Erlang explodes Erlang's tuple builder. Needs a NIF transpose
-    %% to scale. For now we only validate the forward depth.
+    %% --- Final RMSNorm + LM head + embedding table. ----------------------
     TF0 = ms(),
     FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
     EmbedTbl  = load_embed_table(Header),     %% lazy: index -> row
-    %% Pre-compute RoPE table up to a small max-pos. For the first-token
-    %% forward we only need pos=0 entries, but we build a few rows in case
-    %% downstream tasks (KV cache) want longer contexts.
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack(LmHead, ?HIDDEN, ?VOCAB),
     RopeTable = precompute_rope_table(64, ?HEAD_DIM, ?ROPE_THETA),
-    io:format("[~5w ms] Final norm + embed table + RoPE table loaded~n",
+    io:format("[~5w ms] Final norm + lm_head prepacked + embed + RoPE table~n",
               [ms() - TF0]),
 
     %% --- Initial hidden state: embedding row for BOS token. --------------
@@ -139,13 +135,14 @@ run_n(NumLayers) ->
     io:format("[~5w ms] Forward over ~p blocks done. Final mean_abs=~p~n",
               [ms() - TF1, NumLayers, mean_abs(HiddenOut)]),
 
-    %% --- Final norm only (LM head deferred to task #64). -----------------
+    %% --- Final norm + LM head + argmax sampling. ------------------------
     NormFinal = rmsnorm(HiddenOut, FinalNorm, ?EPS),
-    Finite = lists:foldl(
-        fun(X, A) -> case is_float(X) andalso abs(X) < 1.0e30 of
-            true -> A + 1; false -> A end end, 0, NormFinal),
-    io:format("~nFinal normed hidden mean_abs=~p  finite=~p / ~p~n",
-              [mean_abs(NormFinal), Finite, length(NormFinal)]),
+    NormFp16 = floats_to_fp16(NormFinal),
+    Logits = linear_fp8(NormFp16, LmHeadPk, ?VOCAB),
+    {Top1Token, Top1Logit} = argmax(Logits),
+    io:format("~nFinal normed hidden mean_abs=~p~n", [mean_abs(NormFinal)]),
+    io:format("Logits mean_abs=~p~n", [mean_abs(Logits)]),
+    io:format("argmax token id = ~p (logit ~p)~n", [Top1Token, Top1Logit]),
     io:format("~n[~5w ms] Total elapsed~n", [ms() - T0]),
     ok.
 
