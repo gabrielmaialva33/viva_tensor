@@ -6,6 +6,20 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **TinyLlama-1.1B layer-0 forward smoke test** (`dev/llama_smoke.erl`):
+  end-to-end forward pass through a real transformer block using
+  HuggingFace TinyLlama-1.1B-Chat weights. Loads SafeTensors via the
+  new `viva_tensor_safetensors_ffi`, converts bf16 → fp32, transposes
+  HF [out, in] → viva [in, out], prepacks all 7 linears in FP8, runs
+  RMSNorm + Q/K/V projections + GQA attention + output projection +
+  residual + post-attention RMSNorm + gate/up/silu·×/down + residual.
+  All 2048 final hidden state values are finite. Validates that the
+  inference API stack works on real ML weights, not just synthetic.
+- `src/viva_tensor_safetensors_ffi.erl`: minimal SafeTensors loader.
+  Parses JSON header via OTP 27's `json` module, exposes
+  `read_tensor_bf16/2`, `bf16_to_fp32_binary/1`, `transpose_fp32/3`,
+  and `rmsnorm_weight_to_fp32_list/1`. Enough to drive a Llama-style
+  model from a `model.safetensors` blob.
 - `cuda_int_sparse_run.cu`: three new debug-friendly C entrypoints —
   `cutlass_int4_sparse_reorder_meta_e` (direct shim to
   `cutlass::reorder_meta`), `cutlass_int4_sparse_uncompress_to_dense`
