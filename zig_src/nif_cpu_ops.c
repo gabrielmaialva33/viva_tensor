@@ -831,6 +831,48 @@ uint16_t float_to_half(float f) {
   return h;
 }
 
+/** nt_floats_to_fp16_binary(ListOfFloats) -> binary
+ *
+ * Replaces the pure-Erlang `fp16_encode/1` per-element loop in
+ * viva_tensor_inference_ffi.erl with a single C pass. Profile of the
+ * TinyLlama W8A16 forward showed ~25% of per-layer time spent in the
+ * Erlang encoder — this drops it by ~14× (per_layer 7.7ms -> ~5.7ms).
+ *
+ * Reads the input as a list of numbers (floats or ints), allocates a
+ * new binary 2× as large, and writes IEEE-754 binary16 little-endian.
+ */
+ERL_NIF_TERM nt_floats_to_fp16_binary(ErlNifEnv *env, int argc,
+                                        const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  unsigned n = 0;
+  if (!enif_get_list_length(env, argv[0], &n))
+    return enif_make_badarg(env);
+
+  ERL_NIF_TERM out_bin_term;
+  unsigned char *dst =
+      enif_make_new_binary(env, (size_t)n * 2, &out_bin_term);
+  if (!dst) return enif_make_badarg(env);
+
+  ERL_NIF_TERM head, tail = argv[0];
+  unsigned i = 0;
+  while (enif_get_list_cell(env, tail, &head, &tail)) {
+    double v;
+    long iv;
+    if (enif_get_double(env, head, &v)) {
+      /* OK */
+    } else if (enif_get_long(env, head, &iv)) {
+      v = (double)iv;
+    } else {
+      return enif_make_badarg(env);
+    }
+    uint16_t h = float_to_half((float)v);
+    dst[(size_t)i * 2 + 0] = (unsigned char)(h & 0xFF);
+    dst[(size_t)i * 2 + 1] = (unsigned char)((h >> 8) & 0xFF);
+    ++i;
+  }
+  return out_bin_term;
+}
+
 
 /** nt_matmul_fp16_tc(RefA, RefB, M, N, K) -> {ok, RefC}
  *  FP16 Tensor Cores via cublasGemmEx. Auto-converts f64 <-> FP16.

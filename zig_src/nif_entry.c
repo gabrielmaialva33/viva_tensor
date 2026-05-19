@@ -223,6 +223,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_matmul_int8_tc", 5, nt_matmul_int8_tc, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_int8_tc_available", 0, nt_int8_tc_available, 0},
     {"nt_matmul_fp16_tc", 5, nt_matmul_fp16_tc, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_floats_to_fp16_binary", 1, nt_floats_to_fp16_binary, 0},
     {"nt_fp16_tc_available", 0, nt_fp16_tc_available, 0},
     {"nt_matmul_int8_lt", 5, nt_matmul_int8_lt, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_int8_lt_available", 0, nt_int8_lt_available, 0},
