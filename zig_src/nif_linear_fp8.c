@@ -400,7 +400,7 @@ static int run_cublaslt_path(const PackedWeight *w,
     cublasLtMatrixLayoutDestroy(layout_a);
     cublasLtMatrixLayoutDestroy(layout_c);
     cublasLtMatmulDescDestroy(desc);
-    /* d_C is cached (g_d_outC); do not free. */
+    cudaFree(d_C);
     return -5;
   }
 
@@ -546,10 +546,14 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
                                        const uint16_t *d_input,
                                        int batch,
                                        float **out_d_C) {
-  uint16_t *d_weight_fp16 = NULL;
   size_t bytes = (size_t)w->in_features * (size_t)w->out_features *
                  sizeof(uint16_t);
-  if (cudaMalloc((void **)&d_weight_fp16, bytes) != cudaSuccess) return -20;
+  /* Cache the dequant FP16 weight buffer — biggest single per-call alloc
+   * (up to ~22 MB for the LM head); avoiding 7 round-trip mallocs/frees
+   * per layer is one of the larger throughput wins. */
+  if (ensure_cached_buf(&g_d_weight16, &g_d_weight16_cap, bytes) != 0)
+    return -20;
+  uint16_t *d_weight_fp16 = (uint16_t *)g_d_weight16;
 
   int rc;
   if (w->block_size > 0) {
