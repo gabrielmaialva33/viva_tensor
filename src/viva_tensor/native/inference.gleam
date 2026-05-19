@@ -362,18 +362,17 @@ pub fn linear_swiglu_fp8(
   {
     [batch, in_f], True, True if in_f == gate_weight.in_features -> {
       let bias_data = optional_tensor_to_bias_arg(bias)
-      let input_bin = floats_to_fp16_binary(tensor.to_list(input))
+      let input_data = tensor.to_list(input)
       case
         nt_linear_swiglu_fp8(
-          input_bin,
+          input_data,
           [batch, in_f],
           gate_weight.handle,
           up_weight.handle,
           bias_data,
         )
       {
-        Ok(out_bin) -> {
-          let out_data = fp16_binary_to_floats(out_bin)
+        Ok(out_data) -> {
           Ok(make_2d_tensor(out_data, batch, gate_weight.out_features))
         }
         Error(reason) ->
@@ -544,9 +543,9 @@ fn nt_linear_int4_sparse(
 
 @external(erlang, "viva_tensor_zig", "nt_linear_swiglu_fp8")
 fn nt_linear_swiglu_fp8(
-  input_fp16: BitArray,
+  input_data: List(Float),
   input_shape: List(Int),
   gate_weight: Dynamic,
   up_weight: Dynamic,
   bias: BiasArg,
-) -> Result(BitArray, String)
+) -> Result(List(Float), String)

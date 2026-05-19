@@ -36,7 +36,7 @@ typedef struct {
   void *d_metadata;     /* 2:4 sparsity metadata `E` — NULL for FP8 */
   size_t metadata_bytes;
 
-  void *d_scales;       /* FP32: 1 entry (FP8) or `out_features` entries (sparse) */
+  void *d_scales;       /* FP32 dequant scales: `out_features` entries for current backends */
   size_t scales_count;
 
   int in_features;
