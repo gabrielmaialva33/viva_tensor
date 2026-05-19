@@ -134,17 +134,21 @@ static int launch_silu_mul(const __half* d_gate, const __half* d_up,
 
 extern "C" ERL_NIF_TERM
 nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
+  fprintf(stderr, "[SWIGLU-DBG] entered argc=%d\n", argc);
   if (argc != 5) return enif_make_badarg(env);
 
   /* --- Parse input shape --- */
   int shape[8];
   int ndim = 0;
-  if (!parse_shape(env, argv[1], shape, &ndim) || ndim < 2) {
+  int shape_ok = parse_shape(env, argv[1], shape, &ndim);
+  fprintf(stderr, "[SWIGLU-DBG] shape_ok=%d ndim=%d\n", shape_ok, ndim);
+  if (!shape_ok || ndim < 2) {
     return make_error(env, "bad_input_shape");
   }
   int in_features = shape[ndim - 1];
   int batch = 1;
   for (int i = 0; i < ndim - 1; ++i) batch *= shape[i];
+  fprintf(stderr, "[SWIGLU-DBG] batch=%d in_features=%d\n", batch, in_features);
   if (batch <= 0 || in_features <= 0) {
     return make_error(env, "bad_input_dims");
   }
@@ -152,6 +156,8 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   /* --- Parse input data (FP32 host) --- */
   unsigned data_len;
   double* input_doubles = list_to_doubles(env, argv[0], &data_len);
+  fprintf(stderr, "[SWIGLU-DBG] list_to_doubles len=%u (expect=%d), ptr_null=%d\n",
+          data_len, batch*in_features, input_doubles == NULL);
   if (!input_doubles || (int)data_len != batch * in_features) {
     if (input_doubles) free(input_doubles);
     return make_error(env, "input_data_shape_mismatch");
@@ -161,14 +167,18 @@ nt_linear_swiglu_fp8_nif(ErlNifEnv* env, int argc, const ERL_NIF_TERM argv[]) {
   if (!h_input_fp32) { free(input_doubles); return make_error(env, "oom_host"); }
   for (unsigned i = 0; i < data_len; ++i) h_input_fp32[i] = (float)input_doubles[i];
   free(input_doubles);
+  fprintf(stderr, "[SWIGLU-DBG] before get_packed_weight\n");
 
   /* --- Fetch packed weights --- */
   PackedWeight* gate_w = get_packed_weight(env, argv[2]);
   PackedWeight* up_w   = get_packed_weight(env, argv[3]);
+  fprintf(stderr, "[SWIGLU-DBG] gate_w=%p up_w=%p\n", (void*)gate_w, (void*)up_w);
   if (!gate_w || !up_w) {
     free(h_input_fp32);
     return make_error(env, "bad_packed_weight");
   }
+  fprintf(stderr, "[SWIGLU-DBG] gate.dtype=%d in_f=%d out_f=%d d_weight=%p\n",
+          gate_w->dtype, gate_w->in_features, gate_w->out_features, gate_w->d_weight);
   if (gate_w->dtype != PW_FP8 || up_w->dtype != PW_FP8) {
     free(h_input_fp32);
     return make_error(env, "weight_not_fp8");
