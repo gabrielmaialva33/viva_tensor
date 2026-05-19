@@ -87,19 +87,12 @@ run() ->
     io:format("After post_attention_layernorm  mean_abs=~p~n", [mean_abs(XNorm2)]),
 
     %% SwiGLU FFN: intermediate = silu(gate(x)) * up(x), then down.
-    %% Fused SwiGLU NIF currently can't resolve its packed_weight symbols at
-    %% runtime, so do gate + up + silu*mul + down manually in 3 separate
-    %% linear_fp8 calls. Slower but functionally identical.
-    XNorm2Fp16 = floats_to_fp16(XNorm2),
-    GateOut = time_stage("Linear Gate",
-        fun() -> linear_fp8(XNorm2Fp16, GatePacked, ?FFN) end),
-    UpOut   = time_stage("Linear Up",
-        fun() -> linear_fp8(XNorm2Fp16, UpPacked, ?FFN) end),
-    io:format("Gate out mean_abs=~p  Up out mean_abs=~p~n",
-              [mean_abs(GateOut), mean_abs(UpOut)]),
-
-    SwiGluInter = lists:zipwith(
-        fun(G, U) -> silu(G) * U end, GateOut, UpOut),
+    %% SwiGLU: fused gate*silu*up via the dedicated NIF (single call), then
+    %% the standard linear_fp8 for the down projection. Replaces the older
+    %% manual 3-linear workaround now that the SwiGLU NIF's symbol link
+    %% has been fixed.
+    SwiGluInter = time_stage("SwiGLU gate*silu*up (fused NIF)",
+        fun() -> linear_swiglu_intermediate(XNorm2, 1, ?HIDDEN, GatePacked, UpPacked, ?FFN) end),
     io:format("SwiGLU intermediate mean_abs=~p~n", [mean_abs(SwiGluInter)]),
 
     SwiGluInterFp16 = floats_to_fp16(SwiGluInter),
