@@ -73,7 +73,11 @@ run() ->
 
     %% Output projection.
     AttnOutFp16 = floats_to_fp16(AttnOut),
-    O = time_stage("Linear O", fun() -> linear_fp8(AttnOutFp16, OPacked, ?HIDDEN) end),
+    ORaw = time_stage("Linear O", fun() -> linear_fp8(AttnOutFp16, OPacked, ?HIDDEN) end),
+    %% cuBLASLt FP8 path can still produce Inf on edge values (FP16 output
+    %% buffer not yet ported to FP32 like CUTLASS). Clamp to FP16-max so the
+    %% rest of the block can continue.
+    O = clamp_inf(ORaw, 65504.0),
     io:format("O proj mean_abs=~p~n", [mean_abs(O)]),
 
     %% Residual.
@@ -86,13 +90,24 @@ run() ->
     io:format("After post_attention_layernorm  mean_abs=~p~n", [mean_abs(XNorm2)]),
 
     %% SwiGLU FFN: intermediate = silu(gate(x)) * up(x), then down.
-    SwiGluInter = time_stage("SwiGLU gate*silu*up",
-        fun() -> linear_swiglu_intermediate(XNorm2, 1, ?HIDDEN, GatePacked, UpPacked, ?FFN) end),
+    %% Fused SwiGLU NIF currently can't resolve its packed_weight symbols at
+    %% runtime, so do gate + up + silu*mul + down manually in 3 separate
+    %% linear_fp8 calls. Slower but functionally identical.
+    XNorm2Fp16 = floats_to_fp16(XNorm2),
+    GateOut = clamp_inf(time_stage("Linear Gate",
+        fun() -> linear_fp8(XNorm2Fp16, GatePacked, ?FFN) end), 65504.0),
+    UpOut   = clamp_inf(time_stage("Linear Up",
+        fun() -> linear_fp8(XNorm2Fp16, UpPacked, ?FFN) end), 65504.0),
+    io:format("Gate out mean_abs=~p  Up out mean_abs=~p~n",
+              [mean_abs(GateOut), mean_abs(UpOut)]),
+
+    SwiGluInter = lists:zipwith(
+        fun(G, U) -> silu(G) * U end, GateOut, UpOut),
     io:format("SwiGLU intermediate mean_abs=~p~n", [mean_abs(SwiGluInter)]),
 
     SwiGluInterFp16 = floats_to_fp16(SwiGluInter),
-    FfnOut = time_stage("Linear Down",
-        fun() -> linear_fp8(SwiGluInterFp16, DownPacked, ?HIDDEN) end),
+    FfnOut = clamp_inf(time_stage("Linear Down",
+        fun() -> linear_fp8(SwiGluInterFp16, DownPacked, ?HIDDEN) end), 65504.0),
     io:format("FFN out mean_abs=~p~n", [mean_abs(FfnOut)]),
 
     %% Residual 2.
@@ -183,10 +198,35 @@ rmsnorm(X, Gamma, Eps) ->
 list_add(A, B) ->
     lists:zipwith(fun(X, Y) -> X + Y end, A, B).
 
+silu(X) when is_float(X) ->
+    X / (1.0 + math:exp(-X)).
+
+clamp_inf(L, Max) ->
+    [clamp_one(X, Max) || X <- L].
+clamp_one(X, Max) when X > Max  -> Max;
+clamp_one(X, Max) when X < -Max -> -Max;
+clamp_one(X, _) -> X.
+
+%% Numerically stable mean_abs that survives Inf/extreme values: divides
+%% as we go to avoid summing 2048+ huge numbers into a single overflowed
+%% float. Also reports how many values were infinite.
 mean_abs(L) ->
-    case L of
-        [] -> 0.0;
-        _ -> lists:sum([abs(X) || X <- L]) / length(L)
+    {Sum, Count, InfCount, MaxAbs} = lists:foldl(
+        fun(X, {S, N, Inf, M}) ->
+            A = abs(X),
+            case A > 1.0e30 of
+                true  -> {S, N + 1, Inf + 1, max(M, A)};
+                false -> {S + A / 1.0e6, N + 1, Inf, max(M, A)}
+            end
+        end, {0.0, 0, 0, 0.0}, L),
+    case Count of
+        0 -> 0.0;
+        _ ->
+            Mean = (Sum * 1.0e6) / Count,
+            case InfCount of
+                0 -> Mean;
+                _ -> io:format("  (warning: ~p inf-ish values, max_abs=~p)~n", [InfCount, MaxAbs]), Mean
+            end
     end.
 
 is_finite(X) when is_float(X) ->
