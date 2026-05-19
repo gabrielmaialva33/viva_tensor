@@ -134,17 +134,30 @@ using GemmFP32AccOutF32 = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 extern "C" {
 
+/* Dequant FP8 col-major weight back to FP16. Supports both layouts:
+ *   block_size == 0  -> per-channel: scales[col]
+ *   block_size  > 0  -> per-block along K: scales[col * (K/block_size) + (row/block_size)]
+ */
 __global__ void fp8_colmajor_dequant_to_fp16_kernel(
     const cutlass::float_e4m3_t *src,
     const float *scales,
     cutlass::half_t *dst,
     int K,
-    int N) {
+    int N,
+    int block_size) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     int total = K * N;
     if (idx >= total) return;
     int col = idx / K;
-    float scale = scales ? scales[col] : 1.0f;
+    int row = idx - col * K;
+    float scale;
+    if (block_size <= 0) {
+        scale = scales ? scales[col] : 1.0f;
+    } else {
+        int num_blocks = K / block_size;
+        int block_idx = row / block_size;
+        scale = scales ? scales[col * num_blocks + block_idx] : 1.0f;
+    }
     dst[idx] = cutlass::half_t(static_cast<float>(src[idx]) * scale);
 }
 
@@ -153,6 +166,7 @@ int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
                                        void *d_fp16,
                                        int K,
                                        int N) {
+    /* Legacy per-channel entry — block_size = 0. */
     if (!d_fp8 || !d_fp16 || K <= 0 || N <= 0) return -10;
     int total = K * N;
     int threads = 256;
@@ -162,7 +176,31 @@ int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
         d_scales,
         static_cast<cutlass::half_t *>(d_fp16),
         K,
-        N);
+        N,
+        0);
+    cudaError_t err = cudaGetLastError();
+    return (err == cudaSuccess) ? 0 : -11;
+}
+
+/* Same but with per-block scales. block_size must divide K. */
+int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
+                                                const float *d_scales,
+                                                void *d_fp16,
+                                                int K,
+                                                int N,
+                                                int block_size) {
+    if (!d_fp8 || !d_fp16 || K <= 0 || N <= 0) return -10;
+    if (block_size <= 0 || (K % block_size) != 0) return -12;
+    int total = K * N;
+    int threads = 256;
+    int blocks = (total + threads - 1) / threads;
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads>>>(
+        static_cast<const cutlass::float_e4m3_t *>(d_fp8),
+        d_scales,
+        static_cast<cutlass::half_t *>(d_fp16),
+        K,
+        N,
+        block_size);
     cudaError_t err = cudaGetLastError();
     return (err == cudaSuccess) ? 0 : -11;
 }
