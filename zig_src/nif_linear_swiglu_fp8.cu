@@ -67,20 +67,17 @@ static inline uint8_t swiglu_float_to_fp8_e4m3(float val) {
   int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
   uint32_t f32_mant = bits & 0x7FFFFF;
 
-  /* Hard overflow: f32_exp >= 9 means |x| >= 512, definitely beyond
-   * E4M3 max finite 448 → saturate.
-   * Underflow: f32_exp < -9 means |x| < 2^-9, below the smallest E4M3
-   * subnormal → flush to zero. */
+  /* Hard overflow: |x| >= 512 (f32_exp >= 9) is well beyond the E4M3
+   * max finite 448 → saturate. Underflow: |x| < 2^-9 → flush to zero.
+   * Values with f32_exp == 8 (i.e. |x| in [256, 512)) are NOT auto-
+   * saturated — E4M3 supports mantissa 0..6 at fp8_exp=15, encoding
+   * 256, 288, 320, 352, 384, 416, 448. */
   if (f32_exp >= 9) return (uint8_t)((sign << 7) | 0x7E);
   if (f32_exp < -9) return (uint8_t)(sign << 7);
 
   int32_t e_exp;
   uint32_t e_mant;
   if (f32_exp >= -6) {
-    /* Normal range covers fp8_exp 1..15 (i.e. f32_exp -6..8). At
-     * f32_exp=8 the mantissa selects 256, 288, ..., 448. Round to
-     * nearest even, then saturate to 0x7E (mantissa=6 → 448) if the
-     * rounded mantissa exceeds 6 — i.e. true |x| in [464, 512). */
     e_exp = f32_exp + 7;
     uint32_t round_bit = (f32_mant >> 19) & 0x1;
     uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
@@ -92,7 +89,10 @@ static inline uint8_t swiglu_float_to_fp8_e4m3(float val) {
         e_exp += 1;
       }
     }
-    if (e_exp >= 15 && e_mant > 6) {
+    /* At fp8_exp=15 (f32_exp=8), valid mantissas are 0..6. Mantissa 7
+     * at exp 15 is the NaN code (0x7F). If rounding pushes us into
+     * that slot, saturate to 0x7E (= 448, the max finite). */
+    if (e_exp == 15 && e_mant == 7) {
       return (uint8_t)((sign << 7) | 0x7E);
     }
     if (e_exp > 15) return (uint8_t)((sign << 7) | 0x7E);
