@@ -353,8 +353,11 @@ ERL_NIF_TERM make_ok_nil(ErlNifEnv *env) {
 }
 
 ERL_NIF_TERM make_error(ErlNifEnv *env, const char *reason) {
+  ERL_NIF_TERM reason_bin;
+  unsigned char *dst = enif_make_new_binary(env, strlen(reason), &reason_bin);
+  memcpy(dst, reason, strlen(reason));
   return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                          enif_make_atom(env, reason));
+                          reason_bin);
 }
 
 double get_number(ErlNifEnv *env, ERL_NIF_TERM term, int *ok) {

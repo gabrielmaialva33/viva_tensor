@@ -40,6 +40,7 @@ import gleam/option.{None}
 import gleeunit
 import gleeunit/should
 import viva_tensor as t
+import viva_tensor/core/error as tensor_error
 
 pub fn main() {
   gleeunit.main()
@@ -277,7 +278,7 @@ pub fn linear_int8_sparse_numerical_within_band_test() {
 
 pub fn linear_int4_sparse_numerical_within_band_test() {
   // INT4 sparse follows CUTLASS m16n8k128 sparse MMA metadata tiles.
-  let fixture = make_fixture(8, 128, 16, 99)
+  let fixture = make_fixture(128, 256, 256, 99)
   case
     rescue_call_int4(fn() { t.prepack_int4_sparse_24_weight(fixture.weight) })
   {
@@ -285,11 +286,14 @@ pub fn linear_int4_sparse_numerical_within_band_test() {
     CallOk(Error(_)) -> "prepack_int4_failed" |> should.equal("ok")
     CallOk(Ok(packed)) -> {
       case t.linear_int4_sparse(fixture.input, packed, None) {
-        Error(_) -> "linear_int4_failed" |> should.equal("ok")
+        Error(reason) -> tensor_error.to_string(reason) |> should.equal("ok")
         Ok(quant_out) -> {
           let err =
             relative_l2_error(t.to_list(fixture.ref_out), t.to_list(quant_out))
-          should.be_true(err <. int4_sparse_l2_tolerance)
+          case err <. int4_sparse_l2_tolerance {
+            True -> should.be_true(True)
+            False -> err |> should.equal(0.0)
+          }
         }
       }
     }

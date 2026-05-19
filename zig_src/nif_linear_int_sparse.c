@@ -186,6 +186,58 @@ static int8_t* pack_int4_nibbles(const int8_t* src, int B, int K) {
     }
     return dst;
 }
+
+static int parse_bias_arg_fp16(ErlNifEnv* env, ERL_NIF_TERM term,
+                               int out_features, ErlNifBinary* bias_bin,
+                               uint16_t** owned_bias, int* has_bias) {
+    *owned_bias = NULL;
+    *has_bias = 0;
+
+    if (enif_is_identical(term, enif_make_atom(env, "nil")) ||
+        enif_is_identical(term, enif_make_atom(env, "bias_nil"))) {
+        return 0;
+    }
+
+    if (enif_inspect_binary(env, term, bias_bin)) {
+        if (bias_bin->size != (size_t)out_features * sizeof(uint16_t))
+            return -1;
+        *has_bias = 1;
+        return 0;
+    }
+
+    int arity = 0;
+    const ERL_NIF_TERM* tuple = NULL;
+    if (enif_get_tuple(env, term, &arity, &tuple) && arity == 2 &&
+        enif_is_identical(tuple[0], enif_make_atom(env, "bias_list"))) {
+        unsigned len = 0;
+        if (!enif_get_list_length(env, tuple[1], &len) ||
+            len != (unsigned)out_features) {
+            return -1;
+        }
+
+        uint16_t* tmp = (uint16_t*)malloc((size_t)out_features * sizeof(uint16_t));
+        if (!tmp) return -2;
+
+        ERL_NIF_TERM list = tuple[1];
+        for (int i = 0; i < out_features; ++i) {
+            ERL_NIF_TERM head, tail;
+            double v = 0.0;
+            if (!enif_get_list_cell(env, list, &head, &tail) ||
+                !enif_get_double(env, head, &v)) {
+                free(tmp);
+                return -1;
+            }
+            tmp[i] = float_to_half((float)v);
+            list = tail;
+        }
+
+        *owned_bias = tmp;
+        *has_bias = 1;
+        return 0;
+    }
+
+    return -1;
+}
 #endif
 
 /* =========================================================================
@@ -209,16 +261,13 @@ ERL_NIF_TERM nt_linear_int8_sparse(ErlNifEnv* env, int argc,
     if (w->dtype != PW_INT8_SPARSE)
         return make_error(env, "wrong_packed_weight_dtype");
 
-    /* Bias is optional: nil or a binary. */
     int has_bias = 0;
     ErlNifBinary bias_bin;
-    if (!enif_is_identical(argv[2], enif_make_atom(env, "nil"))) {
-        if (!enif_inspect_binary(env, argv[2], &bias_bin))
-            return make_error(env, "bias_not_binary_or_nil");
-        if (bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
-            return make_error(env, "bias_size_mismatch");
-        has_bias = 1;
-    }
+    uint16_t* h_bias_owned = NULL;
+    int bias_rc = parse_bias_arg_fp16(env, argv[2], w->out_features,
+                                      &bias_bin, &h_bias_owned, &has_bias);
+    if (bias_rc == -2) return make_error(env, "host_alloc_failed");
+    if (bias_rc != 0) return make_error(env, "bias_invalid");
 
     int in_f = w->in_features;
     int out_f = w->out_features;
@@ -230,11 +279,16 @@ ERL_NIF_TERM nt_linear_int8_sparse(ErlNifEnv* env, int argc,
     LinearCtx ctx = {0};
     ctx.B = B; ctx.in_f = in_f; ctx.out_f = out_f;
     ctx.h_input_fp16 = (const uint16_t*)input_bin.data;
-    ctx.h_bias_fp16  = has_bias ? (const uint16_t*)bias_bin.data : NULL;
+    ctx.h_bias_fp16  = has_bias
+        ? (h_bias_owned ? h_bias_owned : (const uint16_t*)bias_bin.data)
+        : NULL;
     ctx.weight = w;
 
     if (quantize_input_int8(&ctx, 127) != 0)
+    {
+        if (h_bias_owned) free(h_bias_owned);
         return make_error(env, "host_alloc_failed");
+    }
 
     /* Upload quantized input to device (col-major B = [in_f, B]). */
     int8_t* d_B = NULL;
@@ -357,6 +411,7 @@ ERL_NIF_TERM nt_linear_int8_sparse(ErlNifEnv* env, int argc,
     cudaFree(d_B);
     cudaFree(d_C);
     free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+    if (h_bias_owned) free(h_bias_owned);
 
     return enif_make_tuple2(env,
         enif_make_atom(env, "ok"),
@@ -364,6 +419,7 @@ ERL_NIF_TERM nt_linear_int8_sparse(ErlNifEnv* env, int argc,
 
 fail_run_err:
     free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+    if (h_bias_owned) free(h_bias_owned);
     if (workspace) cudaFree(workspace);
     if (d_B) cudaFree(d_B);
     if (d_C) cudaFree(d_C);
@@ -371,6 +427,7 @@ fail_run_err:
 
 fail_alloc:
     free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+    if (h_bias_owned) free(h_bias_owned);
     if (d_B_colmajor) free(d_B_colmajor);
     if (workspace) cudaFree(workspace);
     if (d_B) cudaFree(d_B);
@@ -402,13 +459,11 @@ ERL_NIF_TERM nt_linear_int4_sparse(ErlNifEnv* env, int argc,
 
     int has_bias = 0;
     ErlNifBinary bias_bin;
-    if (!enif_is_identical(argv[2], enif_make_atom(env, "nil"))) {
-        if (!enif_inspect_binary(env, argv[2], &bias_bin))
-            return make_error(env, "bias_not_binary_or_nil");
-        if (bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
-            return make_error(env, "bias_size_mismatch");
-        has_bias = 1;
-    }
+    uint16_t* h_bias_owned = NULL;
+    int bias_rc = parse_bias_arg_fp16(env, argv[2], w->out_features,
+                                      &bias_bin, &h_bias_owned, &has_bias);
+    if (bias_rc == -2) return make_error(env, "host_alloc_failed");
+    if (bias_rc != 0) return make_error(env, "bias_invalid");
 
     int in_f = w->in_features;
     int out_f = w->out_features;
@@ -420,16 +475,21 @@ ERL_NIF_TERM nt_linear_int4_sparse(ErlNifEnv* env, int argc,
     LinearCtx ctx = {0};
     ctx.B = B; ctx.in_f = in_f; ctx.out_f = out_f;
     ctx.h_input_fp16 = (const uint16_t*)input_bin.data;
-    ctx.h_bias_fp16  = has_bias ? (const uint16_t*)bias_bin.data : NULL;
+    ctx.h_bias_fp16  = has_bias
+        ? (h_bias_owned ? h_bias_owned : (const uint16_t*)bias_bin.data)
+        : NULL;
     ctx.weight = w;
 
     /* Quantize input to INT4 (stored 1 per byte for now), then pack nibbles. */
-    if (quantize_input_int8(&ctx, 7) != 0)
+    if (quantize_input_int8(&ctx, 7) != 0) {
+        if (h_bias_owned) free(h_bias_owned);
         return make_error(env, "host_alloc_failed");
+    }
 
     int8_t* h_packed_input = pack_int4_nibbles(ctx.h_input_q, B, in_f);
     if (!h_packed_input) {
         free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+        if (h_bias_owned) free(h_bias_owned);
         return make_error(env, "host_alloc_failed");
     }
     size_t packed_input_bytes = (size_t)B * (size_t)in_f / 2;
@@ -445,6 +505,7 @@ ERL_NIF_TERM nt_linear_int4_sparse(ErlNifEnv* env, int argc,
     if (cerr != cudaSuccess) {
         free(h_packed_input);
         free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+        if (h_bias_owned) free(h_bias_owned);
         return make_error(env, "cuda_alloc_failed");
     }
     cerr = cudaMemcpy(d_B, h_packed_input, packed_input_bytes, cudaMemcpyHostToDevice);
@@ -474,6 +535,7 @@ ERL_NIF_TERM nt_linear_int4_sparse(ErlNifEnv* env, int argc,
         if (workspace) cudaFree(workspace);
         cudaFree(d_B); cudaFree(d_C);
         free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+        if (h_bias_owned) free(h_bias_owned);
         return make_error(env, err);
     }
 
@@ -510,6 +572,7 @@ ERL_NIF_TERM nt_linear_int4_sparse(ErlNifEnv* env, int argc,
     if (workspace) cudaFree(workspace);
     cudaFree(d_B); cudaFree(d_C);
     free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+    if (h_bias_owned) free(h_bias_owned);
 
     return enif_make_tuple2(env,
         enif_make_atom(env, "ok"),
@@ -520,6 +583,7 @@ fail4_alloc:
     if (d_B) cudaFree(d_B);
     if (d_C) cudaFree(d_C);
     free(ctx.h_input_fp32); free(ctx.h_input_q); free(ctx.h_token_scales);
+    if (h_bias_owned) free(h_bias_owned);
     return make_error(env, "cuda_alloc_failed");
 #endif
 }
