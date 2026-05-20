@@ -729,6 +729,39 @@ static int all_decode_weights_captureable(DecodeLayerParams *layers, int layer_c
   return 1;
 }
 
+static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedWeight *gate,
+                                       PackedWeight *qkv, PackedWeight *gate_up) {
+  if (!q || !k || !gate) return -10;
+  int hidden = q->in_features;
+  int kv_dim = k->out_features;
+  int ffn = gate->out_features;
+  size_t hidden32_bytes = (size_t)hidden * sizeof(float);
+  size_t kv16_bytes = (size_t)kv_dim * sizeof(uint16_t);
+  size_t kv32_bytes = (size_t)kv_dim * sizeof(float);
+  size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
+  size_t ffn32_bytes = (size_t)ffn * sizeof(float);
+  BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
+                      &b_attn, &b_attn16, &b_down, &b_hout16};
+  for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
+    if (ensure_block_buf(bufs[i], hidden32_bytes) != 0) return -20;
+  }
+  if (ensure_block_buf(&b_k, kv32_bytes) != 0 ||
+      ensure_block_buf(&b_v, kv32_bytes) != 0 ||
+      ensure_block_buf(&b_k_append, kv16_bytes) != 0 ||
+      ensure_block_buf(&b_v_append, kv16_bytes) != 0) return -21;
+  if (ensure_block_buf(&b_gate, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_up, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_sw, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_sw16, ffn16_bytes) != 0) return -22;
+  if (qkv && validate_fp8_weight(qkv) &&
+      ensure_block_buf(&b_qkv, (size_t)(hidden + kv_dim + kv_dim) * sizeof(float)) != 0)
+    return -23;
+  if (gate_up && validate_fp8_weight(gate_up) &&
+      ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
+    return -24;
+  return 0;
+}
+
 static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, int pos) {
   if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) || !validate_fp8_weight(l->v) ||
       !validate_fp8_weight(l->o) || !validate_fp8_weight(l->gate) ||
@@ -1216,6 +1249,8 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (rc != 0) return make_block_error(env, "upload_decode_norm1", rc);
     rc = ensure_decode_const(&g_decode_norm2[layer_count], &norm2_bin);
     if (rc != 0) return make_block_error(env, "upload_decode_norm2", rc);
+    rc = ensure_decode_layer_scratch(q, k, gate, qkv, gate_up);
+    if (rc != 0) return make_block_error(env, "decode_scratch", rc);
 
     decode_layers[layer_count].q = q;
     decode_layers[layer_count].k = k;
@@ -1302,6 +1337,7 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
           if (rc != 0 || err != cudaSuccess || !graph) {
             if (graph) cudaGraphDestroy(graph);
             for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+            (void)cudaGetLastError();
             g_decode_graph_disabled = 1;
             g_decode_graph_failures++;
             g_decode_last_capture_error = err;
@@ -1313,6 +1349,7 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
             if (err != cudaSuccess || !exec) {
               cudaGraphDestroy(graph);
               for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+              (void)cudaGetLastError();
               g_decode_graph_disabled = 1;
               g_decode_graph_failures++;
               g_decode_last_capture_error = err;
