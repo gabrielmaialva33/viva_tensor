@@ -721,6 +721,82 @@ static uintptr_t mix_ptr(uintptr_t h, const void *p) {
   return h;
 }
 
+static void keep_weight(PackedWeight *w) {
+  if (w) enif_keep_resource(w);
+}
+
+static void release_weight(PackedWeight *w) {
+  if (w) enif_release_resource(w);
+}
+
+static void release_model_layers(ModelLayers *ml) {
+  if (!ml) return;
+  for (int i = 0; i < ml->layer_count; ++i) {
+    DecodeLayerParams *l = &ml->layers[i];
+    release_weight(l->q);
+    release_weight(l->k);
+    release_weight(l->v);
+    release_weight(l->o);
+    release_weight(l->gate);
+    release_weight(l->up);
+    release_weight(l->down);
+    release_weight(l->qkv);
+    release_weight(l->gate_up);
+    if (l->cache) enif_release_resource(l->cache);
+    if (l->norm1) cudaFree(l->norm1);
+    if (l->norm2) cudaFree(l->norm2);
+  }
+  memset(ml, 0, sizeof(*ml));
+}
+
+static int upload_model_norm(const ErlNifBinary *bin, float **out) {
+  float *ptr = NULL;
+  if (cudaMalloc(&ptr, bin->size) != cudaSuccess) return -1;
+  if (cudaMemcpy(ptr, bin->data, bin->size, cudaMemcpyHostToDevice) != cudaSuccess) {
+    cudaFree(ptr);
+    return -2;
+  }
+  *out = ptr;
+  return 0;
+}
+
+static int validate_decode_layer_shapes(DecodeLayerParams *l) {
+  if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) ||
+      !validate_fp8_weight(l->v) || !validate_fp8_weight(l->o) ||
+      !validate_fp8_weight(l->gate) || !validate_fp8_weight(l->up) ||
+      !validate_fp8_weight(l->down)) {
+    return -10;
+  }
+  int hidden = l->q->in_features;
+  int kv_dim = l->k->out_features;
+  int ffn = l->gate->out_features;
+  if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
+      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
+      l->q->out_features != hidden || l->k->in_features != hidden ||
+      l->v->in_features != hidden || l->v->out_features != kv_dim ||
+      l->o->in_features != hidden || l->o->out_features != hidden ||
+      l->gate->in_features != hidden || l->up->in_features != hidden ||
+      l->up->out_features != ffn || l->down->in_features != ffn ||
+      l->down->out_features != hidden) {
+    return -11;
+  }
+  if (l->qkv && validate_fp8_weight(l->qkv) &&
+      (l->qkv->in_features != hidden ||
+       l->qkv->out_features != hidden + kv_dim + kv_dim)) {
+    l->qkv = NULL;
+  }
+  if (l->gate_up && validate_fp8_weight(l->gate_up) &&
+      (l->gate_up->in_features != hidden ||
+       l->gate_up->out_features != ffn + ffn)) {
+    l->gate_up = NULL;
+  }
+  if (!l->cache || l->cache->kv_dim != kv_dim || l->cache->len < 0 ||
+      l->cache->len >= l->cache->max_seq) {
+    return -13;
+  }
+  return 0;
+}
+
 static int ensure_decode_const(DecodeConstBuf *dst, const ErlNifBinary *src) {
   if (ensure_block_buf(&dst->buf, src->size) != 0) return -1;
   if (src->size == 0) return 0;
