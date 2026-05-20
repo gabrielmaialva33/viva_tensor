@@ -5,9 +5,18 @@ Static landing page published to GitHub Pages at
 
 ## Structure
 
-- `index.html` — single-page landing with inline `<style>`. No external CSS/JS.
-- Links to `viva_tensor/index.html` (generated HexDocs HTML), `hexdocs.pm`,
-  GitHub, the API guide and the paper.
+- `index.html` — English single-page landing (default).
+- `pt-br.html` — Portuguese (Brazilian) translation.
+- `zh-cn.html` — Simplified Chinese translation.
+
+All three share the same inline `<style>` block. No external CSS/JS. Each page
+carries a language switcher chip in the top-right corner.
+
+Links target:
+- generated HexDocs (`viva_tensor/index.html`)
+- published `hexdocs.pm/viva_tensor`
+- GitHub repository, LLM API guide and paper
+- `CHANGELOG.md`
 
 ## How it is built
 
@@ -16,11 +25,16 @@ The `.github/workflows/docs.yml` workflow assembles a `_site/` directory:
 
 ```
 _site/
-├── index.html              # copied from docs/landing/index.html
+├── index.html              # copied from docs/landing/index.html (EN)
+├── pt-br.html              # copied from docs/landing/pt-br.html
+├── zh-cn.html              # copied from docs/landing/zh-cn.html
+├── README.md               # copied (not served)
 └── viva_tensor/            # copied from build/dev/docs/viva_tensor/
     ├── index.html          # module overview
-    ├── api.html            # docs/en/api.md (via gleam.toml)
-    ├── paper.html          # docs/en/paper.md
+    ├── llm.html            # docs/en/api/llm.md (via gleam.toml)
+    ├── inference.html
+    ├── tensor.html
+    ├── paper.html
     ├── stability.html
     ├── project-structure.html
     ├── ffi-architecture.html
@@ -48,13 +62,18 @@ To preview locally:
 ```bash
 gleam docs build
 mkdir -p _site/viva_tensor
-cp docs/landing/index.html _site/index.html
+cp -R docs/landing/. _site/
 cp -R build/dev/docs/viva_tensor/. _site/viva_tensor/
 python3 -m http.server -d _site 8000
 ```
 
-Open <http://localhost:8000/> to inspect the landing page and follow the
-"HexDocs (local)" card into the generated module reference.
+Open <http://localhost:8000/> (EN), <http://localhost:8000/pt-br.html>
+(PT-BR), or <http://localhost:8000/zh-cn.html> (ZH-CN) to inspect and
+follow the "HexDocs (local)" card into the generated module reference.
+
+Adding a new locale: copy `index.html` to `<locale>.html`, swap the
+`<html lang="...">` attribute, translate visible text, and add the locale
+chip to the `.lang-switcher` block in every page.
 
 ## Repository settings
 
