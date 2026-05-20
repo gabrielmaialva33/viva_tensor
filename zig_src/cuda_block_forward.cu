@@ -69,13 +69,13 @@ __global__ void silu_mul_fp32_kernel(const float *gate, const float *up, float *
   }
 }
 
-__global__ void gqa_attn_single_token_kernel(const float *q, const float *new_k,
-                                             const float *new_v,
-                                             const uint16_t *k_cache,
-                                             const uint16_t *v_cache,
-                                             float *out, int past_len,
-                                             int num_heads, int num_kv_heads,
-                                             int head_dim) {
+__global__ void gqa_attn_naive_single_token_kernel(const float *q, const float *new_k,
+                                                   const float *new_v,
+                                                   const uint16_t *k_cache,
+                                                   const uint16_t *v_cache,
+                                                   float *out, int past_len,
+                                                   int num_heads, int num_kv_heads,
+                                                   int head_dim) {
   int qh = blockIdx.x;
   if (qh >= num_heads || threadIdx.x != 0) return;
 
@@ -130,6 +130,74 @@ __global__ void gqa_attn_single_token_kernel(const float *q, const float *new_k,
   }
 }
 
+__device__ __forceinline__ float warp_sum(float v) {
+  for (int offset = 16; offset > 0; offset >>= 1) {
+    v += __shfl_down_sync(0xffffffffu, v, offset);
+  }
+  return v;
+}
+
+__global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *new_k,
+                                                   const float *new_v,
+                                                   const uint16_t *k_cache,
+                                                   const uint16_t *v_cache,
+                                                   float *out, int past_len,
+                                                   int num_heads, int num_kv_heads,
+                                                   int head_dim) {
+  int qh = blockIdx.x;
+  int lane = threadIdx.x & 31;
+  if (qh >= num_heads || threadIdx.x >= 32 || head_dim != 64) return;
+
+  int q_per_kv = num_heads / num_kv_heads;
+  int kvh = qh / q_per_kv;
+  int seq_len = past_len + 1;
+  int d0 = lane << 1;
+  int d1 = d0 + 1;
+  int q_base = qh * head_dim;
+  int kv_base = kvh * head_dim;
+  float q0 = q[q_base + d0];
+  float q1 = q[q_base + d1];
+  float scale = rsqrtf((float)head_dim);
+
+  float m = -INFINITY;
+  float l = 0.0f;
+  float acc0 = 0.0f;
+  float acc1 = 0.0f;
+
+  for (int t = 0; t < seq_len; ++t) {
+    float k0, k1, v0, v1;
+    if (t < past_len) {
+      size_t pair_idx = (((size_t)t * num_kv_heads + kvh) * head_dim + d0) >> 1;
+      __half2 k2 = reinterpret_cast<const __half2 *>(k_cache)[pair_idx];
+      __half2 v2 = reinterpret_cast<const __half2 *>(v_cache)[pair_idx];
+      float2 kf = __half22float2(k2);
+      float2 vf = __half22float2(v2);
+      k0 = kf.x; k1 = kf.y;
+      v0 = vf.x; v1 = vf.y;
+    } else {
+      k0 = new_k[kv_base + d0];
+      k1 = new_k[kv_base + d1];
+      v0 = new_v[kv_base + d0];
+      v1 = new_v[kv_base + d1];
+    }
+
+    float dot = warp_sum(q0 * k0 + q1 * k1);
+    dot = __shfl_sync(0xffffffffu, dot, 0);
+    float score = dot * scale;
+    float new_m = fmaxf(m, score);
+    float alpha = expf(m - new_m);
+    float beta = expf(score - new_m);
+    acc0 = acc0 * alpha + beta * v0;
+    acc1 = acc1 * alpha + beta * v1;
+    l = l * alpha + beta;
+    m = new_m;
+  }
+
+  float inv_l = 1.0f / l;
+  out[q_base + d0] = acc0 * inv_l;
+  out[q_base + d1] = acc1 * inv_l;
+}
+
 int vt_fp16_to_fp32_cast(const void *in, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
@@ -177,9 +245,17 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
                              int head_dim) {
   int seq_len = past_len + 1;
   size_t shared = (size_t)seq_len * sizeof(float);
-  gqa_attn_single_token_kernel<<<num_heads, 1, shared>>>(
-      q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
-      past_len, num_heads, num_kv_heads, head_dim);
+  if (head_dim == 64) {
+    (void)seq_len;
+    (void)shared;
+    gqa_attn_flash_single_token_kernel<<<num_heads, 32>>>(
+        q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
+        past_len, num_heads, num_kv_heads, head_dim);
+  } else {
+    gqa_attn_naive_single_token_kernel<<<num_heads, 1, shared>>>(
+        q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
+        past_len, num_heads, num_kv_heads, head_dim);
+  }
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
