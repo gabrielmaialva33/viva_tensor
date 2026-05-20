@@ -717,18 +717,19 @@ run_generate_fused(NumLayers, Prompt, MaxNew, SampOpts, BlockSize) ->
     io:format("Prompt: ~ts~n", [Prompt]),
     io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
 
-    EmptyCaches = [{<<>>, <<>>} || _ <- lists:seq(1, NumLayers)],
+    EmptyCaches = [begin {ok, C} = viva_tensor_zig:nt_kv_cache_new(2048, ?KV_DIM), C end
+                   || _ <- lists:seq(1, NumLayers)],
     TPrompt = ms(),
     {LastHidden, Caches} = lists:foldl(
         fun({Pos, TokenId}, {_, CL}) ->
             HiddenIn = floats_to_fp16(embed_row(EmbedTbl, TokenId)),
             lists:foldl(
                 fun(LayerIdx, {H, C}) ->
-                    {KC, VC} = lists:nth(LayerIdx + 1, C),
-                    {HOut, KC2, VC2} = forward_block_fused(
+                    KC = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2} = forward_block_fused(
                         H, lists:nth(LayerIdx + 1, Layers),
-                        Pos, RopeFreqs, KC, VC),
-                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                        Pos, RopeFreqs, KC, <<>>),
+                    {HOut, lists_replace_nth(LayerIdx + 1, KC2, C)}
                 end,
                 {HiddenIn, CL},
                 lists:seq(0, NumLayers - 1))
@@ -776,11 +777,11 @@ decode_loop_fused(HiddenBin, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
             NextHidden = floats_to_fp16(embed_row(EmbedTbl, NextTok)),
             {HiddenOut, NewCaches} = lists:foldl(
                 fun(LayerIdx, {H, C}) ->
-                    {KC, VC} = lists:nth(LayerIdx + 1, C),
-                    {HOut, KC2, VC2} = forward_block_fused(
+                    KC = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2} = forward_block_fused(
                         H, lists:nth(LayerIdx + 1, Layers),
-                        Pos, RopeFreqs, KC, VC),
-                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                        Pos, RopeFreqs, KC, <<>>),
+                    {HOut, lists_replace_nth(LayerIdx + 1, KC2, C)}
                 end,
                 {NextHidden, Caches},
                 lists:seq(0, NumLayers - 1)),
@@ -797,6 +798,8 @@ forward_block_fused(HiddenFp16, Layer, Pos, RopeFreqs, KCache, VCache) ->
     case viva_tensor_zig:nt_forward_block_w8a16(
              HiddenFp16, Q, K, V, O, G, U, D,
              N1, N2, Pos, RopeFreqs, KCache, VCache) of
+        {ok, {HiddenOut, <<>>, <<>>}} ->
+            {HiddenOut, KCache};
         {ok, {HiddenOut, KAppend, VAppend}} ->
             {HiddenOut, <<KCache/binary, KAppend/binary>>,
              <<VCache/binary, VAppend/binary>>};
