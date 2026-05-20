@@ -224,9 +224,23 @@ __device__ __forceinline__ float fp8_e4m3_to_float(uint8_t x) {
   return bits.f;
 }
 
+__device__ __forceinline__ uint32_t uint4_lane(const uint4 v, int idx) {
+  return idx == 0 ? v.x : (idx == 1 ? v.y : (idx == 2 ? v.z : v.w));
+}
+
+__device__ __forceinline__ uint8_t uint4_byte(const uint4 v, int idx) {
+  uint32_t word = uint4_lane(v, idx >> 2);
+  return (uint8_t)((word >> ((idx & 3) << 3)) & 0xffu);
+}
+
+__device__ __forceinline__ uint16_t uint4_half_bits(const uint4 v, int idx) {
+  uint32_t word = uint4_lane(v, idx >> 1);
+  return (uint16_t)((word >> ((idx & 1) << 4)) & 0xffffu);
+}
+
 __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
-                                             const float *scales,
-                                             const uint16_t *input,
+                                              const float *scales,
+                                              const uint16_t *input,
                                              float *out,
                                              int in_features,
                                              int num_blocks) {
@@ -234,17 +248,20 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
   int lane = threadIdx.x & 31;
   const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
   const float *s_row = scales + (size_t)out_col * (size_t)num_blocks;
-  const __half *x = reinterpret_cast<const __half *>(input);
-
   float acc = 0.0f;
   for (int b = lane; b < num_blocks; b += 32) {
     int base = b * 16;
     float scale = s_row[b];
+    uint4 w_vec = *reinterpret_cast<const uint4 *>(w_row + base);
+    const uint4 *x_vec = reinterpret_cast<const uint4 *>(input + base);
+    uint4 x_lo = x_vec[0];
+    uint4 x_hi = x_vec[1];
     float block_acc = 0.0f;
 #pragma unroll
     for (int j = 0; j < 16; ++j) {
-      float wv = fp8_e4m3_to_float(w_row[base + j]);
-      float xv = __half2float(x[base + j]);
+      float wv = fp8_e4m3_to_float(uint4_byte(w_vec, j));
+      uint16_t xb = j < 8 ? uint4_half_bits(x_lo, j) : uint4_half_bits(x_hi, j - 8);
+      float xv = __half2float(__ushort_as_half(xb));
       block_acc = fmaf(wv, xv, block_acc);
     }
     acc = fmaf(block_acc, scale, acc);
