@@ -97,6 +97,13 @@ build_state(Json) ->
     %% Build byte-fallback table: byte N -> id of "<0xNN>".
     ByteIds = build_byte_table(VocabMap),
 
+    %% Detect byte-level BPE (GPT-2/Llama-3 style: vocab contains 'Ġ' marker).
+    ByteLevel = detect_byte_level(VocabMap),
+    ByteDecoder = case ByteLevel of
+        true  -> build_byte_decoder();
+        false -> #{}
+    end,
+
     {ok, #{
         vocab => VocabMap,
         id_to_token => IdToToken,
@@ -104,8 +111,37 @@ build_state(Json) ->
         bos => Bos,
         eos => Eos,
         unk => Unk,
-        byte_ids => ByteIds
+        byte_ids => ByteIds,
+        byte_level => ByteLevel,
+        byte_decoder => ByteDecoder
     }}.
+
+%% Detect if vocab uses byte-level BPE by checking for the Ġ marker (U+0120).
+detect_byte_level(VocabMap) ->
+    Iter = maps:iterator(VocabMap),
+    detect_byte_level_loop(maps:next(Iter)).
+
+detect_byte_level_loop(none) -> false;
+detect_byte_level_loop({Tok, _Id, NextIter}) ->
+    case binary:match(Tok, <<"Ġ"/utf8>>) of
+        nomatch -> detect_byte_level_loop(maps:next(NextIter));
+        _ -> true
+    end.
+
+%% Build GPT-2 style byte-level decoder map: unicode codepoint -> byte (0..255).
+%% Printable bytes [33-126, 161-172, 174-255] map to themselves.
+%% Non-printable bytes get codepoints starting at 256.
+build_byte_decoder() ->
+    Printable = lists:seq(33, 126) ++ lists:seq(161, 172) ++ lists:seq(174, 255),
+    PrintableSet = sets:from_list(Printable),
+    PrintableMap = maps:from_list([{B, B} || B <- Printable]),
+    NonPrintable = [B || B <- lists:seq(0, 255), not sets:is_element(B, PrintableSet)],
+    {_, NonPrintableMap} = lists:foldl(
+        fun(B, {N, Acc}) -> {N + 1, maps:put(256 + N, B, Acc)} end,
+        {0, #{}},
+        NonPrintable
+    ),
+    maps:merge(PrintableMap, NonPrintableMap).
 
 find_special([], _Tok, Default) -> Default;
 find_special([H | T], Tok, Default) ->
@@ -250,16 +286,25 @@ decode(State, Ids) ->
     IdToToken = maps:get(id_to_token, State),
     %% Convert ids -> token binaries, dropping unknown ids silently.
     Tokens = [maps:get(Id, IdToToken, <<>>) || Id <- Ids],
-    %% Fuse byte-fallback runs of "<0xNN>" tokens into their raw bytes,
-    %% then concatenate everything.
-    Joined = fuse_tokens(Tokens, []),
-    %% Replace ▁ with space.
-    Spaced = binary:replace(Joined, <<"▁"/utf8>>, <<" ">>, [global]),
-    %% Strip(start=1): drop a single leading space if present.
-    case Spaced of
-        <<$ , Rest/binary>> -> Rest;
-        _ -> Spaced
+    case maps:get(byte_level, State, false) of
+        true ->
+            %% Byte-level BPE (GPT-2/Llama-3): concat tokens then map each
+            %% unicode codepoint back to its raw byte via byte_decoder.
+            Joined = iolist_to_binary(Tokens),
+            ByteDecoder = maps:get(byte_decoder, State),
+            byte_level_decode(Joined, ByteDecoder);
+        false ->
+            %% SentencePiece + byte-fallback (TinyLlama style).
+            Joined = fuse_tokens(Tokens, []),
+            Spaced = binary:replace(Joined, <<"▁"/utf8>>, <<" ">>, [global]),
+            case Spaced of
+                <<$ , Rest/binary>> -> Rest;
+                _ -> Spaced
+            end
     end.
+
+byte_level_decode(Joined, ByteDecoder) ->
+    << <<(maps:get(CP, ByteDecoder, $?))>> || <<CP/utf8>> <= Joined >>.
 
 %% Collapse adjacent <0xNN> tokens into the raw bytes they encode.
 %% Non-byte-fallback tokens are appended as-is.
