@@ -661,6 +661,12 @@ typedef struct {
 } DecodeLayerParams;
 
 typedef struct {
+  int layer_count;
+  uintptr_t signature;
+  DecodeLayerParams layers[DECODE_MAX_LAYERS];
+} ModelLayers;
+
+typedef struct {
   const uint8_t *host_ptr;
   size_t size;
   BlockBuf buf;
@@ -683,6 +689,7 @@ static DecodeConstBuf g_decode_norm2[DECODE_MAX_LAYERS];
 static DecodeConstBuf g_decode_rope = {0};
 static DecodeConstBuf g_decode_final_norm = {0};
 static DecodeGraphEntry g_decode_graphs[DECODE_GRAPH_MAX];
+static ErlNifResourceType *MODEL_LAYERS_RES = NULL;
 static int g_decode_graph_count = 0;
 static int g_decode_graph_disabled = 0;
 static unsigned g_decode_graph_captures = 0;
