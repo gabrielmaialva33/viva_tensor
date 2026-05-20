@@ -655,8 +655,15 @@ static int g_decode_graph_count = 0;
 static int g_decode_graph_disabled = 0;
 static unsigned g_decode_graph_captures = 0;
 static unsigned g_decode_graph_hits = 0;
+static unsigned g_decode_graph_updates = 0;
+static unsigned g_decode_graph_update_failures = 0;
 static unsigned g_decode_graph_failures = 0;
 static cudaError_t g_decode_last_capture_error = cudaSuccess;
+static cudaGraphExec_t g_decode_rolling_exec = NULL;
+static int g_decode_rolling_hidden = 0;
+static int g_decode_rolling_vocab = 0;
+static int g_decode_rolling_layer_count = 0;
+static uintptr_t g_decode_rolling_signature = 0;
 
 static int decode_graph_debug_enabled(void) {
   const char *v = getenv("VIVA_DECODE_GRAPH_DEBUG");
@@ -712,6 +719,38 @@ static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, i
   e->layer_count = layer_count;
   e->signature = signature;
   return e;
+}
+
+static int rolling_decode_graph_compatible(int hidden, int vocab, int layer_count,
+                                           uintptr_t signature) {
+  return g_decode_rolling_exec && g_decode_rolling_hidden == hidden &&
+         g_decode_rolling_vocab == vocab &&
+         g_decode_rolling_layer_count == layer_count &&
+         g_decode_rolling_signature == signature;
+}
+
+static cudaError_t update_decode_rolling_exec(cudaGraph_t graph) {
+#if CUDART_VERSION >= 12000
+  cudaGraphExecUpdateResultInfo info;
+  memset(&info, 0, sizeof(info));
+  return cudaGraphExecUpdate(g_decode_rolling_exec, graph, &info);
+#else
+  cudaGraphNode_t error_node = NULL;
+  cudaGraphExecUpdateResult result = cudaGraphExecUpdateSuccess;
+  return cudaGraphExecUpdate(g_decode_rolling_exec, graph, &error_node, &result);
+#endif
+}
+
+static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab,
+                                    int layer_count, uintptr_t signature) {
+  if (g_decode_rolling_exec && g_decode_rolling_exec != exec) {
+    cudaGraphExecDestroy(g_decode_rolling_exec);
+  }
+  g_decode_rolling_exec = exec;
+  g_decode_rolling_hidden = hidden;
+  g_decode_rolling_vocab = vocab;
+  g_decode_rolling_layer_count = layer_count;
+  g_decode_rolling_signature = signature;
 }
 
 static int all_decode_weights_captureable(DecodeLayerParams *layers, int layer_count,
