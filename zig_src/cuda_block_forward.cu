@@ -226,35 +226,6 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
   if (lane == 0) out[out_col] = acc;
 }
 
-__global__ void w8a32_mmv_blocked_k16_kernel(const uint8_t *weight,
-                                             const float *scales,
-                                             const float *input,
-                                             float *out,
-                                             int in_features,
-                                             int num_blocks) {
-  int out_col = blockIdx.x;
-  int lane = threadIdx.x & 31;
-  const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
-  const float *s_row = scales + (size_t)out_col * (size_t)num_blocks;
-
-  float acc = 0.0f;
-  for (int b = lane; b < num_blocks; b += 32) {
-    int base = b * 16;
-    float scale = s_row[b];
-    float block_acc = 0.0f;
-#pragma unroll
-    for (int j = 0; j < 16; ++j) {
-      float wv = fp8_e4m3_to_float(w_row[base + j]);
-      float xv = __half2float(__float2half_rn(input[base + j]));
-      block_acc = fmaf(wv, xv, block_acc);
-    }
-    acc = fmaf(block_acc, scale, acc);
-  }
-
-  acc = warp_sum(acc);
-  if (lane == 0) out[out_col] = acc;
-}
-
 __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *new_k,
                                                    const float *new_v,
                                                    const uint16_t *k_cache,
@@ -388,20 +359,6 @@ int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
   w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
       (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out,
       in_features, num_blocks);
-  return cudaGetLastError() == cudaSuccess ? 0 : -1;
-}
-
-int vt_w8a32_mmv_blocked_k16(const void *d_weight, const float *d_scales,
-                             const float *d_input, float *d_out,
-                             int in_features, int out_features) {
-  if (!d_weight || !d_scales || !d_input || !d_out || in_features <= 0 ||
-      out_features <= 0 || (in_features % 16) != 0) {
-    return -2;
-  }
-  int num_blocks = in_features / 16;
-  w8a32_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
-      (const uint8_t *)d_weight, d_scales, d_input, d_out, in_features,
-      num_blocks);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
