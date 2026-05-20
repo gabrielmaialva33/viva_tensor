@@ -555,8 +555,14 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
     return make_block_error(env, "gemm_v", rc);
 
-  if ((rc = run_helper_graph(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
-                             num_heads, num_kv_heads)) != 0)
+  if (use_kv_resource) {
+    rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
+                             num_heads, num_kv_heads);
+  } else {
+    rc = run_helper_graph(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
+                          num_heads, num_kv_heads);
+  }
+  if (rc != 0)
     return make_block_error(env, "graph_rope_attn", rc);
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
     return make_block_error(env, "gemm_o", rc);
