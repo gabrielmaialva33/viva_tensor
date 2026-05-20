@@ -74,7 +74,7 @@ generate(Handle, Prompt0, GenOpts0)
             Temp when Temp =< 0.0 ->
                 generate_argmax(Handle, Prompt, GenOpts);
             _ ->
-                {error, sampling_not_implemented}
+                generate_sampling(Handle, Prompt, GenOpts)
         end
     catch
         Class:Reason:Stack ->
@@ -171,6 +171,91 @@ decode_loop_decode_fused(NextTok, Caches, Layers, EmbedTable, FinalNorm, LmHead,
                                      [NextTok | Acc])
     end.
 
+generate_sampling(Handle, Prompt, Opts) ->
+    Config = maps:get(config, Handle),
+    Tokenizer = maps:get(tokenizer, Handle),
+    Layers = maps:get(layers, Handle),
+    EmbedTable = maps:get(embed_table_ref, Handle),
+    FinalNorm = maps:get(final_norm, Handle),
+    LmHead = maps:get(lm_head, Handle),
+    RopeFreqs = maps:get(rope_freqs, Handle),
+    MaxNew = maps:get(max_new_tokens, Opts),
+    StopOnEos = maps:get(stop_on_eos, Opts),
+    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    MaxSeq = maps:get(max_seq, Config),
+    case length(PromptTokens) + MaxNew >= MaxSeq of
+        true ->
+            {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}};
+        false ->
+            Caches = new_kv_caches(Config),
+            TopK = sampling_top_k(Opts, maps:get(vocab_size, Config)),
+            FirstNext = prefill_sampling(
+                PromptTokens, Caches, Layers, EmbedTable, FinalNorm, LmHead,
+                RopeFreqs, TopK, Opts
+            ),
+            TGen = us(),
+            GeneratedIds = decode_loop_decode_sampled(
+                FirstNext, Caches, Layers, EmbedTable, FinalNorm, LmHead,
+                RopeFreqs, length(PromptTokens), MaxNew, EOS, StopOnEos,
+                TopK, Opts, []
+            ),
+            GenUs = us() - TGen,
+            TokCount = length(GeneratedIds),
+            MsPerToken = case TokCount of
+                0 -> 0.0;
+                _ -> float(GenUs) / 1000.0 / float(TokCount)
+            end,
+            Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+            {ok, #{
+                tokens => GeneratedIds,
+                text => Text,
+                ms_per_token => MsPerToken,
+                total_tokens => TokCount
+            }}
+    end.
+
+prefill_sampling(PromptTokens, Caches, Layers, EmbedTable, FinalNorm, LmHead,
+                 RopeFreqs, TopK, Opts) ->
+    LastPos = length(PromptTokens) - 1,
+    {Next, _} = lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            Sampled = case Pos =:= LastPos of
+                true ->
+                    forward_decode_step_sample(TokenId, EmbedTable, Layers, FinalNorm,
+                                               LmHead, CL, Pos, RopeFreqs, TopK, Opts);
+                false ->
+                    forward_decode_step(TokenId, EmbedTable, Layers, FinalNorm,
+                                        LmHead, CL, Pos, RopeFreqs)
+            end,
+            {Sampled, CL}
+        end,
+        {undefined, Caches},
+        lists:zip(lists:seq(0, LastPos), PromptTokens)
+    ),
+    Next.
+
+decode_loop_decode_sampled(_NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0,
+                           _EOS, _StopOnEos, _TopK, _Opts, Acc) ->
+    lists:reverse(Acc);
+decode_loop_decode_sampled(NextTok, Caches, Layers, EmbedTable, FinalNorm, LmHead,
+                           RopeFreqs, Pos, Remaining, EOS, StopOnEos, TopK, Opts,
+                           Acc) ->
+    case StopOnEos andalso NextTok =:= EOS of
+        true ->
+            lists:reverse([NextTok | Acc]);
+        false ->
+            Following = forward_decode_step_sample(
+                NextTok, EmbedTable, Layers, FinalNorm, LmHead, Caches, Pos,
+                RopeFreqs, TopK, Opts
+            ),
+            decode_loop_decode_sampled(Following, Caches, Layers, EmbedTable,
+                                       FinalNorm, LmHead, RopeFreqs, Pos + 1,
+                                       Remaining - 1, EOS, StopOnEos, TopK, Opts,
+                                       [NextTok | Acc])
+    end.
+
 forward_decode_step(TokenId, EmbedTable, Layers, FinalNorm, LmHead,
                     Caches, Pos, RopeFreqs) ->
     case viva_tensor_zig:nt_forward_decode_step(
@@ -180,6 +265,37 @@ forward_decode_step(TokenId, EmbedTable, Layers, FinalNorm, LmHead,
         Error ->
             error({forward_decode_step_failed, Error})
     end.
+
+forward_decode_step_sample(TokenId, EmbedTable, Layers, FinalNorm, LmHead,
+                           Caches, Pos, RopeFreqs, TopK, Opts) ->
+    case viva_tensor_zig:nt_forward_decode_step_topk(
+             TokenId, EmbedTable, Layers, FinalNorm, LmHead, Caches, Pos,
+             RopeFreqs, TopK) of
+        {ok, {IndicesBin, ValuesBin}} when is_binary(IndicesBin), is_binary(ValuesBin) ->
+            Indices = decode_int32_le(IndicesBin),
+            Logits = decode_float32_le(ValuesBin),
+            Pick = llama_sampling:sample(Logits, sampling_opts_for_pos(Opts, Pos)),
+            lists:nth(Pick + 1, Indices);
+        Error ->
+            error({forward_decode_step_topk_failed, Error})
+    end.
+
+sampling_top_k(Opts, VocabSize) ->
+    Requested = case maps:get(top_k, Opts) of
+        infinity -> 256;
+        K when is_integer(K), K > 0 -> K;
+        _ -> 256
+    end,
+    min(VocabSize, min(256, Requested)).
+
+sampling_opts_for_pos(Opts, Pos) ->
+    Opts#{seed => maps:get(seed, Opts) + Pos}.
+
+decode_int32_le(Bin) ->
+    [I || <<I:32/signed-little>> <= Bin].
+
+decode_float32_le(Bin) ->
+    [F || <<F:32/float-little>> <= Bin].
 
 model_config(Header, SafetensorsPath, Opts) ->
     FileConfig = read_hf_config(SafetensorsPath),
