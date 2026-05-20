@@ -132,6 +132,10 @@ pub fn build(b: *std.Build) void {
             .file = b.path("nif_linear_fp8.c"),
             .flags = &.{},
         });
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("nif_forward_block.c"),
+            .flags = &.{},
+        });
         // Agent B: INT8/INT4 2:4 sparse inference NIFs. Need -std=c11 for
         // alignas() in <cusparseLt.h>.
         lib.root_module.addCSourceFile(.{
