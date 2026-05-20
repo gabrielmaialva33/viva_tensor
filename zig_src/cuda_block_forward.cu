@@ -126,6 +126,148 @@ __global__ void argmax_fp32_as_fp16_kernel(const float *x, int n, int *out_idx) 
   if (tid == 0) *out_idx = idxs[0];
 }
 
+__global__ void topk_fp32_as_fp16_kernel(const float *x, int n, int k,
+                                         int *out_indices, float *out_values) {
+  __shared__ float vals[256];
+  __shared__ int idxs[256];
+  __shared__ float prev_val;
+  __shared__ int prev_idx;
+  int tid = threadIdx.x;
+  if (tid == 0) {
+    prev_val = INFINITY;
+    prev_idx = -1;
+  }
+  __syncthreads();
+
+  for (int rank = 0; rank < k; ++rank) {
+    float best = -INFINITY;
+    int best_idx = 0;
+    for (int i = tid; i < n; i += blockDim.x) {
+      float v = __half2float(__float2half_rn(x[i]));
+      if (rank > 0 && (v > prev_val || (v == prev_val && i <= prev_idx))) {
+        continue;
+      }
+      if (v > best || (v == best && i < best_idx)) {
+        best = v;
+        best_idx = i;
+      }
+    }
+
+    vals[tid] = best;
+    idxs[tid] = best_idx;
+    __syncthreads();
+
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+      if (tid < stride) {
+        float other = vals[tid + stride];
+        int other_idx = idxs[tid + stride];
+        if (other > vals[tid] || (other == vals[tid] && other_idx < idxs[tid])) {
+          vals[tid] = other;
+          idxs[tid] = other_idx;
+        }
+      }
+      __syncthreads();
+    }
+
+    if (tid == 0) {
+      out_values[rank] = vals[0];
+      out_indices[rank] = idxs[0];
+      prev_val = vals[0];
+      prev_idx = idxs[0];
+    }
+    __syncthreads();
+  }
+}
+
+__global__ void topk_approx_fp32_as_fp16_kernel(const float *x, int n, int k,
+                                                int *out_indices, float *out_values) {
+  const int keep = 8;
+  __shared__ float block_vals[256 * 8];
+  __shared__ int block_idxs[256 * 8];
+  __shared__ float reduce_vals[256];
+  __shared__ int reduce_idxs[256];
+  __shared__ int reduce_slots[256];
+  float local_vals[8];
+  int local_idxs[8];
+  int tid = threadIdx.x;
+  int local_k = k < keep ? k : keep;
+
+  for (int j = 0; j < keep; ++j) {
+    local_vals[j] = -INFINITY;
+    local_idxs[j] = 0;
+  }
+
+  for (int i = tid; i < n; i += blockDim.x) {
+    float v = __half2float(__float2half_rn(x[i]));
+    if (v < local_vals[local_k - 1] ||
+        (v == local_vals[local_k - 1] && i > local_idxs[local_k - 1])) {
+      continue;
+    }
+    int insert = local_k - 1;
+    while (insert > 0 &&
+           (v > local_vals[insert - 1] ||
+            (v == local_vals[insert - 1] && i < local_idxs[insert - 1]))) {
+      local_vals[insert] = local_vals[insert - 1];
+      local_idxs[insert] = local_idxs[insert - 1];
+      --insert;
+    }
+    local_vals[insert] = v;
+    local_idxs[insert] = i;
+  }
+
+  for (int j = 0; j < keep; ++j) {
+    int offset = tid * keep + j;
+    block_vals[offset] = local_vals[j];
+    block_idxs[offset] = local_idxs[j];
+  }
+  __syncthreads();
+
+  int candidate_count = blockDim.x * keep;
+  for (int rank = 0; rank < k; ++rank) {
+    float best = -INFINITY;
+    int best_idx = 0;
+    int best_slot = -1;
+    for (int slot = tid; slot < candidate_count; slot += blockDim.x) {
+      float v = block_vals[slot];
+      int idx = block_idxs[slot];
+      if (v > best || (v == best && idx < best_idx)) {
+        best = v;
+        best_idx = idx;
+        best_slot = slot;
+      }
+    }
+    reduce_vals[tid] = best;
+    reduce_idxs[tid] = best_idx;
+    reduce_slots[tid] = best_slot;
+    __syncthreads();
+
+    for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+      if (tid < stride) {
+        float other = reduce_vals[tid + stride];
+        int other_idx = reduce_idxs[tid + stride];
+        if (other > reduce_vals[tid] ||
+            (other == reduce_vals[tid] && other_idx < reduce_idxs[tid])) {
+          reduce_vals[tid] = other;
+          reduce_idxs[tid] = other_idx;
+          reduce_slots[tid] = reduce_slots[tid + stride];
+        }
+      }
+      __syncthreads();
+    }
+
+    if (tid == 0) {
+      int best_slot = reduce_slots[0];
+      out_values[rank] = reduce_vals[0];
+      out_indices[rank] = reduce_idxs[0];
+      if (best_slot >= 0) {
+        block_vals[best_slot] = -INFINITY;
+        block_idxs[best_slot] = 0;
+      }
+    }
+    __syncthreads();
+  }
+}
+
 __global__ void embedding_lookup_fp16_kernel(const uint16_t *table, const int *token_id,
                                              uint16_t *out, int hidden, int vocab) {
   int tok = *token_id;
@@ -577,6 +719,21 @@ int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
 int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx) {
   if (!x || !out_idx || n <= 0) return -2;
   argmax_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, n, out_idx);
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices,
+                         float *out_values) {
+  if (!x || !out_indices || !out_values || n <= 0 || k <= 0 || k > 256 || k > n) {
+    return -2;
+  }
+  if (k == 1) {
+    topk_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(
+        x, n, k, out_indices, out_values);
+  } else {
+    topk_approx_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(
+        x, n, k, out_indices, out_values);
+  }
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
