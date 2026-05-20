@@ -67,6 +67,26 @@ __global__ void rope_apply_fp32_kernel(float *x, const float *freqs, int pos,
   x[base + j + half] = a * s + b * c;
 }
 
+__global__ void rope_apply_fp32_dyn_kernel(float *x, const float *freqs, const int *pos_ptr,
+                                           int num_heads, int head_dim) {
+  int pos = *pos_ptr;
+  int half = head_dim >> 1;
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  int total = num_heads * half;
+  if (i >= total) return;
+
+  int head = i / half;
+  int j = i - head * half;
+  int base = head * head_dim;
+  float a = x[base + j];
+  float b = x[base + j + half];
+  float angle = (float)pos * freqs[j];
+  float c = cosf(angle);
+  float s = sinf(angle);
+  x[base + j] = a * c - b * s;
+  x[base + j + half] = a * s + b * c;
+}
+
 __global__ void silu_mul_fp32_kernel(const float *gate, const float *up, float *out, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) {
@@ -295,6 +315,82 @@ __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *
   out[q_base + d1] = acc1 * inv_l;
 }
 
+__global__ void gqa_attn_flash_single_token_dyn_kernel(const float *q, const float *new_k,
+                                                       const float *new_v,
+                                                       const uint16_t *k_cache,
+                                                       const uint16_t *v_cache,
+                                                       float *out,
+                                                       const int *past_len_ptr,
+                                                       int num_heads,
+                                                       int num_kv_heads,
+                                                       int head_dim) {
+  int past_len = *past_len_ptr;
+  int qh = blockIdx.x;
+  int lane = threadIdx.x & 31;
+  if (qh >= num_heads || threadIdx.x >= 32 || head_dim != 64) return;
+
+  int q_per_kv = num_heads / num_kv_heads;
+  int kvh = qh / q_per_kv;
+  int seq_len = past_len + 1;
+  int d0 = lane << 1;
+  int d1 = d0 + 1;
+  int q_base = qh * head_dim;
+  int kv_base = kvh * head_dim;
+  float q0 = q[q_base + d0];
+  float q1 = q[q_base + d1];
+  float scale = rsqrtf((float)head_dim);
+
+  float m = -INFINITY;
+  float l = 0.0f;
+  float acc0 = 0.0f;
+  float acc1 = 0.0f;
+
+  for (int t = 0; t < seq_len; ++t) {
+    float k0, k1, v0, v1;
+    if (t < past_len) {
+      size_t pair_idx = (((size_t)t * num_kv_heads + kvh) * head_dim + d0) >> 1;
+      __half2 k2 = reinterpret_cast<const __half2 *>(k_cache)[pair_idx];
+      __half2 v2 = reinterpret_cast<const __half2 *>(v_cache)[pair_idx];
+      float2 kf = __half22float2(k2);
+      float2 vf = __half22float2(v2);
+      k0 = kf.x; k1 = kf.y;
+      v0 = vf.x; v1 = vf.y;
+    } else {
+      k0 = new_k[kv_base + d0];
+      k1 = new_k[kv_base + d1];
+      v0 = new_v[kv_base + d0];
+      v1 = new_v[kv_base + d1];
+    }
+
+    float dot = warp_sum(q0 * k0 + q1 * k1);
+    dot = __shfl_sync(0xffffffffu, dot, 0);
+    float score = dot * scale;
+    float new_m = fmaxf(m, score);
+    float alpha = expf(m - new_m);
+    float beta = expf(score - new_m);
+    acc0 = acc0 * alpha + beta * v0;
+    acc1 = acc1 * alpha + beta * v1;
+    l = l * alpha + beta;
+    m = new_m;
+  }
+
+  float inv_l = 1.0f / l;
+  out[q_base + d0] = acc0 * inv_l;
+  out[q_base + d1] = acc1 * inv_l;
+}
+
+__global__ void kv_cache_append_fp16_dyn_kernel(uint16_t *k_cache, uint16_t *v_cache,
+                                                const uint16_t *k_append,
+                                                const uint16_t *v_append,
+                                                const int *past_len_ptr,
+                                                int kv_dim) {
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (i >= kv_dim) return;
+  size_t base = (size_t)(*past_len_ptr) * (size_t)kv_dim;
+  k_cache[base + (size_t)i] = k_append[i];
+  v_cache[base + (size_t)i] = v_append[i];
+}
+
 int vt_fp16_to_fp32_cast(const void *in, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
@@ -329,6 +425,16 @@ int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
+int vt_rope_apply_fp32_dyn(float *x, const float *freqs, const int *pos_ptr,
+                           int num_heads, int head_dim) {
+  int total = num_heads * (head_dim / 2);
+  int block = 128;
+  int grid = (total + block - 1) / block;
+  rope_apply_fp32_dyn_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+      x, freqs, pos_ptr, num_heads, head_dim);
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
 int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
@@ -353,6 +459,17 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   }
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float *new_v,
+                                 const void *k_cache, const void *v_cache, float *out,
+                                 const int *past_len_ptr, int num_heads, int num_kv_heads,
+                                 int head_dim) {
+  if (head_dim != 64) return -3;
+  gqa_attn_flash_single_token_dyn_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
+      q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
+      past_len_ptr, num_heads, num_kv_heads, head_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
@@ -383,6 +500,19 @@ int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
   int grid = (hidden + block - 1) / block;
   embedding_lookup_fp16_kernel<<<grid, block, 0, g_vt_block_stream>>>(
       (const uint16_t *)table, token_id, (uint16_t *)out, hidden, vocab);
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_kv_cache_append_fp16_dyn(void *k_cache, void *v_cache, const void *k_append,
+                                const void *v_append, const int *past_len_ptr,
+                                int kv_dim) {
+  if (!k_cache || !v_cache || !k_append || !v_append || !past_len_ptr || kv_dim <= 0)
+    return -2;
+  int block = 256;
+  int grid = (kv_dim + block - 1) / block;
+  kv_cache_append_fp16_dyn_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+      (uint16_t *)k_cache, (uint16_t *)v_cache, (const uint16_t *)k_append,
+      (const uint16_t *)v_append, past_len_ptr, kv_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
