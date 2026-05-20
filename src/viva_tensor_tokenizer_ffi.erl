@@ -116,17 +116,26 @@ build_state(Json) ->
         byte_decoder => ByteDecoder
     }}.
 
-%% Detect if vocab uses byte-level BPE by checking for the Ġ marker (U+0120).
+%% Detect byte-level BPE (GPT-2/Llama-3): many tokens start with Ġ AND
+%% no SentencePiece ▁ markers present. Threshold of 100 avoids false positives
+%% from vocabularies that include a stray Ġ as a single token.
 detect_byte_level(VocabMap) ->
-    Iter = maps:iterator(VocabMap),
-    detect_byte_level_loop(maps:next(Iter)).
-
-detect_byte_level_loop(none) -> false;
-detect_byte_level_loop({Tok, _Id, NextIter}) ->
-    case binary:match(Tok, <<"Ġ"/utf8>>) of
-        nomatch -> detect_byte_level_loop(maps:next(NextIter));
-        _ -> true
-    end.
+    {SpCount, ByteCount} = maps:fold(
+        fun(Tok, _, {Sp, By}) ->
+            Sp1 = case binary:match(Tok, <<"▁"/utf8>>) of
+                nomatch -> Sp;
+                _ -> Sp + 1
+            end,
+            By1 = case binary:match(Tok, <<"Ġ"/utf8>>) of
+                nomatch -> By;
+                _ -> By + 1
+            end,
+            {Sp1, By1}
+        end,
+        {0, 0},
+        VocabMap
+    ),
+    SpCount < 10 andalso ByteCount > 100.
 
 %% Build GPT-2 style byte-level decoder map: unicode codepoint -> byte (0..255).
 %% Printable bytes [33-126, 161-172, 174-255] map to themselves.
