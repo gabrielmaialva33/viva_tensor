@@ -318,14 +318,17 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
   switch (kind) {
     case BLOCK_GRAPH_NORM1:
       if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) return -100 + rc;
-      if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr, (float *)b_norm1.ptr,
-                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -200 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr,
+                                g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
+                                 (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -200 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) return -300 + rc;
       return 0;
     case BLOCK_GRAPH_ROPE_ATTN:
-      if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr, (float *)b_rope.ptr, pos,
+      if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                   g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
                                    num_heads, LLAMA_HEAD_DIM)) != 0) return -400 + rc;
-      if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, (float *)b_rope.ptr, pos,
+      if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                   g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
                                    num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -500 + rc;
       if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
       if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
@@ -338,9 +341,10 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
       return 0;
     case BLOCK_GRAPH_POST_ATTN:
       if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
-                                     (float *)b_h1.ptr, hidden)) != 0) return -1000 + rc;
-      if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr, (float *)b_norm2.ptr,
-                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -1100 + rc;
+                                      (float *)b_h1.ptr, hidden)) != 0) return -1000 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr,
+                                g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
+                                 (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -1100 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) return -1200 + rc;
       return 0;
     case BLOCK_GRAPH_FFN:
@@ -362,7 +366,7 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
 static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
                             int pos, int past_len, int num_heads,
                             int num_kv_heads) {
-  if (g_block_graph_disabled) {
+  if (g_block_graph_disabled || g_full_decode_capture) {
     return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
   }
 
@@ -521,6 +525,9 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) return -100 + rc;
   if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) return -120 + rc;
   if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) return -140 + rc;
+  g_norm1_ptr = (float *)b_norm1.ptr;
+  g_norm2_ptr = (float *)b_norm2.ptr;
+  g_rope_ptr = (float *)b_rope.ptr;
 
   BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
                       &b_attn, &b_attn16, &b_down, &b_hout16};
@@ -608,6 +615,268 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
                       cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) {
     return -31;
   }
+  return 0;
+}
+
+#define DECODE_MAX_LAYERS 64
+#define DECODE_GRAPH_MAX 4096
+
+typedef struct {
+  PackedWeight *q, *k, *v, *o, *gate, *up, *down, *qkv, *gate_up;
+  BlockKvCache *cache;
+  float *norm1;
+  float *norm2;
+} DecodeLayerParams;
+
+typedef struct {
+  const uint8_t *host_ptr;
+  size_t size;
+  BlockBuf buf;
+} DecodeConstBuf;
+
+typedef struct {
+  int pos;
+  int past_len;
+  int hidden;
+  int vocab;
+  int layer_count;
+  uintptr_t signature;
+  cudaGraph_t graph;
+  cudaGraphExec_t exec;
+  unsigned launches;
+} DecodeGraphEntry;
+
+static DecodeConstBuf g_decode_norm1[DECODE_MAX_LAYERS];
+static DecodeConstBuf g_decode_norm2[DECODE_MAX_LAYERS];
+static DecodeConstBuf g_decode_rope = {0};
+static DecodeConstBuf g_decode_final_norm = {0};
+static DecodeGraphEntry g_decode_graphs[DECODE_GRAPH_MAX];
+static int g_decode_graph_count = 0;
+static int g_decode_graph_disabled = 0;
+static unsigned g_decode_graph_captures = 0;
+static unsigned g_decode_graph_hits = 0;
+static unsigned g_decode_graph_failures = 0;
+static cudaError_t g_decode_last_capture_error = cudaSuccess;
+
+static int decode_graph_debug_enabled(void) {
+  const char *v = getenv("VIVA_DECODE_GRAPH_DEBUG");
+  return v && v[0] && v[0] != '0';
+}
+
+static void decode_graph_debug(const char *msg, int a, int b, int c) {
+  if (decode_graph_debug_enabled()) {
+    fprintf(stderr, "[decode_graph] %s %d %d %d\n", msg, a, b, c);
+  }
+}
+
+static uintptr_t mix_ptr(uintptr_t h, const void *p) {
+  uintptr_t x = (uintptr_t)p;
+  h ^= x + (uintptr_t)0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
+  return h;
+}
+
+static int ensure_decode_const(DecodeConstBuf *dst, const ErlNifBinary *src) {
+  if (ensure_block_buf(&dst->buf, src->size) != 0) return -1;
+  if (src->size == 0) return 0;
+  if (dst->host_ptr == src->data && dst->size == src->size) return 0;
+  if (cudaMemcpyAsync(dst->buf.ptr, src->data, src->size, cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess) {
+    return -2;
+  }
+  dst->host_ptr = src->data;
+  dst->size = src->size;
+  return 0;
+}
+
+static DecodeGraphEntry *find_decode_graph(int pos, int past_len, int hidden, int vocab,
+                                           int layer_count, uintptr_t signature) {
+  for (int i = 0; i < g_decode_graph_count; ++i) {
+    DecodeGraphEntry *e = &g_decode_graphs[i];
+    if (e->pos == pos && e->past_len == past_len && e->hidden == hidden &&
+        e->vocab == vocab && e->layer_count == layer_count && e->signature == signature) {
+      return e;
+    }
+  }
+  return NULL;
+}
+
+static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, int vocab,
+                                            int layer_count, uintptr_t signature) {
+  if (g_decode_graph_count >= DECODE_GRAPH_MAX) return NULL;
+  DecodeGraphEntry *e = &g_decode_graphs[g_decode_graph_count++];
+  memset(e, 0, sizeof(*e));
+  e->pos = pos;
+  e->past_len = past_len;
+  e->hidden = hidden;
+  e->vocab = vocab;
+  e->layer_count = layer_count;
+  e->signature = signature;
+  return e;
+}
+
+static int all_decode_weights_captureable(DecodeLayerParams *layers, int layer_count,
+                                          PackedWeight *lm_head) {
+  if (!lm_head || lm_head->block_size != 16) return 0;
+  for (int i = 0; i < layer_count; ++i) {
+    DecodeLayerParams *l = &layers[i];
+    PackedWeight *ws[] = {l->q, l->k, l->v, l->o, l->gate, l->up, l->down};
+    for (unsigned j = 0; j < sizeof(ws) / sizeof(ws[0]); ++j) {
+      if (!ws[j] || ws[j]->block_size != 16) return 0;
+    }
+    if (l->qkv && validate_fp8_weight(l->qkv) && l->qkv->block_size != 16) return 0;
+    if (l->gate_up && validate_fp8_weight(l->gate_up) && l->gate_up->block_size != 16) return 0;
+  }
+  return 1;
+}
+
+static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, int pos) {
+  if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) || !validate_fp8_weight(l->v) ||
+      !validate_fp8_weight(l->o) || !validate_fp8_weight(l->gate) ||
+      !validate_fp8_weight(l->up) || !validate_fp8_weight(l->down)) {
+    return -10;
+  }
+
+  int hidden = l->q->in_features;
+  int kv_dim = l->k->out_features;
+  int ffn = l->gate->out_features;
+  int use_qkv = l->qkv && validate_fp8_weight(l->qkv);
+  int use_gate_up = l->gate_up && validate_fp8_weight(l->gate_up);
+  int num_heads = hidden / LLAMA_HEAD_DIM;
+  int num_kv_heads = kv_dim / LLAMA_HEAD_DIM;
+  if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
+      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
+      l->q->out_features != hidden || l->k->in_features != hidden ||
+      l->v->in_features != hidden || l->v->out_features != kv_dim ||
+      l->o->in_features != hidden || l->o->out_features != hidden ||
+      l->gate->in_features != hidden || l->up->in_features != hidden ||
+      l->up->out_features != ffn || l->down->in_features != ffn ||
+      l->down->out_features != hidden) {
+    return -11;
+  }
+  if (use_qkv && (l->qkv->in_features != hidden ||
+                  l->qkv->out_features != hidden + kv_dim + kv_dim)) {
+    use_qkv = 0;
+  }
+  if (use_gate_up && (l->gate_up->in_features != hidden ||
+                      l->gate_up->out_features != ffn + ffn)) {
+    use_gate_up = 0;
+  }
+  if (!l->cache || l->cache->kv_dim != kv_dim || l->cache->len < 0 ||
+      l->cache->len >= l->cache->max_seq) {
+    return -13;
+  }
+  int past_len = l->cache->len;
+  size_t hidden16_bytes = (size_t)hidden * sizeof(uint16_t);
+  size_t hidden32_bytes = (size_t)hidden * sizeof(float);
+  size_t kv16_bytes = (size_t)kv_dim * sizeof(uint16_t);
+  size_t kv32_bytes = (size_t)kv_dim * sizeof(float);
+  size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
+  size_t ffn32_bytes = (size_t)ffn * sizeof(float);
+
+  BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
+                      &b_attn, &b_attn16, &b_down, &b_hout16};
+  for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
+    if (ensure_block_buf(bufs[i], hidden32_bytes) != 0) return -20;
+  }
+  if (ensure_block_buf(&b_k, kv32_bytes) != 0 ||
+      ensure_block_buf(&b_v, kv32_bytes) != 0 ||
+      ensure_block_buf(&b_k_append, kv16_bytes) != 0 ||
+      ensure_block_buf(&b_v_append, kv16_bytes) != 0) return -21;
+  if (ensure_block_buf(&b_gate, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_up, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_sw, ffn32_bytes) != 0 ||
+      ensure_block_buf(&b_sw16, ffn16_bytes) != 0) return -22;
+  if (use_qkv && ensure_block_buf(&b_qkv, (size_t)(hidden + kv_dim + kv_dim) * sizeof(float)) != 0)
+    return -23;
+  if (use_gate_up && ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
+    return -24;
+
+  g_attn_k_cache_ptr = l->cache->d_k;
+  g_attn_v_cache_ptr = l->cache->d_v;
+  g_norm1_ptr = l->norm1;
+  g_norm2_ptr = l->norm2;
+  g_rope_ptr = rope;
+  g_q_ptr = NULL;
+  g_k_ptr = NULL;
+  g_v_ptr = NULL;
+  g_gate_ptr = NULL;
+  g_up_ptr = NULL;
+
+  int rc = 0;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -200 + rc;
+  if (use_qkv) {
+    if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1,
+                                 (float *)b_qkv.ptr)) != 0) return -300 + rc;
+    g_q_ptr = (float *)b_qkv.ptr;
+    g_k_ptr = g_q_ptr + hidden;
+    g_v_ptr = g_k_ptr + kv_dim;
+  } else {
+    if ((rc = gemm_w8a16_dequant(l->q, (uint16_t *)b_norm16.ptr, 1,
+                                 (float *)b_q.ptr)) != 0) return -300 + rc;
+    if ((rc = gemm_w8a16_dequant(l->k, (uint16_t *)b_norm16.ptr, 1,
+                                 (float *)b_k.ptr)) != 0) return -320 + rc;
+    if ((rc = gemm_w8a16_dequant(l->v, (uint16_t *)b_norm16.ptr, 1,
+                                 (float *)b_v.ptr)) != 0) return -340 + rc;
+  }
+  if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
+                                past_len, num_heads, num_kv_heads)) != 0) return -400 + rc;
+  if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1,
+                               (float *)b_o.ptr)) != 0) return -500 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -600 + rc;
+  if (use_gate_up) {
+    if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
+                                 (float *)b_gate_up.ptr)) != 0) return -700 + rc;
+    g_gate_ptr = (float *)b_gate_up.ptr;
+    g_up_ptr = g_gate_ptr + ffn;
+  } else {
+    if ((rc = gemm_w8a16_dequant(l->gate, (uint16_t *)b_x2_16.ptr, 1,
+                                 (float *)b_gate.ptr)) != 0) return -700 + rc;
+    if ((rc = gemm_w8a16_dequant(l->up, (uint16_t *)b_x2_16.ptr, 1,
+                                 (float *)b_up.ptr)) != 0) return -720 + rc;
+  }
+  if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -800 + rc;
+  if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1,
+                               (float *)b_down.ptr)) != 0) return -900 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -1000 + rc;
+
+  size_t offset = (size_t)past_len * kv16_bytes;
+  if (cudaMemcpyAsync((uint8_t *)l->cache->d_k + offset, b_k_append.ptr, kv16_bytes,
+                      cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess ||
+      cudaMemcpyAsync((uint8_t *)l->cache->d_v + offset, b_v_append.ptr, kv16_bytes,
+                      cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) return -30;
+  l->cache->len = past_len + 1;
+  if (cudaMemcpyAsync(b_hidden16.ptr, b_hout16.ptr, hidden16_bytes,
+                      cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) return -31;
+  return 0;
+}
+
+static int run_decode_token_sequence(EmbeddingTable *embed, int token_id,
+                                     DecodeLayerParams *layers, int layer_count,
+                                     float *final_norm, PackedWeight *lm_head,
+                                     float *rope, int pos) {
+  int rc = vt_embedding_lookup_fp16(embed->d_weight, (const int *)b_token_id.ptr,
+                                    b_hidden16.ptr, embed->hidden, embed->vocab);
+  if (rc != 0) return -10000 + rc;
+  for (int i = 0; i < layer_count; ++i) {
+    rc = run_decode_block_device_preloaded(&layers[i], rope, pos);
+    if (rc != 0) return -11000 + rc;
+  }
+  g_norm1_ptr = final_norm;
+  g_norm2_ptr = NULL;
+  g_rope_ptr = rope;
+  rc = run_helper_graph(BLOCK_GRAPH_NORM1, embed->hidden, 0, 0, -1, -1, 0, 0);
+  if (rc != 0) return -12000 + rc;
+  rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
+                          (float *)b_logits.ptr);
+  if (rc != 0) return -13000 + rc;
+  rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
+                              (int *)b_argmax.ptr);
+  if (rc != 0) return -14000 + rc;
+  (void)token_id;
   return 0;
 }
 
