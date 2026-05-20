@@ -599,43 +599,43 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_gate_ptr = NULL;
   g_up_ptr = NULL;
 
-  if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
+  if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1_X32, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0) return -200 + rc;
   if (use_qkv) {
-    if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(qkv, (float *)b_x2.ptr, 1, (float *)b_qkv.ptr)) != 0)
       return -300 + rc;
     g_q_ptr = (float *)b_qkv.ptr;
     g_k_ptr = g_q_ptr + hidden;
     g_v_ptr = g_k_ptr + kv_dim;
   } else {
-    if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(q, (float *)b_x2.ptr, 1, (float *)b_q.ptr)) != 0)
       return -300 + rc;
-    if ((rc = gemm_w8a16_dequant(k, (uint16_t *)b_norm16.ptr, 1, (float *)b_k.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(k, (float *)b_x2.ptr, 1, (float *)b_k.ptr)) != 0)
       return -320 + rc;
-    if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(v, (float *)b_x2.ptr, 1, (float *)b_v.ptr)) != 0)
       return -340 + rc;
   }
-  if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
-                                past_len, num_heads, num_kv_heads)) != 0)
+  if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN_X32, hidden, kv_dim, ffn, pos,
+                                 past_len, num_heads, num_kv_heads)) != 0)
     return -400 + rc;
-  if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
+  if ((rc = gemm_w8a32_direct(o, (float *)b_attn.ptr, 1, (float *)b_o.ptr)) != 0)
     return -500 + rc;
-  if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
+  if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN_X32, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0) return -600 + rc;
   if (use_gate_up) {
-    if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate_up.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(gate_up, (float *)b_x2.ptr, 1, (float *)b_gate_up.ptr)) != 0)
       return -700 + rc;
     g_gate_ptr = (float *)b_gate_up.ptr;
     g_up_ptr = g_gate_ptr + ffn;
   } else {
-    if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(gate, (float *)b_x2.ptr, 1, (float *)b_gate.ptr)) != 0)
       return -700 + rc;
-    if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
+    if ((rc = gemm_w8a32_direct(up, (float *)b_x2.ptr, 1, (float *)b_up.ptr)) != 0)
       return -720 + rc;
   }
-  if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
+  if ((rc = run_helper_graph(BLOCK_GRAPH_FFN_X32, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0) return -800 + rc;
-  if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
+  if ((rc = gemm_w8a32_direct(down, (float *)b_sw.ptr, 1, (float *)b_down.ptr)) != 0)
     return -900 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0) return -1000 + rc;
@@ -990,11 +990,11 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
   if (upload_binary_async(&b_norm1, &final_norm_bin) != 0)
     return make_error(env, "upload_final_norm_failed");
-  int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0);
+  int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1_X32, hidden, 0, 0, -1, -1, 0, 0);
   if (final_rc != 0) return make_block_error(env, "final_norm_gpu", final_rc);
 
   int rc = 0;
-  if ((rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
+  if ((rc = gemm_w8a32_direct(lm_head, (float *)b_x2.ptr, 1,
                                (float *)b_logits.ptr)) != 0)
     return make_block_error(env, "lm_head", rc);
 
