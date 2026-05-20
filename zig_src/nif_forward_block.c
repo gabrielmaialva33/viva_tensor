@@ -45,6 +45,18 @@ static BlockBuf b_attn = {0}, b_attn16 = {0}, b_o = {0}, b_h1 = {0};
 static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
+static void *g_attn_k_cache_ptr = NULL;
+static void *g_attn_v_cache_ptr = NULL;
+
+typedef struct {
+  void *d_k;
+  void *d_v;
+  int max_seq;
+  int kv_dim;
+  int len;
+} BlockKvCache;
+
+static ErlNifResourceType *BLOCK_KV_CACHE_RES = NULL;
 
 typedef enum {
   BLOCK_GRAPH_NORM1 = 1,
@@ -287,7 +299,7 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
       if ((rc = vt_fp32_to_fp16_cast((float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
       if ((rc = vt_gqa_attn_single_token((float *)b_q.ptr, (float *)b_k.ptr, (float *)b_v.ptr,
-                                         b_k_cache.ptr, b_v_cache.ptr, (float *)b_attn.ptr,
+                                         g_attn_k_cache_ptr, g_attn_v_cache_ptr, (float *)b_attn.ptr,
                                          past_len, num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -800 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) return -900 + rc;
       return 0;
@@ -366,6 +378,58 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
 }
 
 #endif
+
+void block_kv_cache_destructor(ErlNifEnv *env, void *obj) {
+  (void)env;
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
+  BlockKvCache *cache = (BlockKvCache *)obj;
+  if (!cache) return;
+  if (cache->d_k) {
+    cudaFree(cache->d_k);
+    cache->d_k = NULL;
+  }
+  if (cache->d_v) {
+    cudaFree(cache->d_v);
+    cache->d_v = NULL;
+  }
+#else
+  (void)obj;
+#endif
+}
+
+int register_block_kv_cache_resource(ErlNifEnv *env) {
+  BLOCK_KV_CACHE_RES = enif_open_resource_type(
+      env, NULL, "BlockKvCache", block_kv_cache_destructor,
+      ERL_NIF_RT_CREATE, NULL);
+  return BLOCK_KV_CACHE_RES != NULL ? 0 : -1;
+}
+
+ERL_NIF_TERM nt_kv_cache_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 2) return make_error(env, "bad_arity");
+  int max_seq = 0, kv_dim = 0;
+  if (!enif_get_int(env, argv[0], &max_seq) || max_seq <= 0) return make_error(env, "invalid_max_seq");
+  if (!enif_get_int(env, argv[1], &kv_dim) || kv_dim <= 0) return make_error(env, "invalid_kv_dim");
+  BlockKvCache *cache = (BlockKvCache *)enif_alloc_resource(BLOCK_KV_CACHE_RES, sizeof(BlockKvCache));
+  if (!cache) return make_error(env, "resource_alloc_failed");
+  memset(cache, 0, sizeof(*cache));
+  cache->max_seq = max_seq;
+  cache->kv_dim = kv_dim;
+  size_t bytes = (size_t)max_seq * (size_t)kv_dim * sizeof(uint16_t);
+  if (cudaMalloc(&cache->d_k, bytes) != cudaSuccess ||
+      cudaMalloc(&cache->d_v, bytes) != cudaSuccess) {
+    enif_release_resource(cache);
+    return make_error(env, "cuda_malloc_kv_cache_failed");
+  }
+  ERL_NIF_TERM term = enif_make_resource(env, cache);
+  enif_release_resource(cache);
+  return make_ok(env, term);
+#endif
+}
 
 ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
   (void)argc;
