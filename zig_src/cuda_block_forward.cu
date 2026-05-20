@@ -174,6 +174,57 @@ __device__ __forceinline__ float warp_sum(float v) {
   return v;
 }
 
+__device__ __forceinline__ float fp8_e4m3_to_float(uint8_t x) {
+  uint32_t sign = ((uint32_t)x & 0x80u) << 24;
+  uint32_t exp = ((uint32_t)x >> 3) & 0x0fu;
+  uint32_t mant = (uint32_t)x & 0x07u;
+
+  if (exp == 0) {
+    float v = (float)mant * 0.001953125f;
+    return sign ? -v : v;
+  }
+
+  if (exp == 0x0fu && mant == 0x07u) {
+    return sign ? -448.0f : 448.0f;
+  }
+
+  union {
+    uint32_t u;
+    float f;
+  } bits;
+  bits.u = sign | ((exp + 120u) << 23) | (mant << 20);
+  return bits.f;
+}
+
+__global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
+                                             const float *scales,
+                                             const uint16_t *input,
+                                             float *out,
+                                             int in_features,
+                                             int num_blocks) {
+  int out_col = blockIdx.x;
+  int lane = threadIdx.x & 31;
+  const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
+  const float *s_row = scales + (size_t)out_col * (size_t)num_blocks;
+  const __half *x = reinterpret_cast<const __half *>(input);
+
+  float acc = 0.0f;
+  for (int b = lane; b < num_blocks; b += 32) {
+    int base = b * 16;
+    float scale = s_row[b];
+#pragma unroll
+    for (int j = 0; j < 16; ++j) {
+      float wv = fp8_e4m3_to_float(w_row[base + j]) * scale;
+      wv = __half2float(__float2half_rn(wv));
+      float xv = __half2float(x[base + j]);
+      acc = fmaf(wv, xv, acc);
+    }
+  }
+
+  acc = warp_sum(acc);
+  if (lane == 0) out[out_col] = acc;
+}
+
 __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *new_k,
                                                    const float *new_v,
                                                    const uint16_t *k_cache,
@@ -277,9 +328,9 @@ int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n) {
 }
 
 int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
-                             const void *k_cache, const void *v_cache, float *out,
-                             int past_len, int num_heads, int num_kv_heads,
-                             int head_dim) {
+                              const void *k_cache, const void *v_cache, float *out,
+                              int past_len, int num_heads, int num_kv_heads,
+                              int head_dim) {
   int seq_len = past_len + 1;
   size_t shared = (size_t)seq_len * sizeof(float);
   if (head_dim == 64) {
@@ -293,6 +344,20 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   }
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
+                             const void *d_input, float *d_out,
+                             int in_features, int out_features) {
+  if (!d_weight || !d_scales || !d_input || !d_out || in_features <= 0 ||
+      out_features <= 0 || (in_features % 16) != 0) {
+    return -2;
+  }
+  int num_blocks = in_features / 16;
+  w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
+      (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out,
+      in_features, num_blocks);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
