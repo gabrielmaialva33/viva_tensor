@@ -1,4 +1,16 @@
-# Stable inference API — implementation roadmap
+# Stable inference API — implementation roadmap  **[DONE — kept for history]**
+
+> **Status (2026-05):** The roadmap below is fully shipped. FP8 prepack +
+> linear, W8A16 path with per-block-16 scales, fused SwiGLU, INT4 sparse with
+> CUTLASS Sm80 metadata, plus the end-to-end TinyLlama-1.1B forward all
+> landed across this and prior sessions. Token output now matches
+> HuggingFace transformers fp32 reference (`dev/hf_bisect.py`). Throughput
+> tracked in `bench/results/matmul_showdown.md` and tok/sec numbers in
+> [dev/llama_forward.erl](../../dev/llama_forward.erl) runs. The original
+> planning content is kept verbatim below for context.
+
+---
+
 
 The Gleam-side surface for the championship CUTLASS / cuSPARSELt kernels
 has landed in `src/viva_tensor/native/inference.gleam` and is re-exported

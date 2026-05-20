@@ -134,5 +134,5 @@ gleam run -m viva_tensor/bench/peak
 # PyTorch + NumPy side
 uv venv .bench-venv
 VIRTUAL_ENV=.bench-venv uv pip install torch numpy --index-url https://download.pytorch.org/whl/cu129
-.bench-venv/bin/python3 bench/compare/numpy_pytorch.py
+.bench-venv/bin/python3 bench/python/compare/numpy_pytorch.py
 ```
