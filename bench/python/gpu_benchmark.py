@@ -149,9 +149,11 @@ def viva_tensor_gpu_benchmark():
                 {{ok, B}} = viva_tensor_zig:{create_fn}(Data, [N, N]),
                 {{ok, C}} = viva_tensor_zig:{create_fn}(Data, [N, N]),
                 [viva_tensor_zig:{matmul_fn}(A, B, C, N, N, N) || _ <- lists:seq(1, Warmup)],
+                _ = viva_tensor_zig:cuda_sync(),
                 Times = [begin
                     {{T, _}} = timer:tc(fun() ->
-                        ok = viva_tensor_zig:{matmul_fn}(A, B, C, N, N, N)
+                        _ = viva_tensor_zig:{matmul_fn}(A, B, C, N, N, N),
+                        _ = viva_tensor_zig:cuda_sync()
                     end),
                     T / 1000.0
                 end || _ <- lists:seq(1, Runs)],
