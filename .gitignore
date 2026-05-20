@@ -70,5 +70,8 @@ bench/compare/pytorch_results.term
 # Codex
 .codex
 
+# Antigravity
+.antigravitycli
+
 # Misc
 tmp
