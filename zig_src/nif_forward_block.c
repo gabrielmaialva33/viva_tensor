@@ -1506,6 +1506,8 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   }
 
   if (!graph_ok) {
+    g_dyn_pos_ptr = NULL;
+    g_dyn_past_len_ptr = NULL;
     const uint8_t *row = (const uint8_t *)embed->d_weight + (size_t)token_id * hidden16_bytes;
     if (cudaMemcpyAsync(b_hidden16.ptr, row, hidden16_bytes, cudaMemcpyDeviceToDevice,
                         g_block_stream) != cudaSuccess) {
