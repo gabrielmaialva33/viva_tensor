@@ -39,7 +39,6 @@ run() ->
     Seed  = 17,
     Xf32  = time_stage("Build input",
         fun() -> deterministic_floats(Seed, ?HIDDEN) end),
-    Xf16  = floats_to_fp16(Xf32),
 
     io:format("~nInput  mean_abs=~p~n", [mean_abs(Xf32)]),
 
@@ -83,7 +82,6 @@ run() ->
 
     %% RMSNorm 2 (post-attention).
     XNorm2 = rmsnorm(Resid1, Norm2, 1.0e-5),
-    XNorm2Fp16 = floats_to_fp16(XNorm2),
     io:format("After post_attention_layernorm  mean_abs=~p~n", [mean_abs(XNorm2)]),
 
     %% SwiGLU FFN: intermediate = silu(gate(x)) * up(x), then down.
@@ -186,15 +184,6 @@ rmsnorm(X, Gamma, Eps) ->
 
 list_add(A, B) ->
     lists:zipwith(fun(X, Y) -> X + Y end, A, B).
-
-silu(X) when is_float(X) ->
-    X / (1.0 + math:exp(-X)).
-
-clamp_inf(L, Max) ->
-    [clamp_one(X, Max) || X <- L].
-clamp_one(X, Max) when X > Max  -> Max;
-clamp_one(X, Max) when X < -Max -> -Max;
-clamp_one(X, _) -> X.
 
 %% Numerically stable mean_abs that survives Inf/extreme values: divides
 %% as we go to avoid summing 2048+ huge numbers into a single overflowed
