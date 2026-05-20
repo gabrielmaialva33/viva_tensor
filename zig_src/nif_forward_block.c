@@ -990,11 +990,11 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
   if (upload_binary_async(&b_norm1, &final_norm_bin) != 0)
     return make_error(env, "upload_final_norm_failed");
-  int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1_X32, hidden, 0, 0, -1, -1, 0, 0);
+  int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0);
   if (final_rc != 0) return make_block_error(env, "final_norm_gpu", final_rc);
 
   int rc = 0;
-  if ((rc = gemm_w8a32_direct(lm_head, (float *)b_x2.ptr, 1,
+  if ((rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
                                (float *)b_logits.ptr)) != 0)
     return make_block_error(env, "lm_head", rc);
 
