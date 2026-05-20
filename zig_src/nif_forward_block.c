@@ -22,6 +22,8 @@ extern int vt_fp32_to_fp16_cast(const float *in, void *out, int n);
 extern int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n, float eps);
 extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int n);
 extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim);
+extern int vt_rope_apply_fp32_dyn(float *x, const float *freqs, const int *pos_ptr,
+                                  int num_heads, int head_dim);
 extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
 extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
 extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
@@ -33,6 +35,13 @@ extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const fl
                                      const void *k_cache, const void *v_cache, float *out,
                                      int past_len, int num_heads, int num_kv_heads,
                                      int head_dim);
+extern int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float *new_v,
+                                         const void *k_cache, const void *v_cache, float *out,
+                                         const int *past_len_ptr, int num_heads,
+                                         int num_kv_heads, int head_dim);
+extern int vt_kv_cache_append_fp16_dyn(void *k_cache, void *v_cache, const void *k_append,
+                                       const void *v_append, const int *past_len_ptr,
+                                       int kv_dim);
 extern void vt_block_set_stream(void *stream);
 extern void cuda_fp8_dequant_set_stream(void *stream);
 extern uint16_t float_to_half(float f);
@@ -55,12 +64,13 @@ static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
 static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0}, b_argmax = {0};
-static BlockBuf b_token_id = {0};
+static BlockBuf b_token_id = {0}, b_pos_id = {0}, b_past_len_id = {0};
 static void *g_attn_k_cache_ptr = NULL;
 static void *g_attn_v_cache_ptr = NULL;
 static float *g_q_ptr = NULL, *g_k_ptr = NULL, *g_v_ptr = NULL;
 static float *g_gate_ptr = NULL, *g_up_ptr = NULL;
 static float *g_norm1_ptr = NULL, *g_norm2_ptr = NULL, *g_rope_ptr = NULL;
+static int *g_dyn_pos_ptr = NULL, *g_dyn_past_len_ptr = NULL;
 static int g_full_decode_capture = 0;
 
 typedef struct {
@@ -324,19 +334,39 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) return -300 + rc;
       return 0;
     case BLOCK_GRAPH_ROPE_ATTN:
-      if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                   g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                   num_heads, LLAMA_HEAD_DIM)) != 0) return -400 + rc;
-      if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                   g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                   num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -500 + rc;
+      if (g_dyn_pos_ptr) {
+        if ((rc = vt_rope_apply_fp32_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                         g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                         g_dyn_pos_ptr, num_heads, LLAMA_HEAD_DIM)) != 0)
+          return -400 + rc;
+        if ((rc = vt_rope_apply_fp32_dyn(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                         g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                         g_dyn_pos_ptr, num_kv_heads, LLAMA_HEAD_DIM)) != 0)
+          return -500 + rc;
+      } else {
+        if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                     g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                     num_heads, LLAMA_HEAD_DIM)) != 0) return -400 + rc;
+        if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                     g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                     num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -500 + rc;
+      }
       if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
       if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
-      if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                         g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                         g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
-                                         g_attn_k_cache_ptr, g_attn_v_cache_ptr, (float *)b_attn.ptr,
-                                         past_len, num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -800 + rc;
+      if (g_dyn_past_len_ptr) {
+        if ((rc = vt_gqa_attn_single_token_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                               g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                               g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
+                                               g_attn_k_cache_ptr, g_attn_v_cache_ptr,
+                                               (float *)b_attn.ptr, g_dyn_past_len_ptr,
+                                               num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0)
+          return -800 + rc;
+      } else if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                                g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                                g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
+                                                g_attn_k_cache_ptr, g_attn_v_cache_ptr,
+                                                (float *)b_attn.ptr, past_len, num_heads,
+                                                num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -800 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) return -900 + rc;
       return 0;
     case BLOCK_GRAPH_POST_ATTN:
@@ -528,6 +558,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_norm1_ptr = (float *)b_norm1.ptr;
   g_norm2_ptr = (float *)b_norm2.ptr;
   g_rope_ptr = (float *)b_rope.ptr;
+  g_dyn_pos_ptr = NULL;
+  g_dyn_past_len_ptr = NULL;
 
   BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
                       &b_attn, &b_attn16, &b_down, &b_hout16};
@@ -915,11 +947,17 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0) return -1000 + rc;
 
-  size_t offset = (size_t)past_len * kv16_bytes;
-  if (cudaMemcpyAsync((uint8_t *)l->cache->d_k + offset, b_k_append.ptr, kv16_bytes,
-                      cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess ||
-      cudaMemcpyAsync((uint8_t *)l->cache->d_v + offset, b_v_append.ptr, kv16_bytes,
-                      cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) return -30;
+  if (g_dyn_past_len_ptr) {
+    rc = vt_kv_cache_append_fp16_dyn(l->cache->d_k, l->cache->d_v, b_k_append.ptr,
+                                     b_v_append.ptr, g_dyn_past_len_ptr, kv_dim);
+    if (rc != 0) return -30 + rc;
+  } else {
+    size_t offset = (size_t)past_len * kv16_bytes;
+    if (cudaMemcpyAsync((uint8_t *)l->cache->d_k + offset, b_k_append.ptr, kv16_bytes,
+                        cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess ||
+        cudaMemcpyAsync((uint8_t *)l->cache->d_v + offset, b_v_append.ptr, kv16_bytes,
+                        cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) return -30;
+  }
   l->cache->len = past_len + 1;
   if (cudaMemcpyAsync(b_hidden16.ptr, b_hout16.ptr, hidden16_bytes,
                       cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) return -31;
@@ -1238,7 +1276,9 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
       ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
       ensure_block_buf(&b_argmax, sizeof(int)) != 0 ||
-      ensure_block_buf(&b_token_id, sizeof(int)) != 0) {
+      ensure_block_buf(&b_token_id, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_pos_id, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_past_len_id, sizeof(int)) != 0) {
     return make_error(env, "cuda_malloc_decode_failed");
   }
 
@@ -1332,6 +1372,12 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                       g_block_stream) != cudaSuccess) {
     return make_error(env, "upload_token_id_failed");
   }
+  if (cudaMemcpyAsync(b_pos_id.ptr, &pos, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess ||
+      cudaMemcpyAsync(b_past_len_id.ptr, &past_len, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess) {
+    return make_error(env, "upload_decode_scalar_failed");
+  }
 
   signature = mix_ptr(signature, embed->d_weight);
   signature = mix_ptr(signature, lm_head->d_weight);
@@ -1343,7 +1389,9 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                  all_decode_weights_captureable(decode_layers, layer_count, lm_head);
   int rc = 0;
   if (graph_ok) {
-    DecodeGraphEntry *entry = find_decode_graph(pos, past_len, hidden, embed->vocab,
+    int graph_pos_key = -1;
+    int graph_past_key = -1;
+    DecodeGraphEntry *entry = find_decode_graph(graph_pos_key, graph_past_key, hidden, embed->vocab,
                                                 layer_count, signature);
     if (entry && entry->exec) {
       cudaError_t launch_err = cudaGraphLaunch(entry->exec, g_block_stream);
@@ -1362,9 +1410,13 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
         graph_ok = 0;
       } else {
         g_full_decode_capture = 1;
+        g_dyn_pos_ptr = (int *)b_pos_id.ptr;
+        g_dyn_past_len_ptr = (int *)b_past_len_id.ptr;
         rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
                                        (float *)g_decode_final_norm.buf.ptr, lm_head,
                                        (float *)g_decode_rope.buf.ptr, pos);
+        g_dyn_pos_ptr = NULL;
+        g_dyn_past_len_ptr = NULL;
         g_full_decode_capture = 0;
         cudaGraph_t graph = NULL;
         err = cudaStreamEndCapture(g_block_stream, &graph);
@@ -1431,7 +1483,7 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                 set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
                                         layer_count, signature);
               }
-              entry = alloc_decode_graph(pos, past_len, hidden, embed->vocab,
+              entry = alloc_decode_graph(graph_pos_key, graph_past_key, hidden, embed->vocab,
                                          layer_count, signature);
               if (entry) {
                 entry->graph = graph;
