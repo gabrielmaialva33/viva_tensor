@@ -1354,34 +1354,64 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       g_decode_graph_hits++;
       for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len + 1;
     } else {
-      entry = alloc_decode_graph(pos, past_len, hidden, embed->vocab, layer_count, signature);
-      if (!entry) {
+      cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
+      if (err != cudaSuccess) {
         g_decode_graph_disabled = 1;
+        g_decode_graph_failures++;
+        g_decode_last_capture_error = err;
         graph_ok = 0;
       } else {
-        cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
-        if (err != cudaSuccess) {
+        g_full_decode_capture = 1;
+        rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
+                                       (float *)g_decode_final_norm.buf.ptr, lm_head,
+                                       (float *)g_decode_rope.buf.ptr, pos);
+        g_full_decode_capture = 0;
+        cudaGraph_t graph = NULL;
+        err = cudaStreamEndCapture(g_block_stream, &graph);
+        if (rc != 0 || err != cudaSuccess || !graph) {
+          if (graph) cudaGraphDestroy(graph);
+          for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+          (void)cudaGetLastError();
           g_decode_graph_disabled = 1;
           g_decode_graph_failures++;
           g_decode_last_capture_error = err;
+          decode_graph_debug("capture_failed", rc, (int)err, past_len);
           graph_ok = 0;
         } else {
-          g_full_decode_capture = 1;
-          rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
-                                         (float *)g_decode_final_norm.buf.ptr, lm_head,
-                                         (float *)g_decode_rope.buf.ptr, pos);
-          g_full_decode_capture = 0;
-          cudaGraph_t graph = NULL;
-          err = cudaStreamEndCapture(g_block_stream, &graph);
-          if (rc != 0 || err != cudaSuccess || !graph) {
-            if (graph) cudaGraphDestroy(graph);
-            for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
-            (void)cudaGetLastError();
-            g_decode_graph_disabled = 1;
-            g_decode_graph_failures++;
-            g_decode_last_capture_error = err;
-            decode_graph_debug("capture_failed", rc, (int)err, past_len);
-            graph_ok = 0;
+          g_decode_graph_captures++;
+          if (rolling_decode_graph_compatible(hidden, embed->vocab, layer_count, signature)) {
+            err = update_decode_rolling_exec(graph);
+            if (err == cudaSuccess) {
+              g_decode_graph_updates++;
+              err = cudaGraphLaunch(g_decode_rolling_exec, g_block_stream);
+              cudaGraphDestroy(graph);
+              if (err != cudaSuccess) {
+                return make_block_error(env, "decode_graph_launch", -2200 - (int)err);
+              }
+              decode_graph_debug("update_ok", g_decode_graph_count,
+                                 g_decode_graph_updates, past_len);
+            } else {
+              g_decode_graph_update_failures++;
+              if (err == cudaErrorGraphExecUpdateFailure) (void)cudaGetLastError();
+              cudaGraphExec_t exec = NULL;
+              err = cudaGraphInstantiate(&exec, graph, 0);
+              if (err != cudaSuccess || !exec) {
+                cudaGraphDestroy(graph);
+                for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+                g_decode_graph_disabled = 1;
+                g_decode_graph_failures++;
+                g_decode_last_capture_error = err;
+                decode_graph_debug("instantiate_failed", 0, (int)err, past_len);
+                graph_ok = 0;
+              } else {
+                set_decode_rolling_exec(exec, hidden, embed->vocab, layer_count, signature);
+                err = cudaGraphLaunch(exec, g_block_stream);
+                cudaGraphDestroy(graph);
+                if (err != cudaSuccess) {
+                  return make_block_error(env, "decode_graph_launch", -2300 - (int)err);
+                }
+              }
+            }
           } else {
             cudaGraphExec_t exec = NULL;
             err = cudaGraphInstantiate(&exec, graph, 0);
@@ -1395,10 +1425,21 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
               decode_graph_debug("instantiate_failed", 0, (int)err, past_len);
               graph_ok = 0;
             } else {
-              entry->graph = graph;
-              entry->exec = exec;
-              entry->launches = 1;
-              g_decode_graph_captures++;
+              entry = alloc_decode_graph(pos, past_len, hidden, embed->vocab,
+                                         layer_count, signature);
+              if (entry) {
+                entry->graph = graph;
+                entry->exec = exec;
+                entry->launches = 1;
+              } else {
+                cudaGraphDestroy(graph);
+              }
+              cudaGraphExec_t rolling_exec = NULL;
+              err = cudaGraphInstantiate(&rolling_exec, graph, 0);
+              if (err == cudaSuccess && rolling_exec) {
+                set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
+                                        layer_count, signature);
+              }
               err = cudaGraphLaunch(exec, g_block_stream);
               if (err != cudaSuccess) {
                 return make_block_error(env, "decode_graph_launch", -2100 - (int)err);
