@@ -109,8 +109,23 @@ static int upload_binary(BlockBuf *buf, const ErlNifBinary *bin) {
 
 static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
   size_t bytes = (size_t)w->in_features * (size_t)w->out_features * sizeof(uint16_t);
-  if (ensure_block_buf(&b_weight16, bytes) != 0) return -1;
-  uint16_t *d_weight = (uint16_t *)b_weight16.ptr;
+  PackedWeight *mw = (PackedWeight *)w;
+  if (mw->d_fp16_cache && mw->fp16_cache_ready && mw->fp16_cache_bytes == bytes) {
+    *out_weight = (uint16_t *)mw->d_fp16_cache;
+    return 0;
+  }
+  if (mw->d_fp16_cache && mw->fp16_cache_bytes != bytes) {
+    cudaFree(mw->d_fp16_cache);
+    mw->d_fp16_cache = NULL;
+    mw->fp16_cache_bytes = 0;
+    mw->fp16_cache_ready = 0;
+  }
+  if (!mw->d_fp16_cache) {
+    if (cudaMalloc(&mw->d_fp16_cache, bytes) != cudaSuccess) return -1;
+    mw->fp16_cache_bytes = bytes;
+    mw->fp16_cache_ready = 0;
+  }
+  uint16_t *d_weight = (uint16_t *)mw->d_fp16_cache;
   int rc;
   if (w->block_size > 0) {
     rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight, (const float *)w->d_scales,
@@ -121,6 +136,7 @@ static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
                                            d_weight, w->in_features, w->out_features);
   }
   if (rc != 0) return -20 + rc;
+  mw->fp16_cache_ready = 1;
   *out_weight = d_weight;
   return 0;
 }
@@ -417,6 +433,8 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   }
 
   if (ensure_block_lt() != 0) return make_error(env, "cuda_stream_init_failed");
+  vt_block_set_stream((void *)g_block_stream);
+  cuda_fp8_dequant_set_stream((void *)g_block_stream);
 
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
                              num_heads, num_kv_heads)) != 0)
@@ -452,6 +470,8 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
   if (cudaStreamSynchronize(g_block_stream) != cudaSuccess)
     return make_error(env, "block_stream_sync_failed");
+  vt_block_set_stream(NULL);
+  cuda_fp8_dequant_set_stream(NULL);
 
   ErlNifBinary out_hidden, out_k, out_v;
   if (!enif_alloc_binary(hidden16_bytes, &out_hidden) ||
