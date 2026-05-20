@@ -110,7 +110,7 @@ let assert Ok(result) = t.generate(model, "Hello", opts)
 The `ModelHandle` caches:
 
 - tokenizer state
-- BF16 embedding table as a native resource
+- BF16 or F16 embedding table as a native resource
 - all layer weights prepacked with blocked FP8 scales
 - fused QKV and gate-up packed weights
 - final RMSNorm bytes
@@ -128,6 +128,7 @@ one `ModelHandle` reusable across prompts.
 | :-- | :-- | --: | :-- |
 | TinyLlama-1.1B-Chat-v1.0 | validated | `2.31 ms/token` | `head_dim=64`, GQA fast path, byte-level BPE tokenizer. |
 | Llama-3.2-1B-Instruct | validated | `2.47 ms/token` | sharded SafeTensors, tied embeddings / `lm_head`, Llama-3 tokenizer path. |
+| NousResearch/Llama-2-7b-chat-hf | validated | `113.18 ms/token` | sharded F16 SafeTensors, `head_dim=128`, no GQA; exercises the dynamic CUDA fallback path. |
 
 The same public API drives both models:
 
@@ -140,9 +141,12 @@ let assert Ok(result) = t.generate(model, "Hello", opts)
 ## Performance
 
 On an RTX 4090, the current public handle API has been validated at
-`2.31 ms/token` for TinyLlama-1.1B and `2.47 ms/token` for
-Llama-3.2-1B-Instruct. A best TinyLlama FP8 W8A16 decode run reaches
-`448 tok/s`, ahead of the local Ollama baseline at `352 tok/s`.
+`2.31 ms/token` for TinyLlama-1.1B, `2.47 ms/token` for
+Llama-3.2-1B-Instruct, and `113.18 ms/token` for
+NousResearch/Llama-2-7b-chat-hf. The Llama-2-7B run is functional and coherent,
+but much slower because it exercises the current `head_dim=128` dynamic path.
+A best TinyLlama FP8 W8A16 decode run reaches `448 tok/s`, ahead of the local
+Ollama baseline at `352 tok/s`.
 
 Generation still calls `nt_forward_decode_step/8` once per decoded token.
 Prefill is also token-by-token today; a batched prefill path is future work.
@@ -151,9 +155,9 @@ Prefill is also token-by-token today; a batched prefill path is future work.
 
 - **Phi-2 is not a drop-in target.** Its architecture and tensor naming diverge
   from the Llama-family loader contract used by `ModelHandle`.
-- **Llama-2-7B is blocked by access, not by the loader design.** The public HF
-  checkpoint sits behind Meta's auth gate, so it is not part of the current
-  reproducible validation set.
+- **Llama-2-7B uses the slow dynamic attention path today.**
+  `NousResearch/Llama-2-7b-chat-hf` validates sharded F16 loading and
+  `head_dim=128` correctness, but decode throughput is not optimized yet.
 - **No batched prefill path yet.** The decode kernel is optimized for
   `batch=1`; batched prompt processing is still expressed as repeated
   decode-step calls.

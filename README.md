@@ -153,12 +153,12 @@ The pure-Gleam path needs only Gleam + Erlang/OTP.
 
 ### Validated models
 
-| Model                            | Status         | Path                  | Notes                                  |
-| :------------------------------- | :------------- | :-------------------- | :------------------------------------- |
-| TinyLlama-1.1B-Chat              | ✅ validated   | single safetensors    | byte-identical baseline                |
-| Llama-3.2-1B-Instruct (unsloth)  | ✅ validated   | single safetensors    | tied embeddings, byte-level BPE        |
-| Phi-2                            | ⚠️ partial    | sharded folder        | sharded discovery OK, Phi arch ≠ Llama |
-| Llama-2-7B-chat-hf               | 🔄 in progress | sharded (13.5GB, F16) | head_dim=128 fallback path             |
+| Model                            | Status        | Path                  | Notes                                  |
+| :------------------------------- | :------------ | :-------------------- | :------------------------------------- |
+| TinyLlama-1.1B-Chat              | ✅ validated  | single safetensors    | byte-identical baseline, `2.31 ms/tok` |
+| Llama-3.2-1B-Instruct (unsloth)  | ✅ validated  | single safetensors    | tied embeddings, byte-level BPE, `2.47 ms/tok` |
+| NousResearch/Llama-2-7b-chat-hf  | ✅ validated  | sharded F16 (13.5GB)  | `head_dim=128` dynamic path, `113 ms/tok` |
+| Phi-2                            | ⚠️ partial   | sharded folder        | sharded discovery OK, Phi arch ≠ Llama |
 
 ### Quantized GEMM kernels (RTX 4090)
 
