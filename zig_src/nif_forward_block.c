@@ -27,6 +27,9 @@ extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
                                     const void *d_input, float *d_out,
                                     int in_features, int out_features);
+extern int vt_w8a32_mmv_blocked_k16(const void *d_weight, const float *d_scales,
+                                    const float *d_input, float *d_out,
+                                    int in_features, int out_features);
 extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
                                      const void *k_cache, const void *v_cache, float *out,
                                      int past_len, int num_heads, int num_kv_heads,
@@ -73,7 +76,11 @@ typedef enum {
   BLOCK_GRAPH_ROPE_ATTN = 2,
   BLOCK_GRAPH_POST_ATTN = 3,
   BLOCK_GRAPH_FFN = 4,
-  BLOCK_GRAPH_OUT = 5
+  BLOCK_GRAPH_OUT = 5,
+  BLOCK_GRAPH_NORM1_X32 = 6,
+  BLOCK_GRAPH_ROPE_ATTN_X32 = 7,
+  BLOCK_GRAPH_POST_ATTN_X32 = 8,
+  BLOCK_GRAPH_FFN_X32 = 9
 } BlockGraphKind;
 
 typedef struct {
@@ -269,6 +276,20 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
   return st == CUBLAS_STATUS_SUCCESS ? 0 : (-1000 - (int)st);
 }
 
+static int gemm_w8a32_direct(const PackedWeight *w, const float *d_input,
+                             int batch, float *d_out) {
+  if (ensure_block_lt() != 0) return -1;
+  if (batch == 1 && w->block_size == 16) {
+    if (w->scales_count != (size_t)w->out_features * (size_t)(w->in_features / 16)) {
+      return -40;
+    }
+    return vt_w8a32_mmv_blocked_k16(w->d_weight, (const float *)w->d_scales,
+                                    d_input, d_out, w->in_features,
+                                    w->out_features);
+  }
+  return -41;
+}
+
 static int validate_fp8_weight(const PackedWeight *w) {
   return w && w->dtype == PW_FP8 && w->d_weight && w->d_scales &&
          w->in_features > 0 && w->out_features > 0;
@@ -348,6 +369,35 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
       if ((rc = vt_residual_add_fp32((float *)b_h1.ptr, (float *)b_down.ptr,
                                      (float *)b_x2.ptr, hidden)) != 0) return -1500 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0) return -1600 + rc;
+      return 0;
+    case BLOCK_GRAPH_NORM1_X32:
+      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) return -1700 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr, (float *)b_norm1.ptr,
+                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -1800 + rc;
+      return 0;
+    case BLOCK_GRAPH_ROPE_ATTN_X32:
+      if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr, (float *)b_rope.ptr, pos,
+                                   num_heads, LLAMA_HEAD_DIM)) != 0) return -1900 + rc;
+      if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, (float *)b_rope.ptr, pos,
+                                   num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -2000 + rc;
+      if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -2100 + rc;
+      if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -2200 + rc;
+      if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                         g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                         g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
+                                         g_attn_k_cache_ptr, g_attn_v_cache_ptr, (float *)b_attn.ptr,
+                                         past_len, num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -2300 + rc;
+      return 0;
+    case BLOCK_GRAPH_POST_ATTN_X32:
+      if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
+                                     (float *)b_h1.ptr, hidden)) != 0) return -2400 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr, (float *)b_norm2.ptr,
+                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -2500 + rc;
+      return 0;
+    case BLOCK_GRAPH_FFN_X32:
+      if ((rc = vt_silu_mul_fp32(g_gate_ptr ? g_gate_ptr : (float *)b_gate.ptr,
+                                 g_up_ptr ? g_up_ptr : (float *)b_up.ptr,
+                                 (float *)b_sw.ptr, ffn)) != 0) return -2600 + rc;
       return 0;
     default:
       return -9999;
