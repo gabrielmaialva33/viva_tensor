@@ -24,10 +24,13 @@ extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int 
 extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim);
 extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
 extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
+extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
+                                    const void *d_input, float *d_out,
+                                    int in_features, int out_features);
 extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
-                                    const void *k_cache, const void *v_cache, float *out,
-                                    int past_len, int num_heads, int num_kv_heads,
-                                    int head_dim);
+                                     const void *k_cache, const void *v_cache, float *out,
+                                     int past_len, int num_heads, int num_kv_heads,
+                                     int head_dim);
 extern void vt_block_set_stream(void *stream);
 extern void cuda_fp8_dequant_set_stream(void *stream);
 extern uint16_t float_to_half(float f);
@@ -233,6 +236,15 @@ static int get_block_gemm_plan(const PackedWeight *w, int batch, BlockGemmPlan *
 static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
                               int batch, float *d_out) {
   if (ensure_block_lt() != 0) return -1;
+
+  if (batch == 1 && w->block_size == 16) {
+    if (w->scales_count != (size_t)w->out_features * (size_t)(w->in_features / 16)) {
+      return -40;
+    }
+    return vt_w8a16_mmv_blocked_k16(w->d_weight, (const float *)w->d_scales,
+                                    d_input, d_out, w->in_features,
+                                    w->out_features);
+  }
 
   uint16_t *d_weight = NULL;
   int rc = dequant_weight_fp16(w, &d_weight);
