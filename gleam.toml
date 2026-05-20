@@ -82,24 +82,39 @@ gleeunit = ">= 1.0.0 and < 2.0.0"
 gleamy_bench = ">= 0.6.0 and < 1.0.0"
 
 [[documentation.pages]]
-title = "API Guide"
+title = "Getting Started"
+path = "getting-started.html"
+source = "./docs/en/guides/getting-started.md"
+
+[[documentation.pages]]
+title = "Tensor API"
 path = "api.html"
-source = "./docs/en/api.md"
+source = "./docs/en/api/tensor.md"
+
+[[documentation.pages]]
+title = "Inference API"
+path = "inference-api.html"
+source = "./docs/en/api/inference.md"
+
+[[documentation.pages]]
+title = "Llama Inference Guide"
+path = "inference-guide.html"
+source = "./docs/en/guides/inference.md"
 
 [[documentation.pages]]
 title = "Stability Policy"
 path = "stability.html"
-source = "./docs/en/stability.md"
+source = "./docs/en/reference/stability.md"
 
 [[documentation.pages]]
 title = "Project Structure"
 path = "project-structure.html"
-source = "./docs/en/project-structure.md"
+source = "./docs/en/reference/project-structure.md"
 
 [[documentation.pages]]
 title = "FFI Architecture"
 path = "ffi-architecture.html"
-source = "./docs/en/ffi-architecture.md"
+source = "./docs/en/guides/ffi-architecture.md"
 
 [[documentation.pages]]
 title = "Technical Paper"
