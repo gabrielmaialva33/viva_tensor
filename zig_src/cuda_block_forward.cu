@@ -106,6 +106,14 @@ __global__ void argmax_fp32_as_fp16_kernel(const float *x, int n, int *out_idx) 
   if (tid == 0) *out_idx = idxs[0];
 }
 
+__global__ void embedding_lookup_fp16_kernel(const uint16_t *table, const int *token_id,
+                                             uint16_t *out, int hidden, int vocab) {
+  int tok = *token_id;
+  int i = blockIdx.x * blockDim.x + threadIdx.x;
+  if (tok < 0 || tok >= vocab || i >= hidden) return;
+  out[i] = table[(size_t)tok * (size_t)hidden + (size_t)i];
+}
+
 __global__ void gqa_attn_naive_single_token_kernel(const float *q, const float *new_k,
                                                    const float *new_v,
                                                    const uint16_t *k_cache,
@@ -365,6 +373,16 @@ int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
 int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx) {
   if (!x || !out_idx || n <= 0) return -2;
   argmax_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, n, out_idx);
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
+                             int hidden, int vocab) {
+  if (!table || !token_id || !out || hidden <= 0 || vocab <= 0) return -2;
+  int block = 256;
+  int grid = (hidden + block - 1) / block;
+  embedding_lookup_fp16_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+      (const uint16_t *)table, token_id, (uint16_t *)out, hidden, vocab);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
