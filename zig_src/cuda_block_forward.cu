@@ -201,8 +201,10 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
                                              const uint16_t *input,
                                              float *out,
                                              int in_features,
+                                             int out_features,
                                              int num_blocks) {
-  int out_col = blockIdx.x;
+  int out_col = blockIdx.x * blockDim.y + threadIdx.y;
+  if (out_col >= out_features) return;
   int lane = threadIdx.x & 31;
   const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
   const float *s_row = scales + (size_t)out_col * (size_t)num_blocks;
@@ -355,9 +357,11 @@ int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
     return -2;
   }
   int num_blocks = in_features / 16;
-  w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
+  dim3 block(32, 4, 1);
+  dim3 grid((out_features + block.y - 1) / block.y, 1, 1);
+  w8a16_mmv_blocked_k16_kernel<<<grid, block, 0, g_vt_block_stream>>>(
       (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out,
-      in_features, num_blocks);
+      in_features, out_features, num_blocks);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
