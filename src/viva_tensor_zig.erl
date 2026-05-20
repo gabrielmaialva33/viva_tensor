@@ -129,7 +129,6 @@
     nt_prepack_fp8/2,
     nt_prepack_fp8_blocked/3,
     nt_embedding_table_new/3,
-    nt_embedding_row/2,
     nt_floats_to_fp16_binary/1,
     nt_silu_mul/2,
     nt_list_add_fp16/2,
@@ -602,7 +601,6 @@ cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_n
 nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize) -> erlang:nif_error(nif_not_loaded).
 nt_embedding_table_new(_Bf16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).
-nt_embedding_row(_EmbeddingTable, _TokenId) -> erlang:nif_error(nif_not_loaded).
 nt_floats_to_fp16_binary(_Floats) -> erlang:nif_error(nif_not_loaded).
 nt_silu_mul(_Gate, _Up) -> erlang:nif_error(nif_not_loaded).
 nt_list_add_fp16(_A, _B) -> erlang:nif_error(nif_not_loaded).

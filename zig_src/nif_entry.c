@@ -346,7 +346,6 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_prepack_fp8_blocked", 3, nt_prepack_fp8_blocked, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_embedding_table_new", 3, nt_embedding_table_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nt_embedding_row", 2, nt_embedding_row, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8", 4, nt_linear_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8_w8a16", 3, nt_linear_fp8_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
