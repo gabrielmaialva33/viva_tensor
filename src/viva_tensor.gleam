@@ -261,6 +261,37 @@ pub type TensorCapabilities {
   )
 }
 
+/// Opaque handle for a loaded Llama-family HF model.
+pub type ModelHandle
+
+/// Top-k sampling setting for `GenerateOpts`.
+pub type GenerateTopK {
+  TopKInfinity
+  TopK(Int)
+}
+
+/// Text generation options for `generate`.
+pub type GenerateOpts {
+  GenerateOpts(
+    max_new_tokens: Int,
+    temperature: Float,
+    top_k: GenerateTopK,
+    top_p: Float,
+    seed: Int,
+    stop_on_eos: Bool,
+  )
+}
+
+/// Text generation result.
+pub type Generation {
+  Generation(
+    tokens: List(Int),
+    text: String,
+    ms_per_token: Float,
+    total_tokens: Int,
+  )
+}
+
 /// Result storage selected by the RTX-first planner.
 pub type AcceleratedTensor =
   cuda.AcceleratedTensor
@@ -5558,6 +5589,63 @@ pub fn greedy_generate(
   )
 }
 
+/// Load a Llama-family HuggingFace SafeTensors model into an opaque handle.
+///
+/// This caches the tokenizer, embedding table, blocked FP8 layer weights,
+/// final RMSNorm, `lm_head`, and RoPE frequencies for repeated generation.
+pub fn load_model(path: String) -> Result(ModelHandle, String) {
+  load_model_ffi(path)
+}
+
+/// Generate text from a loaded model handle.
+///
+/// `temperature == 0.0` uses the fused argmax decode-step path. Non-zero
+/// sampling is intentionally left for the next sampling-focused API pass.
+pub fn generate(
+  handle: ModelHandle,
+  prompt: String,
+  opts: GenerateOpts,
+) -> Result(Generation, String) {
+  let top_k = case opts.top_k {
+    TopKInfinity -> -1
+    TopK(k) -> k
+  }
+
+  case
+    generate_ffi(
+      handle,
+      prompt,
+      opts.max_new_tokens,
+      opts.temperature,
+      top_k,
+      opts.top_p,
+      opts.seed,
+      opts.stop_on_eos,
+    )
+  {
+    Ok(#(tokens, text, ms_per_token, total_tokens)) ->
+      Ok(Generation(
+        tokens: tokens,
+        text: text,
+        ms_per_token: ms_per_token,
+        total_tokens: total_tokens,
+      ))
+    Error(reason) -> Error(reason)
+  }
+}
+
+/// Default deterministic argmax generation options.
+pub fn default_generate_opts() -> GenerateOpts {
+  GenerateOpts(
+    max_new_tokens: 50,
+    temperature: 0.0,
+    top_k: TopKInfinity,
+    top_p: 1.0,
+    seed: 42,
+    stop_on_eos: True,
+  )
+}
+
 // --- Inference API (re-export) ----------------------------------------------
 //
 // High-level inference primitives layered on top of the championship
@@ -5644,3 +5732,18 @@ pub fn linear_swiglu_fp8(
 ) -> Result(Tensor, TensorError) {
   native_inference.linear_swiglu_fp8(input, gate_weight, up_weight, bias)
 }
+
+@external(erlang, "viva_tensor_llm", "load_for_gleam")
+fn load_model_ffi(path: String) -> Result(ModelHandle, String)
+
+@external(erlang, "viva_tensor_llm", "generate_for_gleam")
+fn generate_ffi(
+  handle: ModelHandle,
+  prompt: String,
+  max_new_tokens: Int,
+  temperature: Float,
+  top_k: Int,
+  top_p: Float,
+  seed: Int,
+  stop_on_eos: Bool,
+) -> Result(#(List(Int), String, Float, Int), String)

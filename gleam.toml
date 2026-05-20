@@ -97,6 +97,11 @@ path = "inference-api.html"
 source = "./docs/en/api/inference.md"
 
 [[documentation.pages]]
+title = "LLM ModelHandle API"
+path = "llm-api.html"
+source = "./docs/en/api/llm.md"
+
+[[documentation.pages]]
 title = "Llama Inference Guide"
 path = "inference-guide.html"
 source = "./docs/en/guides/inference.md"
