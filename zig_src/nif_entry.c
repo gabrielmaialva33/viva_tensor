@@ -147,8 +147,6 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
     return -1;
   if (register_block_kv_cache_resource(env) != 0)
     return -1;
-  if (register_model_layers_resource(env) != 0)
-    return -1;
 #endif
 
   return 0;
@@ -357,10 +355,8 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_linear_int4_sparse", 3, nt_linear_int4_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_kv_cache_new", 2, nt_kv_cache_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nt_model_layers_new", 2, nt_model_layers_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_block_w8a16", 14, nt_forward_block_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 8, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"nt_forward_decode_step_v2", 7, nt_forward_decode_step_v2, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
