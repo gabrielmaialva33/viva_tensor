@@ -129,7 +129,7 @@ def viva_tensor_gpu_benchmark():
     print(f"{'='*70}\n")
 
     results = {}
-    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
     for dtype_name, matmul_fn, create_fn, avail_fn in [
         ('FP32', 'ct_matmul_inplace', 'ct_from_list', None),
