@@ -139,7 +139,7 @@ The pure-Gleam path needs only Gleam + Erlang/OTP.
 
 ## 📊 Performance
 
-> All numbers measured on **RTX 4090** (Ada SM89) + Ryzen 24-core. Reproducible
+> All numbers measured on **RTX 4090** (Ada SM89) + Intel i9-13900K (32 threads @ 5.80 GHz). Reproducible
 > via [`bench/`](./bench/) harness.
 
 ### Text generation — TinyLlama-1.1B-Chat (FP8 W8A16)
