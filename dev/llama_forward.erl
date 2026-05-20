@@ -831,7 +831,6 @@ decode_loop_decode_fused(_NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0, _EOS, Acc) -
     lists:reverse(Acc);
 decode_loop_decode_fused(NextTok, Caches, Layers, EmbedRes, FinalNormBin, LmHeadPk,
                          RopeFreqs, Pos, Remaining, EOS, Acc) ->
-    io:format("  pos=~p -> token ~p~n", [Pos, NextTok]),
     case NextTok of
         EOS ->
             lists:reverse([NextTok | Acc]);
