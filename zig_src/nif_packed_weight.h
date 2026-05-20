@@ -62,18 +62,30 @@ typedef struct {
   size_t compressed_bytes;
 } PackedWeight;
 
+typedef struct {
+  void *d_weight;       /* FP16 embedding table on device, row-major [vocab, hidden]. */
+  size_t bytes;
+  int vocab;
+  int hidden;
+} EmbeddingTable;
+
 extern ErlNifResourceType *PACKED_WEIGHT_RES;
+extern ErlNifResourceType *EMBEDDING_TABLE_RES;
 
 void packed_weight_destructor(ErlNifEnv *env, void *obj);
 int register_packed_weight_resource(ErlNifEnv *env);
+void embedding_table_destructor(ErlNifEnv *env, void *obj);
+int register_embedding_table_resource(ErlNifEnv *env);
 PackedWeight *alloc_packed_weight(void);
 ERL_NIF_TERM make_packed_weight_term(ErlNifEnv *env, PackedWeight *w);
 PackedWeight *get_packed_weight(ErlNifEnv *env, ERL_NIF_TERM term);
+EmbeddingTable *get_embedding_table(ErlNifEnv *env, ERL_NIF_TERM term);
 
 /* NIF entry points (defined in the per-dtype files). Each is registered
  * in nif_funcs[] inside nif_entry.c. Stubs in viva_tensor_zig.erl. */
 ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM nt_embedding_table_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
