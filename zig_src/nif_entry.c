@@ -349,6 +349,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_linear_int8_sparse", 3, nt_linear_int8_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_int4_sparse", 3, nt_linear_int4_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_forward_block_w8a16", 14, nt_forward_block_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
