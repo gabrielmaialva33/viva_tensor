@@ -1,0 +1,61 @@
+name: Decode Benchmark
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  GLEAM_VERSION: "1.16.0"
+  OTP_VERSION: "28"
+  DECODE_THRESHOLD_MS: "3.0"
+  DECODE_BASELINE_MS: "2.23"
+  DECODE_MAX_REGRESSION: "1.10"
+  TINYLLAMA_MODEL: "tmp/tinyllama/model.safetensors"
+  TINYLLAMA_TOKENIZER: "tmp/tinyllama/tokenizer.json"
+
+jobs:
+  tinyllama-decode:
+    name: TinyLlama Decode Regression
+    runs-on: [ self-hosted, linux, x64, cuda, rtx4090 ]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: erlef/setup-beam@v1
+        with:
+          otp-version: ${{ env.OTP_VERSION }}
+          gleam-version: ${{ env.GLEAM_VERSION }}
+
+      - name: Verify TinyLlama fixtures
+        run: |
+          set -euo pipefail
+          test -f "$TINYLLAMA_MODEL"
+          test -f "$TINYLLAMA_TOKENIZER"
+          nvidia-smi
+
+      - name: Build and test
+        run: |
+          set -euo pipefail
+          make cutlass-libs
+          make zig
+          gleam test
+          erlc -o build/dev/erlang/viva_tensor/ebin dev/llama_forward.erl
+
+      - name: Run decode benchmark
+        run: |
+          set -euo pipefail
+          erl -pa build/dev/erlang/viva_tensor/ebin -noshell -eval 'llama_forward:run_generate_decode_fused(22, <<"Hello">>, 50, #{}, 16), halt(0).' \
+            | tee decode_benchmark.txt
+          ms_per_token="$(sed -n 's/.*(\([0-9.]*\) ms\/token).*/\1/p' decode_benchmark.txt | tail -1)"
+          test -n "$ms_per_token"
+          awk -v got="$ms_per_token" -v limit="$DECODE_THRESHOLD_MS" 'BEGIN { if (got > limit) exit 1 }'
+          awk -v got="$ms_per_token" -v base="$DECODE_BASELINE_MS" -v max="$DECODE_MAX_REGRESSION" 'BEGIN { if (got > base * max) exit 1 }'
+
+      - name: Upload decode benchmark
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: decode-benchmark
+          path: decode_benchmark.txt
+          retention-days: 30
