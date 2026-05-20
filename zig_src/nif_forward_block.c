@@ -23,6 +23,7 @@ extern int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n
 extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int n);
 extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim);
 extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
+extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
 extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
                                     const void *k_cache, const void *v_cache, float *out,
                                     int past_len, int num_heads, int num_kv_heads,
@@ -48,7 +49,7 @@ static BlockBuf b_attn = {0}, b_attn16 = {0}, b_o = {0}, b_h1 = {0};
 static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
-static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0};
+static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0}, b_argmax = {0};
 static void *g_attn_k_cache_ptr = NULL;
 static void *g_attn_v_cache_ptr = NULL;
 static float *g_q_ptr = NULL, *g_k_ptr = NULL, *g_v_ptr = NULL;
@@ -877,7 +878,8 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       ensure_block_buf(&b_norm1, hidden32_bytes) != 0 ||
       ensure_block_buf(&b_x2, hidden32_bytes) != 0 ||
       ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
-      ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0) {
+      ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
+      ensure_block_buf(&b_argmax, sizeof(int)) != 0) {
     return make_error(env, "cuda_malloc_decode_failed");
   }
 
@@ -934,19 +936,17 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                                (float *)b_logits.ptr)) != 0)
     return make_block_error(env, "lm_head", rc);
 
-  size_t logits_bytes = (size_t)lm_head->out_features * sizeof(float);
-  float *host_logits = (float *)malloc(logits_bytes);
-  if (!host_logits) return make_error(env, "alloc_logits_host_failed");
+  int argmax_rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
+                                         (int *)b_argmax.ptr);
+  if (argmax_rc != 0) return make_block_error(env, "argmax_gpu", argmax_rc);
+  int next_token = 0;
   if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
-      cudaMemcpy(host_logits, b_logits.ptr, logits_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
-    free(host_logits);
-    return make_error(env, "download_logits_failed");
+      cudaMemcpy(&next_token, b_argmax.ptr, sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
+    return make_error(env, "download_argmax_failed");
   }
   vt_block_set_stream(NULL);
   cuda_fp8_dequant_set_stream(NULL);
 
-  int next_token = argmax_logits_like_erlang(host_logits, lm_head->out_features);
-  free(host_logits);
   return make_ok(env, enif_make_int(env, next_token));
 #endif
 }

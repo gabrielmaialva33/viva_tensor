@@ -75,6 +75,37 @@ __global__ void silu_mul_fp32_kernel(const float *gate, const float *up, float *
   }
 }
 
+__global__ void argmax_fp32_as_fp16_kernel(const float *x, int n, int *out_idx) {
+  __shared__ float vals[256];
+  __shared__ int idxs[256];
+  int tid = threadIdx.x;
+  float best = -INFINITY;
+  int best_idx = 0;
+  for (int i = tid; i < n; i += blockDim.x) {
+    float v = __half2float(__float2half_rn(x[i]));
+    if (v > best) {
+      best = v;
+      best_idx = i;
+    }
+  }
+  vals[tid] = best;
+  idxs[tid] = best_idx;
+  __syncthreads();
+
+  for (int stride = blockDim.x >> 1; stride > 0; stride >>= 1) {
+    if (tid < stride) {
+      float other = vals[tid + stride];
+      int other_idx = idxs[tid + stride];
+      if (other > vals[tid] || (other == vals[tid] && other_idx < idxs[tid])) {
+        vals[tid] = other;
+        idxs[tid] = other_idx;
+      }
+    }
+    __syncthreads();
+  }
+  if (tid == 0) *out_idx = idxs[0];
+}
+
 __global__ void gqa_attn_naive_single_token_kernel(const float *q, const float *new_k,
                                                    const float *new_v,
                                                    const uint16_t *k_cache,
@@ -262,6 +293,12 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   }
+  return cudaGetLastError() == cudaSuccess ? 0 : -1;
+}
+
+int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx) {
+  if (!x || !out_idx || n <= 0) return -2;
+  argmax_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, n, out_idx);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 

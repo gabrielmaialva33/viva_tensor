@@ -555,11 +555,12 @@ extern int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
                                              int K,
                                              int N);
 extern int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
-                                                       const float *d_scales,
-                                                       void *d_fp16,
-                                                       int K,
-                                                       int N,
-                                                       int block_size);
+                                                      const float *d_scales,
+                                                      void *d_fp16,
+                                                      int K,
+                                                      int N,
+                                                      int block_size);
+extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
 /* cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core ~165 TFLOPS). */
 extern int cublaslt_fp16_bench(int M, int N, int K, int iters);
 /* N axpy kernels as N stream launches (baseline). */
