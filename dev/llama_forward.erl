@@ -796,15 +796,16 @@ run_generate_decode_fused_argmax(NumLayers, Prompt, MaxNew, BlockSize) ->
     io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
 
     Caches = [begin {ok, C} = viva_tensor_zig:nt_kv_cache_new(2048, ?KV_DIM), C end
-              || _ <- lists:seq(1, NumLayers)],
+               || _ <- lists:seq(1, NumLayers)],
+    {ok, ModelLayers} = viva_tensor_zig:nt_model_layers_new(Layers, Caches),
     TPrompt = ms(),
     {FirstNext, _} = lists:foldl(
-        fun({Pos, TokenId}, {_, CL}) ->
+        fun({Pos, TokenId}, {_, ML}) ->
             Next = forward_decode_step(TokenId, EmbedRes, Layers, FinalNormBin,
-                                       LmHeadPk, CL, Pos, RopeFreqs),
-            {Next, CL}
+                                       LmHeadPk, ML, Pos, RopeFreqs),
+            {Next, ML}
         end,
-        {undefined, Caches},
+        {undefined, ModelLayers},
         lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
     ),
     io:format("[~5w ms] Full decode-step prefill of ~p prompt tokens done~n",
@@ -812,7 +813,7 @@ run_generate_decode_fused_argmax(NumLayers, Prompt, MaxNew, BlockSize) ->
 
     TGen = ms(),
     GeneratedIds = decode_loop_decode_fused(
-        FirstNext, Caches, Layers, EmbedRes, FinalNormBin, LmHeadPk,
+        FirstNext, ModelLayers, Layers, EmbedRes, FinalNormBin, LmHeadPk,
         RopeFreqs, length(PromptTokens), MaxNew, EOS, []),
     GenMs = ms() - TGen,
     TokCount = length(GeneratedIds),
@@ -827,17 +828,17 @@ run_generate_decode_fused_argmax(NumLayers, Prompt, MaxNew, BlockSize) ->
     io:format("[~5w ms] Total~n", [ms() - T0]),
     {ok, GeneratedIds, GenText}.
 
-decode_loop_decode_fused(_NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0, _EOS, Acc) ->
+decode_loop_decode_fused(_NextTok, _ML, _L, _E, _FN, _LH, _R, _P, 0, _EOS, Acc) ->
     lists:reverse(Acc);
-decode_loop_decode_fused(NextTok, Caches, Layers, EmbedRes, FinalNormBin, LmHeadPk,
-                         RopeFreqs, Pos, Remaining, EOS, Acc) ->
+decode_loop_decode_fused(NextTok, ModelLayers, Layers, EmbedRes, FinalNormBin, LmHeadPk,
+                          RopeFreqs, Pos, Remaining, EOS, Acc) ->
     case NextTok of
         EOS ->
             lists:reverse([NextTok | Acc]);
         _ ->
             Following = forward_decode_step(NextTok, EmbedRes, Layers, FinalNormBin,
-                                            LmHeadPk, Caches, Pos, RopeFreqs),
-            decode_loop_decode_fused(Following, Caches, Layers, EmbedRes,
+                                            LmHeadPk, ModelLayers, Pos, RopeFreqs),
+            decode_loop_decode_fused(Following, ModelLayers, Layers, EmbedRes,
                                      FinalNormBin, LmHeadPk, RopeFreqs,
                                      Pos + 1, Remaining - 1, EOS,
                                      [NextTok | Acc])
@@ -892,11 +893,11 @@ forward_block_fused(HiddenFp16, Layer, Pos, RopeFreqs, KCache, VCache) ->
             error({forward_block_w8a16_failed, Error})
     end.
 
-forward_decode_step(TokenId, EmbedRes, Layers, FinalNormBin, LmHeadPk,
-                    Caches, Pos, RopeFreqs) ->
-    case viva_tensor_zig:nt_forward_decode_step(
-             TokenId, EmbedRes, Layers, FinalNormBin, LmHeadPk,
-             Caches, Pos, RopeFreqs) of
+forward_decode_step(TokenId, EmbedRes, _Layers, FinalNormBin, LmHeadPk,
+                    ModelLayers, Pos, RopeFreqs) ->
+    case viva_tensor_zig:nt_forward_decode_step_v2(
+             TokenId, EmbedRes, ModelLayers, FinalNormBin, LmHeadPk,
+             Pos, RopeFreqs) of
         {ok, NextToken} when is_integer(NextToken) ->
             NextToken;
         Error ->
