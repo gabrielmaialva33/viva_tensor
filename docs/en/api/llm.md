@@ -42,8 +42,25 @@ pub fn main() {
 }
 ```
 
-`temperature: 0.0` uses the fused argmax decode-step NIF. Temperature sampling,
-top-k, and top-p are reserved for the next sampling-focused pass.
+`temperature: 0.0` uses the fused argmax decode-step NIF for byte-identical
+reproducibility. `temperature > 0.0` uses fused top-k logits plus host
+temperature, top-k, top-p, and seeded multinomial sampling.
+
+For reproducible sampling:
+
+```gleam
+let opts =
+  t.GenerateOpts(
+    max_new_tokens: 20,
+    temperature: 0.8,
+    top_k: t.TopK(40),
+    top_p: 0.95,
+    seed: 42,
+    stop_on_eos: True,
+  )
+
+let assert Ok(result) = t.generate(model, "Hello", opts)
+```
 
 ## Erlang
 
@@ -82,10 +99,10 @@ top-k, and top-p are reserved for the next sampling-focused pass.
 | Option | Default | Notes |
 | :-- | :-- | :-- |
 | `max_new_tokens` | `50` | Maximum generated tokens. |
-| `temperature` | `0.0` | `0.0` is argmax; non-zero sampling is not enabled yet. |
-| `top_k` | `infinity` | Parsed for API stability; used when sampling lands. |
-| `top_p` | `1.0` | Parsed for API stability; used when sampling lands. |
-| `seed` | `42` | Parsed for API stability; used when sampling lands. |
+| `temperature` | `0.0` | `0.0` keeps the argmax path and absolute reproducibility; values above zero enable sampling. |
+| `top_k` | `infinity` | Sampling candidate cap. `infinity` uses up to 256 fused top-k logits; explicit values are capped at 256. |
+| `top_p` | `1.0` | Nucleus sampling probability applied over the fused candidate set. |
+| `seed` | `42` | Deterministic seed; the same prompt, model, and options reproduce the same sampled tokens. |
 | `stop_on_eos` | `true` | Stop after emitting EOS. |
 
 ## Cached vs Per Call
