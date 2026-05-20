@@ -62,6 +62,22 @@ for the full diagnostic story.
 For TinyLlama-1.1B `block_size=16` brings the argmax token in line with
 the HF transformers fp32 reference.
 
+### Full decode-step NIF
+
+`nt_embedding_table_new/3` uploads `embed_tokens.weight` once as a device
+resident FP16 table. `nt_forward_decode_step/8` then takes a token id, that
+embedding resource, the blocked layer records, final RMSNorm weights, packed
+`lm_head`, KV cache resources, position, and RoPE frequencies. It performs the
+embedding lookup, all transformer blocks, final RMSNorm, `lm_head`, and argmax
+inside one NIF call per decoded token.
+
+The dev harness exposes this path as:
+
+```sh
+erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
+  -eval 'llama_forward:run_generate_decode_fused(22, <<"Hello">>, 20, #{}, 16), halt(0).'
+```
+
 ## INT8 2:4 sparse (cuSPARSELt)
 
 ```gleam

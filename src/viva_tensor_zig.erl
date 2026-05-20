@@ -128,6 +128,7 @@
     %% Inference API — PackedWeight resource + prepack/linear NIFs
     nt_prepack_fp8/2,
     nt_prepack_fp8_blocked/3,
+    nt_embedding_table_new/3,
     nt_floats_to_fp16_binary/1,
     nt_silu_mul/2,
     nt_list_add_fp16/2,
@@ -141,6 +142,7 @@
     nt_linear_swiglu_fp8/5,
     nt_kv_cache_new/2,
     nt_forward_block_w8a16/14,
+    nt_forward_decode_step/8,
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
     cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
@@ -598,6 +600,7 @@ cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_n
 %% Inference API — PackedWeight + prepack + linear forward + SwiGLU
 nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize) -> erlang:nif_error(nif_not_loaded).
+nt_embedding_table_new(_Bf16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).
 nt_floats_to_fp16_binary(_Floats) -> erlang:nif_error(nif_not_loaded).
 nt_silu_mul(_Gate, _Up) -> erlang:nif_error(nif_not_loaded).
 nt_list_add_fp16(_A, _B) -> erlang:nif_error(nif_not_loaded).
@@ -613,6 +616,9 @@ nt_kv_cache_new(_MaxSeq, _KvDim) -> erlang:nif_error(nif_not_loaded).
 nt_forward_block_w8a16(_HiddenFp16, _Q, _K, _V, _O, _Gate, _Up, _Down,
                        _Norm1Fp32, _Norm2Fp32, _Pos, _RopeFreqsFp32,
                        _KCacheFp16, _VCacheFp16) -> erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step(_TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
+                       _LmHead, _KvCaches, _Pos, _RopeFreqsFp32) ->
+    erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_not_loaded).

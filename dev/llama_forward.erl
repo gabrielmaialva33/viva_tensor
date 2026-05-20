@@ -21,7 +21,8 @@
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
           bisect_w8a16_blocked/0, bisect_w8a16_blocked/1,
-          run_n_w8a16/2, run_generate_w8a16/5, run_generate_fused/5, profile_w8a16/2,
+          run_n_w8a16/2, run_generate_w8a16/5, run_generate_fused/5,
+          run_generate_decode_fused/5, profile_w8a16/2,
           bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
           build_layer/2, build_layer_calibrated/3,
           build_layer_blocked/3,
@@ -758,6 +759,87 @@ run_generate_fused(NumLayers, Prompt, MaxNew, SampOpts, BlockSize) ->
     io:format("[~5w ms] Total~n", [ms() - T0]),
     {ok, GeneratedIds, GenText}.
 
+%% End-to-end text generation using one NIF call per decoded token.
+run_generate_decode_fused(NumLayers, Prompt, MaxNew, SampOpts, BlockSize) ->
+    case maps:size(SampOpts) of
+        0 ->
+            run_generate_decode_fused_argmax(NumLayers, Prompt, MaxNew, BlockSize);
+        _ ->
+            io:format("decode_fused currently supports argmax sampling; falling back to block-fused path~n", []),
+            run_generate_fused(NumLayers, Prompt, MaxNew, SampOpts, BlockSize)
+    end.
+
+run_generate_decode_fused_argmax(NumLayers, Prompt, MaxNew, BlockSize) ->
+    io:format("~n=== TinyLlama-1.1B full decode-step W8A16 text gen (N=~p, block=~p) ===~n~n",
+              [NumLayers, BlockSize]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(
+        <<"tmp/tinyllama/tokenizer.json">>),
+    Layers = [build_layer_blocked(Header, I, BlockSize)
+              || I <- lists:seq(0, NumLayers - 1)],
+    EmbedRes = load_embed_table_resource(Header),
+    FinalNormBin = load_rmsnorm_bin(Header, <<"model.norm.weight">>),
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack_blocked(LmHead, ?HIDDEN, ?VOCAB, BlockSize),
+    RopeFreqs = precompute_rope_freqs_bin(?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Model + tokenizer ready~n", [ms() - T0]),
+
+    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    io:format("Prompt: ~ts~n", [Prompt]),
+    io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
+
+    Caches = [begin {ok, C} = viva_tensor_zig:nt_kv_cache_new(2048, ?KV_DIM), C end
+              || _ <- lists:seq(1, NumLayers)],
+    TPrompt = ms(),
+    {FirstNext, _} = lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            Next = forward_decode_step(TokenId, EmbedRes, Layers, FinalNormBin,
+                                       LmHeadPk, CL, Pos, RopeFreqs),
+            {Next, CL}
+        end,
+        {undefined, Caches},
+        lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
+    ),
+    io:format("[~5w ms] Full decode-step prefill of ~p prompt tokens done~n",
+              [ms() - TPrompt, length(PromptTokens)]),
+
+    TGen = ms(),
+    GeneratedIds = decode_loop_decode_fused(
+        FirstNext, Caches, Layers, EmbedRes, FinalNormBin, LmHeadPk,
+        RopeFreqs, length(PromptTokens), MaxNew, EOS, []),
+    GenMs = ms() - TGen,
+    TokCount = length(GeneratedIds),
+    PerTok = case TokCount of 0 -> 0.0; _ -> float(GenMs) / float(TokCount) end,
+    io:format("[~5w ms] Full decode-step generated ~p tokens (~.2f ms/token)~n",
+              [GenMs, TokCount, PerTok]),
+
+    PromptText = viva_tensor_tokenizer_ffi:decode(Tokenizer, PromptTokens),
+    GenText = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    io:format("~n--- prompt ---~n~ts~n--- generated ---~n~ts~n--- end ---~n",
+              [PromptText, GenText]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    {ok, GeneratedIds, GenText}.
+
+decode_loop_decode_fused(_NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0, _EOS, Acc) ->
+    lists:reverse(Acc);
+decode_loop_decode_fused(NextTok, Caches, Layers, EmbedRes, FinalNormBin, LmHeadPk,
+                         RopeFreqs, Pos, Remaining, EOS, Acc) ->
+    io:format("  pos=~p -> token ~p~n", [Pos, NextTok]),
+    case NextTok of
+        EOS ->
+            lists:reverse([NextTok | Acc]);
+        _ ->
+            Following = forward_decode_step(NextTok, EmbedRes, Layers, FinalNormBin,
+                                            LmHeadPk, Caches, Pos, RopeFreqs),
+            decode_loop_decode_fused(Following, Caches, Layers, EmbedRes,
+                                     FinalNormBin, LmHeadPk, RopeFreqs,
+                                     Pos + 1, Remaining - 1, EOS,
+                                     [NextTok | Acc])
+    end.
+
 decode_loop_fused(_H, _C, _L, _E, _FN, _LH, _R, _NL, _P, 0, _O, _EOS, Acc) ->
     lists:reverse(Acc);
 decode_loop_fused(HiddenBin, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
@@ -805,6 +887,17 @@ forward_block_fused(HiddenFp16, Layer, Pos, RopeFreqs, KCache, VCache) ->
              <<VCache/binary, VAppend/binary>>};
         Error ->
             error({forward_block_w8a16_failed, Error})
+    end.
+
+forward_decode_step(TokenId, EmbedRes, Layers, FinalNormBin, LmHeadPk,
+                    Caches, Pos, RopeFreqs) ->
+    case viva_tensor_zig:nt_forward_decode_step(
+             TokenId, EmbedRes, Layers, FinalNormBin, LmHeadPk,
+             Caches, Pos, RopeFreqs) of
+        {ok, NextToken} when is_integer(NextToken) ->
+            NextToken;
+        Error ->
+            error({forward_decode_step_failed, Error})
     end.
 
 %% Profile a single layer forward — accumulate microsecond timing per stage
@@ -1209,6 +1302,14 @@ load_embed_table(Header) ->
     {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header,
         <<"model.embed_tokens.weight">>),
     {Bf16, ?HIDDEN}.
+
+load_embed_table_resource(Header) ->
+    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header,
+        <<"model.embed_tokens.weight">>),
+    case viva_tensor_zig:nt_embedding_table_new(Bf16, ?VOCAB, ?HIDDEN) of
+        {ok, Resource} when is_reference(Resource) -> Resource;
+        Other -> error({embedding_table_resource_failed, Other})
+    end.
 
 embed_row({Bf16, RowLen}, TokenId) ->
     ByteOff = TokenId * RowLen * 2,    %% bf16 = 2 bytes/elem
