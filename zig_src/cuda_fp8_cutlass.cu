@@ -134,6 +134,12 @@ using GemmFP32AccOutF32 = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 extern "C" {
 
+static cudaStream_t g_fp8_dequant_stream = 0;
+
+void cuda_fp8_dequant_set_stream(void *stream) {
+    g_fp8_dequant_stream = (cudaStream_t)stream;
+}
+
 /* Dequant FP8 col-major weight back to FP16. Supports both layouts:
  *   block_size == 0  -> per-channel: scales[col]
  *   block_size  > 0  -> per-block along K: scales[col * (K/block_size) + (row/block_size)]
@@ -171,7 +177,7 @@ int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
     int total = K * N;
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
-    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads>>>(
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, g_fp8_dequant_stream>>>(
         static_cast<const cutlass::float_e4m3_t *>(d_fp8),
         d_scales,
         static_cast<cutlass::half_t *>(d_fp16),
@@ -194,7 +200,7 @@ int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
     int total = K * N;
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
-    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads>>>(
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, g_fp8_dequant_stream>>>(
         static_cast<const cutlass::float_e4m3_t *>(d_fp8),
         d_scales,
         static_cast<cutlass::half_t *>(d_fp16),
