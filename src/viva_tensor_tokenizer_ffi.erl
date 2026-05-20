@@ -75,8 +75,13 @@ build_state(Json) ->
 
     %% Build merge ranks: {<<"a">>, <<"b">>} -> Rank (lower = higher priority).
     {_, Merges} = lists:foldl(
-        fun(MergeBin, {Rank, Acc}) ->
-            [A, B] = binary:split(MergeBin, <<" ">>),
+        fun(Merge, {Rank, Acc}) ->
+            {A, B} = case Merge of
+                [A0, B0] when is_binary(A0), is_binary(B0) -> {A0, B0};
+                MergeBin when is_binary(MergeBin) ->
+                    [A0, B0] = binary:split(MergeBin, <<" ">>),
+                    {A0, B0}
+            end,
             {Rank + 1, maps:put({A, B}, Rank, Acc)}
         end,
         {0, #{}},

@@ -31,7 +31,11 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
                   || I <- lists:seq(0, maps:get(num_layers, Config) - 1)],
         EmbedTable = load_embed_table_resource(Header, Config),
         FinalNorm = load_rmsnorm_bin(Header, <<"model.norm.weight">>),
-        LmHead = load_linear(Header, <<"lm_head.weight">>,
+        LmHeadName = case maps:get(tie_word_embeddings, Config, false) of
+            true -> <<"model.embed_tokens.weight">>;
+            false -> <<"lm_head.weight">>
+        end,
+        LmHead = load_linear(Header, LmHeadName,
                              maps:get(vocab_size, Config), maps:get(hidden_size, Config)),
         LmHeadPacked = prepack_blocked(
             LmHead,
@@ -302,7 +306,16 @@ model_config(Header, SafetensorsPath, Opts) ->
     NumLayers = opt(Opts, num_layers, detect_num_layers(Header)),
     BlockSize = opt(Opts, block_size, ?DEFAULT_BLOCK_SIZE),
     {VocabSize0, HiddenSize0} = shape2(Header, <<"model.embed_tokens.weight">>),
-    {_, LmHidden} = shape2(Header, <<"lm_head.weight">>),
+    Tied = case maps:get(<<"tie_word_embeddings">>, FileConfig, false) of
+        true -> true;
+        _ -> false
+    end,
+    LmHidden = case Tied of
+        true -> HiddenSize0;
+        false ->
+            {_, LH} = shape2(Header, <<"lm_head.weight">>),
+            LH
+    end,
     HiddenSize = int_config(FileConfig, <<"hidden_size">>, HiddenSize0),
     VocabSize = int_config(FileConfig, <<"vocab_size">>, VocabSize0),
     NumHeads = int_config(FileConfig, <<"num_attention_heads">>,
@@ -328,7 +341,8 @@ model_config(Header, SafetensorsPath, Opts) ->
         head_dim => HeadDim,
         eps => float_config(FileConfig, <<"rms_norm_eps">>, ?DEFAULT_EPS),
         rope_theta => float_config(FileConfig, <<"rope_theta">>, ?DEFAULT_ROPE_THETA),
-        max_seq => opt(Opts, max_seq, ?DEFAULT_MAX_SEQ)
+        max_seq => opt(Opts, max_seq, ?DEFAULT_MAX_SEQ),
+        tie_word_embeddings => Tied
     }.
 
 read_hf_config(SafetensorsPath) ->
