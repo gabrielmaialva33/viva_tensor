@@ -548,12 +548,22 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
                                        float **out_d_C) {
   size_t bytes = (size_t)w->in_features * (size_t)w->out_features *
                  sizeof(uint16_t);
-  /* Cache the dequant FP16 weight buffer — biggest single per-call alloc
-   * (up to ~22 MB for the LM head); avoiding 7 round-trip mallocs/frees
-   * per layer is one of the larger throughput wins. */
-  if (ensure_cached_buf(&g_d_weight16, &g_d_weight16_cap, bytes) != 0)
-    return -20;
-  uint16_t *d_weight_fp16 = (uint16_t *)g_d_weight16;
+  PackedWeight *mw = (PackedWeight *)w;
+  if (mw->d_fp16_cache && mw->fp16_cache_ready && mw->fp16_cache_bytes == bytes) {
+    return run_w8a16_cublaslt_impl(w, mw->d_fp16_cache, CUDA_R_16F, d_input,
+                                   batch, out_d_C);
+  }
+  if (mw->d_fp16_cache && mw->fp16_cache_bytes != bytes) {
+    cudaFree(mw->d_fp16_cache);
+    mw->d_fp16_cache = NULL;
+    mw->fp16_cache_bytes = 0;
+    mw->fp16_cache_ready = 0;
+  }
+  if (!mw->d_fp16_cache) {
+    if (cudaMalloc(&mw->d_fp16_cache, bytes) != cudaSuccess) return -20;
+    mw->fp16_cache_bytes = bytes;
+  }
+  uint16_t *d_weight_fp16 = (uint16_t *)mw->d_fp16_cache;
 
   int rc;
   if (w->block_size > 0) {
@@ -571,13 +581,12 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
                                             w->out_features);
   }
   if (rc != 0) {
-    /* g_d_weight16 is cached; do not free. */
     return -30 + rc;
   }
+  mw->fp16_cache_ready = 1;
 
   rc = run_w8a16_cublaslt_impl(w, d_weight_fp16, CUDA_R_16F, d_input, batch,
-                                out_d_C);
-  /* g_d_weight16 is cached; do not free. */
+                                 out_d_C);
   return (rc == 0) ? 0 : (-40 + rc);
 }
 
