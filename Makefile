@@ -95,6 +95,7 @@ ifneq ($(OS),Windows_NT)
 	@# Compile Erlang NIF wrapper modules (not compiled by Gleam)
 	@erlc -o build/dev/erlang/viva_tensor/ebin src/viva_tensor_zig.erl 2>$(NULL) || true
 	@erlc -o build/dev/erlang/viva_tensor/ebin src/viva_tensor_blas.erl 2>$(NULL) || true
+	@erlc -o build/dev/erlang/viva_tensor/ebin dev/llama_sampling.erl 2>$(NULL) || true
 endif
 	@$(LOG) "$(GREEN)[OK]$(NC) Build finished!"
 
