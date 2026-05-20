@@ -661,12 +661,6 @@ typedef struct {
 } DecodeLayerParams;
 
 typedef struct {
-  int layer_count;
-  uintptr_t signature;
-  DecodeLayerParams layers[DECODE_MAX_LAYERS];
-} ModelLayers;
-
-typedef struct {
   const uint8_t *host_ptr;
   size_t size;
   BlockBuf buf;
@@ -689,7 +683,6 @@ static DecodeConstBuf g_decode_norm2[DECODE_MAX_LAYERS];
 static DecodeConstBuf g_decode_rope = {0};
 static DecodeConstBuf g_decode_final_norm = {0};
 static DecodeGraphEntry g_decode_graphs[DECODE_GRAPH_MAX];
-static ErlNifResourceType *MODEL_LAYERS_RES = NULL;
 static int g_decode_graph_count = 0;
 static int g_decode_graph_disabled = 0;
 static unsigned g_decode_graph_captures = 0;
@@ -719,82 +712,6 @@ static uintptr_t mix_ptr(uintptr_t h, const void *p) {
   uintptr_t x = (uintptr_t)p;
   h ^= x + (uintptr_t)0x9e3779b97f4a7c15ull + (h << 6) + (h >> 2);
   return h;
-}
-
-static void keep_weight(PackedWeight *w) {
-  if (w) enif_keep_resource(w);
-}
-
-static void release_weight(PackedWeight *w) {
-  if (w) enif_release_resource(w);
-}
-
-static void release_model_layers(ModelLayers *ml) {
-  if (!ml) return;
-  for (int i = 0; i < ml->layer_count; ++i) {
-    DecodeLayerParams *l = &ml->layers[i];
-    release_weight(l->q);
-    release_weight(l->k);
-    release_weight(l->v);
-    release_weight(l->o);
-    release_weight(l->gate);
-    release_weight(l->up);
-    release_weight(l->down);
-    release_weight(l->qkv);
-    release_weight(l->gate_up);
-    if (l->cache) enif_release_resource(l->cache);
-    if (l->norm1) cudaFree(l->norm1);
-    if (l->norm2) cudaFree(l->norm2);
-  }
-  memset(ml, 0, sizeof(*ml));
-}
-
-static int upload_model_norm(const ErlNifBinary *bin, float **out) {
-  float *ptr = NULL;
-  if (cudaMalloc(&ptr, bin->size) != cudaSuccess) return -1;
-  if (cudaMemcpy(ptr, bin->data, bin->size, cudaMemcpyHostToDevice) != cudaSuccess) {
-    cudaFree(ptr);
-    return -2;
-  }
-  *out = ptr;
-  return 0;
-}
-
-static int validate_decode_layer_shapes(DecodeLayerParams *l) {
-  if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) ||
-      !validate_fp8_weight(l->v) || !validate_fp8_weight(l->o) ||
-      !validate_fp8_weight(l->gate) || !validate_fp8_weight(l->up) ||
-      !validate_fp8_weight(l->down)) {
-    return -10;
-  }
-  int hidden = l->q->in_features;
-  int kv_dim = l->k->out_features;
-  int ffn = l->gate->out_features;
-  if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
-      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
-      l->q->out_features != hidden || l->k->in_features != hidden ||
-      l->v->in_features != hidden || l->v->out_features != kv_dim ||
-      l->o->in_features != hidden || l->o->out_features != hidden ||
-      l->gate->in_features != hidden || l->up->in_features != hidden ||
-      l->up->out_features != ffn || l->down->in_features != ffn ||
-      l->down->out_features != hidden) {
-    return -11;
-  }
-  if (l->qkv && validate_fp8_weight(l->qkv) &&
-      (l->qkv->in_features != hidden ||
-       l->qkv->out_features != hidden + kv_dim + kv_dim)) {
-    l->qkv = NULL;
-  }
-  if (l->gate_up && validate_fp8_weight(l->gate_up) &&
-      (l->gate_up->in_features != hidden ||
-       l->gate_up->out_features != ffn + ffn)) {
-    l->gate_up = NULL;
-  }
-  if (!l->cache || l->cache->kv_dim != kv_dim || l->cache->len < 0 ||
-      l->cache->len >= l->cache->max_seq) {
-    return -13;
-  }
-  return 0;
 }
 
 static int ensure_decode_const(DecodeConstBuf *dst, const ErlNifBinary *src) {
@@ -1098,147 +1015,6 @@ int register_block_kv_cache_resource(ErlNifEnv *env) {
       env, NULL, "BlockKvCache", block_kv_cache_destructor,
       ERL_NIF_RT_CREATE, NULL);
   return BLOCK_KV_CACHE_RES != NULL ? 0 : -1;
-}
-
-void model_layers_destructor(ErlNifEnv *env, void *obj) {
-  (void)env;
-#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
-  release_model_layers((ModelLayers *)obj);
-#else
-  (void)obj;
-#endif
-}
-
-int register_model_layers_resource(ErlNifEnv *env) {
-  MODEL_LAYERS_RES = enif_open_resource_type(
-      env, NULL, "ModelLayers", model_layers_destructor,
-      ERL_NIF_RT_CREATE, NULL);
-  return MODEL_LAYERS_RES != NULL ? 0 : -1;
-}
-
-ERL_NIF_TERM nt_model_layers_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-#if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  (void)argc;
-  (void)argv;
-  return make_error(env, "cuda_not_available");
-#else
-  if (argc != 2) return make_error(env, "bad_arity");
-  if (!MODEL_LAYERS_RES) return make_error(env, "model_layers_resource_unavailable");
-  ModelLayers *ml = (ModelLayers *)enif_alloc_resource(MODEL_LAYERS_RES, sizeof(ModelLayers));
-  if (!ml) return make_error(env, "resource_alloc_failed");
-  memset(ml, 0, sizeof(*ml));
-  ml->signature = (uintptr_t)0xcbf29ce484222325ull;
-
-  ERL_NIF_TERM layers_tail = argv[0];
-  ERL_NIF_TERM caches_tail = argv[1];
-  ERL_NIF_TERM layer_term, cache_term;
-  while (enif_get_list_cell(env, layers_tail, &layer_term, &layers_tail)) {
-    int i = ml->layer_count;
-    if (i >= DECODE_MAX_LAYERS) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_error(env, "too_many_layers");
-    }
-    if (!enif_get_list_cell(env, caches_tail, &cache_term, &caches_tail)) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_error(env, "cache_count_mismatch");
-    }
-
-    ErlNifBinary norm1_bin, norm2_bin;
-    if (!map_get_binary(env, layer_term, "norm1_bin", &norm1_bin) ||
-        !map_get_binary(env, layer_term, "norm2_bin", &norm2_bin)) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_error(env, "invalid_layer_norm");
-    }
-
-    DecodeLayerParams *l = &ml->layers[i];
-    l->q = map_get_weight(env, layer_term, "q");
-    l->k = map_get_weight(env, layer_term, "k");
-    l->v = map_get_weight(env, layer_term, "v");
-    l->o = map_get_weight(env, layer_term, "o");
-    l->gate = map_get_weight(env, layer_term, "gate");
-    l->up = map_get_weight(env, layer_term, "up");
-    l->down = map_get_weight(env, layer_term, "down");
-    l->qkv = map_get_weight(env, layer_term, "qkv");
-    l->gate_up = map_get_weight(env, layer_term, "gate_up");
-    if (!enif_get_resource(env, cache_term, BLOCK_KV_CACHE_RES, (void **)&l->cache)) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_error(env, "invalid_kv_cache");
-    }
-
-    int rc = validate_decode_layer_shapes(l);
-    if (rc != 0) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_block_error(env, "model_layer_shape", rc);
-    }
-    size_t hidden32_bytes = (size_t)l->q->in_features * sizeof(float);
-    if (norm1_bin.size != hidden32_bytes || norm2_bin.size != hidden32_bytes) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_error(env, "layer_norm_size_mismatch");
-    }
-    rc = upload_model_norm(&norm1_bin, &l->norm1);
-    if (rc != 0) {
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_block_error(env, "upload_model_norm1", rc);
-    }
-    rc = upload_model_norm(&norm2_bin, &l->norm2);
-    if (rc != 0) {
-      if (l->norm1) {
-        cudaFree(l->norm1);
-        l->norm1 = NULL;
-      }
-      release_model_layers(ml);
-      enif_release_resource(ml);
-      return make_block_error(env, "upload_model_norm2", rc);
-    }
-
-    keep_weight(l->q);
-    keep_weight(l->k);
-    keep_weight(l->v);
-    keep_weight(l->o);
-    keep_weight(l->gate);
-    keep_weight(l->up);
-    keep_weight(l->down);
-    keep_weight(l->qkv);
-    keep_weight(l->gate_up);
-    enif_keep_resource(l->cache);
-
-    ml->signature = mix_ptr(ml->signature, l->cache->d_k);
-    ml->signature = mix_ptr(ml->signature, l->cache->d_v);
-    ml->signature = mix_ptr(ml->signature, l->q ? l->q->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->k ? l->k->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->v ? l->v->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->o ? l->o->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->gate ? l->gate->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->up ? l->up->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->down ? l->down->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->qkv ? l->qkv->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->gate_up ? l->gate_up->d_weight : NULL);
-    ml->signature = mix_ptr(ml->signature, l->norm1);
-    ml->signature = mix_ptr(ml->signature, l->norm2);
-    ml->layer_count++;
-  }
-  if (!enif_is_empty_list(env, caches_tail)) {
-    release_model_layers(ml);
-    enif_release_resource(ml);
-    return make_error(env, "cache_count_mismatch");
-  }
-  if (ml->layer_count <= 0) {
-    release_model_layers(ml);
-    enif_release_resource(ml);
-    return make_error(env, "empty_layers");
-  }
-
-  ERL_NIF_TERM term = enif_make_resource(env, ml);
-  enif_release_resource(ml);
-  return make_ok(env, term);
-#endif
 }
 
 ERL_NIF_TERM nt_kv_cache_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
@@ -1609,9 +1385,7 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   signature = mix_ptr(signature, g_decode_final_norm.buf.ptr);
   signature = mix_ptr(signature, g_decode_rope.buf.ptr);
 
-  const char *disable_graph = getenv("VIVA_DECODE_GRAPH_DISABLE");
-  int graph_ok = !(disable_graph && disable_graph[0] && disable_graph[0] != '0') &&
-                 !g_decode_graph_disabled &&
+  int graph_ok = !g_decode_graph_disabled &&
                  all_decode_weights_captureable(decode_layers, layer_count, lm_head);
   int rc = 0;
   if (graph_ok) {

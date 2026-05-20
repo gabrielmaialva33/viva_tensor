@@ -243,45 +243,32 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
                                               const uint16_t *input,
                                               float *out,
                                               int in_features,
-                                              int out_features,
                                               int num_blocks) {
-  constexpr int rows_per_cta = 4;
-  __shared__ uint4 x_shared[32][2];
-  int row_in_cta = threadIdx.y;
-  int out_col = blockIdx.x * rows_per_cta + row_in_cta;
+  int out_col = blockIdx.x;
   int lane = threadIdx.x & 31;
-  int active = out_col < out_features;
-  const uint8_t *w_row = active ? weight + (size_t)out_col * (size_t)in_features : NULL;
-  const float *s_row = active ? scales + (size_t)out_col * (size_t)num_blocks : NULL;
+  const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
+  const float *s_row = scales + (size_t)out_col * (size_t)num_blocks;
   float acc = 0.0f;
   for (int b = lane; b < num_blocks; b += 32) {
     int base = b * 16;
+    float scale = s_row[b];
+    uint4 w_vec = *reinterpret_cast<const uint4 *>(w_row + base);
     const uint4 *x_vec = reinterpret_cast<const uint4 *>(input + base);
-    if (row_in_cta == 0) {
-      x_shared[lane][0] = x_vec[0];
-      x_shared[lane][1] = x_vec[1];
-    }
-    __syncthreads();
-    if (active) {
-      float scale = s_row[b];
-      uint4 w_vec = *reinterpret_cast<const uint4 *>(w_row + base);
-      uint4 x_lo = x_shared[lane][0];
-      uint4 x_hi = x_shared[lane][1];
-      float block_acc = 0.0f;
+    uint4 x_lo = x_vec[0];
+    uint4 x_hi = x_vec[1];
+    float block_acc = 0.0f;
 #pragma unroll
-      for (int j = 0; j < 16; ++j) {
-        float wv = fp8_e4m3_to_float(uint4_byte(w_vec, j));
-        uint16_t xb = j < 8 ? uint4_half_bits(x_lo, j) : uint4_half_bits(x_hi, j - 8);
-        float xv = __half2float(__ushort_as_half(xb));
-        block_acc = fmaf(wv, xv, block_acc);
-      }
-      acc = fmaf(block_acc, scale, acc);
+    for (int j = 0; j < 16; ++j) {
+      float wv = fp8_e4m3_to_float(uint4_byte(w_vec, j));
+      uint16_t xb = j < 8 ? uint4_half_bits(x_lo, j) : uint4_half_bits(x_hi, j - 8);
+      float xv = __half2float(__ushort_as_half(xb));
+      block_acc = fmaf(wv, xv, block_acc);
     }
-    __syncthreads();
+    acc = fmaf(block_acc, scale, acc);
   }
 
   acc = warp_sum(acc);
-  if (active && lane == 0) out[out_col] = acc;
+  if (lane == 0) out[out_col] = acc;
 }
 
 __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *new_k,
@@ -511,11 +498,9 @@ int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
     return -2;
   }
   int num_blocks = in_features / 16;
-  dim3 block(32, 4, 1);
-  dim3 grid((out_features + 3) / 4, 1, 1);
-  w8a16_mmv_blocked_k16_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+  w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
       (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out,
-      in_features, out_features, num_blocks);
+      in_features, num_blocks);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
