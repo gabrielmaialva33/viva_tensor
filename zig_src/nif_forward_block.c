@@ -314,7 +314,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   }
 
   cudaGraphExec_t exec = NULL;
-  err = cudaGraphInstantiate(&exec, graph, NULL, NULL, 0);
+  err = cudaGraphInstantiate(&exec, graph, 0);
   if (err != cudaSuccess || !exec) {
     cudaGraphDestroy(graph);
     g_block_graph_disabled = 1;
