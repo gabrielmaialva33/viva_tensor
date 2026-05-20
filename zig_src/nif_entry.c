@@ -143,6 +143,8 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
    * nif_linear_fp8/_int_sparse/_swiglu_fp8. */
   if (register_packed_weight_resource(env) != 0)
     return -1;
+  if (register_embedding_table_resource(env) != 0)
+    return -1;
   if (register_block_kv_cache_resource(env) != 0)
     return -1;
 #endif
@@ -343,6 +345,7 @@ static ErlNifFunc nif_funcs[] = {
     /* Inference API — PackedWeight + prepack + linear forward + SwiGLU */
     {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_prepack_fp8_blocked", 3, nt_prepack_fp8_blocked, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_embedding_table_new", 3, nt_embedding_table_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8", 4, nt_linear_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_fp8_w8a16", 3, nt_linear_fp8_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -353,6 +356,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_kv_cache_new", 2, nt_kv_cache_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_block_w8a16", 14, nt_forward_block_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_forward_decode_step", 8, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},

@@ -42,6 +42,18 @@
 #endif
 
 ErlNifResourceType *PACKED_WEIGHT_RES = NULL;
+ErlNifResourceType *EMBEDDING_TABLE_RES = NULL;
+
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
+extern uint16_t float_to_half(float f);
+
+static float bf16_to_float(uint16_t u) {
+  uint32_t bits = ((uint32_t)u) << 16;
+  float f;
+  memcpy(&f, &bits, sizeof(f));
+  return f;
+}
+#endif
 
 void packed_weight_destructor(ErlNifEnv *env, void *obj) {
   (void)env;
@@ -90,11 +102,30 @@ void packed_weight_destructor(ErlNifEnv *env, void *obj) {
 #endif
 }
 
+void embedding_table_destructor(ErlNifEnv *env, void *obj) {
+  (void)env;
+  EmbeddingTable *t = (EmbeddingTable *)obj;
+  if (!t) return;
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
+  if (t->d_weight) {
+    cudaFree(t->d_weight);
+    t->d_weight = NULL;
+  }
+#endif
+}
+
 int register_packed_weight_resource(ErlNifEnv *env) {
   PACKED_WEIGHT_RES = enif_open_resource_type(
       env, NULL, "PackedWeight", packed_weight_destructor,
       ERL_NIF_RT_CREATE, NULL);
   return PACKED_WEIGHT_RES != NULL ? 0 : -1;
+}
+
+int register_embedding_table_resource(ErlNifEnv *env) {
+  EMBEDDING_TABLE_RES = enif_open_resource_type(
+      env, NULL, "EmbeddingTable", embedding_table_destructor,
+      ERL_NIF_RT_CREATE, NULL);
+  return EMBEDDING_TABLE_RES != NULL ? 0 : -1;
 }
 
 PackedWeight *alloc_packed_weight(void) {
@@ -117,4 +148,60 @@ PackedWeight *get_packed_weight(ErlNifEnv *env, ERL_NIF_TERM term) {
   if (!enif_get_resource(env, term, PACKED_WEIGHT_RES, (void **)&w))
     return NULL;
   return w;
+}
+
+EmbeddingTable *get_embedding_table(ErlNifEnv *env, ERL_NIF_TERM term) {
+  EmbeddingTable *t = NULL;
+  if (!enif_get_resource(env, term, EMBEDDING_TABLE_RES, (void **)&t))
+    return NULL;
+  return t;
+}
+
+ERL_NIF_TERM nt_embedding_table_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 3) return make_error(env, "bad_arity");
+
+  ErlNifBinary bf16_bin;
+  int vocab = 0, hidden = 0;
+  if (!enif_inspect_binary(env, argv[0], &bf16_bin)) return make_error(env, "invalid_embedding");
+  if (!enif_get_int(env, argv[1], &vocab) || vocab <= 0) return make_error(env, "invalid_vocab");
+  if (!enif_get_int(env, argv[2], &hidden) || hidden <= 0) return make_error(env, "invalid_hidden");
+
+  size_t elems = (size_t)vocab * (size_t)hidden;
+  if (bf16_bin.size != elems * sizeof(uint16_t)) return make_error(env, "embedding_size_mismatch");
+
+  uint16_t *host_fp16 = (uint16_t *)enif_alloc(elems * sizeof(uint16_t));
+  if (!host_fp16) return make_error(env, "alloc_embedding_host_failed");
+  const uint16_t *src = (const uint16_t *)bf16_bin.data;
+  for (size_t i = 0; i < elems; ++i) {
+    host_fp16[i] = float_to_half(bf16_to_float(src[i]));
+  }
+
+  EmbeddingTable *table = (EmbeddingTable *)enif_alloc_resource(
+      EMBEDDING_TABLE_RES, sizeof(EmbeddingTable));
+  if (!table) {
+    enif_free(host_fp16);
+    return make_error(env, "resource_alloc_failed");
+  }
+  memset(table, 0, sizeof(*table));
+  table->vocab = vocab;
+  table->hidden = hidden;
+  table->bytes = elems * sizeof(uint16_t);
+
+  if (cudaMalloc(&table->d_weight, table->bytes) != cudaSuccess ||
+      cudaMemcpy(table->d_weight, host_fp16, table->bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+    enif_free(host_fp16);
+    enif_release_resource(table);
+    return make_error(env, "cuda_upload_embedding_failed");
+  }
+  enif_free(host_fp16);
+
+  ERL_NIF_TERM term = enif_make_resource(env, table);
+  enif_release_resource(table);
+  return make_ok(env, term);
+#endif
 }
