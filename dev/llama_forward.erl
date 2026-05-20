@@ -21,7 +21,7 @@
 -module(llama_forward).
 -export([run/0, run_n/1, run_seq/2, run_generate/4, bisect/0, bisect_w8a16/0,
           bisect_w8a16_blocked/0, bisect_w8a16_blocked/1,
-          run_n_w8a16/2, run_generate_w8a16/5, profile_w8a16/2,
+          run_n_w8a16/2, run_generate_w8a16/5, run_generate_fused/5, profile_w8a16/2,
           bisect_calibrated/0, run_n_calibrated/1, bisect_batch16/0,
           build_layer/2, build_layer_calibrated/3,
           build_layer_blocked/3,
@@ -540,6 +540,8 @@ build_layer_blocked(Header, LayerIdx, BlockSize) ->
     Layer = #{
         norm1 => load_rmsnorm(Header, P("input_layernorm.weight")),
         norm2 => load_rmsnorm(Header, P("post_attention_layernorm.weight")),
+        norm1_bin => load_rmsnorm_bin(Header, P("input_layernorm.weight")),
+        norm2_bin => load_rmsnorm_bin(Header, P("post_attention_layernorm.weight")),
         q     => prepack_blocked(QProj,    ?HIDDEN, ?HIDDEN, BlockSize),
         k     => prepack_blocked(KProj,    ?HIDDEN, ?KV_DIM, BlockSize),
         v     => prepack_blocked(VProj,    ?HIDDEN, ?KV_DIM, BlockSize),
@@ -692,6 +694,116 @@ decode_loop_w8a16(Hidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
                               [NextTok | Acc])
     end.
 
+%% End-to-end text generation using one NIF call per transformer block.
+run_generate_fused(NumLayers, Prompt, MaxNew, SampOpts, BlockSize) ->
+    io:format("~n=== TinyLlama-1.1B fused W8A16 text gen (N=~p, block=~p) ===~n~n",
+              [NumLayers, BlockSize]),
+    T0 = ms(),
+    {ok, Header} = viva_tensor_safetensors_ffi:open_header(?PATH),
+    {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(
+        <<"tmp/tinyllama/tokenizer.json">>),
+    Layers = [build_layer_blocked(Header, I, BlockSize)
+              || I <- lists:seq(0, NumLayers - 1)],
+    EmbedTbl = load_embed_table(Header),
+    FinalNorm = load_rmsnorm(Header, <<"model.norm.weight">>),
+    LmHead    = load_linear(Header, <<"lm_head.weight">>, ?VOCAB, ?HIDDEN),
+    LmHeadPk  = prepack_blocked(LmHead, ?HIDDEN, ?VOCAB, BlockSize),
+    RopeFreqs = precompute_rope_freqs_bin(?HEAD_DIM, ?ROPE_THETA),
+    io:format("[~5w ms] Model + tokenizer ready~n", [ms() - T0]),
+
+    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    io:format("Prompt: ~ts~n", [Prompt]),
+    io:format("Encoded ~p tokens: ~p~n", [length(PromptTokens), PromptTokens]),
+
+    EmptyCaches = [{<<>>, <<>>} || _ <- lists:seq(1, NumLayers)],
+    TPrompt = ms(),
+    {LastHidden, Caches} = lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            HiddenIn = floats_to_fp16(embed_row(EmbedTbl, TokenId)),
+            lists:foldl(
+                fun(LayerIdx, {H, C}) ->
+                    {KC, VC} = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2, VC2} = forward_block_fused(
+                        H, lists:nth(LayerIdx + 1, Layers),
+                        Pos, RopeFreqs, KC, VC),
+                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                end,
+                {HiddenIn, CL},
+                lists:seq(0, NumLayers - 1))
+        end,
+        {<<>>, EmptyCaches},
+        lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
+    ),
+    io:format("[~5w ms] Fused prefill of ~p prompt tokens done~n",
+              [ms() - TPrompt, length(PromptTokens)]),
+
+    TGen = ms(),
+    GeneratedIds = decode_loop_fused(
+        LastHidden, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
+        RopeFreqs, NumLayers,
+        length(PromptTokens), MaxNew, SampOpts, EOS, []),
+    GenMs = ms() - TGen,
+    TokCount = length(GeneratedIds),
+    PerTok = case TokCount of 0 -> 0.0; _ -> float(GenMs) / float(TokCount) end,
+    io:format("[~5w ms] Fused generated ~p tokens (~.2f ms/token)~n",
+              [GenMs, TokCount, PerTok]),
+
+    PromptText = viva_tensor_tokenizer_ffi:decode(Tokenizer, PromptTokens),
+    GenText = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    io:format("~n--- prompt ---~n~ts~n--- generated ---~n~ts~n--- end ---~n",
+              [PromptText, GenText]),
+    io:format("[~5w ms] Total~n", [ms() - T0]),
+    {ok, GeneratedIds, GenText}.
+
+decode_loop_fused(_H, _C, _L, _E, _FN, _LH, _R, _NL, _P, 0, _O, _EOS, Acc) ->
+    lists:reverse(Acc);
+decode_loop_fused(HiddenBin, Caches, Layers, EmbedTbl, FinalNorm, LmHeadPk,
+                  RopeFreqs, NumLayers, Pos, Remaining, SampOpts, EOS, Acc) ->
+    Hidden = viva_tensor_inference_ffi:fp16_binary_to_floats(HiddenBin),
+    NormFinal = rmsnorm(Hidden, FinalNorm, ?EPS),
+    NormFp16  = floats_to_fp16(NormFinal),
+    Logits    = linear_fp8_w8a16(NormFp16, LmHeadPk, ?VOCAB),
+    NextTok   = case maps:size(SampOpts) of
+        0 -> {Id, _} = argmax(Logits), Id;
+        _ -> llama_sampling:sample(Logits, SampOpts)
+    end,
+    io:format("  pos=~p -> token ~p~n", [Pos, NextTok]),
+    case NextTok of
+        EOS -> lists:reverse([NextTok | Acc]);
+        _ ->
+            NextHidden = floats_to_fp16(embed_row(EmbedTbl, NextTok)),
+            {HiddenOut, NewCaches} = lists:foldl(
+                fun(LayerIdx, {H, C}) ->
+                    {KC, VC} = lists:nth(LayerIdx + 1, C),
+                    {HOut, KC2, VC2} = forward_block_fused(
+                        H, lists:nth(LayerIdx + 1, Layers),
+                        Pos, RopeFreqs, KC, VC),
+                    {HOut, lists_replace_nth(LayerIdx + 1, {KC2, VC2}, C)}
+                end,
+                {NextHidden, Caches},
+                lists:seq(0, NumLayers - 1)),
+            decode_loop_fused(HiddenOut, NewCaches, Layers, EmbedTbl,
+                              FinalNorm, LmHeadPk, RopeFreqs, NumLayers,
+                              Pos + 1, Remaining - 1, SampOpts, EOS,
+                              [NextTok | Acc])
+    end.
+
+forward_block_fused(HiddenFp16, Layer, Pos, RopeFreqs, KCache, VCache) ->
+    #{norm1_bin := N1, norm2_bin := N2,
+      q := Q, k := K, v := V, o := O,
+      gate := G, up := U, down := D} = Layer,
+    case viva_tensor_zig:nt_forward_block_w8a16(
+             HiddenFp16, Q, K, V, O, G, U, D,
+             N1, N2, Pos, RopeFreqs, KCache, VCache) of
+        {ok, {HiddenOut, KAppend, VAppend}} ->
+            {HiddenOut, <<KCache/binary, KAppend/binary>>,
+             <<VCache/binary, VAppend/binary>>};
+        Error ->
+            error({forward_block_w8a16_failed, Error})
+    end.
+
 %% Profile a single layer forward — accumulate microsecond timing per stage
 %% across N repetitions to surface the dominant cost. Returns {Stage, AvgUs} pairs.
 profile_w8a16(NumLayers, BlockSize) ->
@@ -705,7 +817,6 @@ profile_w8a16(NumLayers, BlockSize) ->
 
     HiddenIn = embed_row(EmbedTbl, ?BOS_TOKEN),
     Pos = 0,
-    EmptyCaches = [{[], []} || _ <- lists:seq(1, NumLayers)],
 
     %% Run one forward with stage-level timing.
     Layer0 = hd(Layers),
@@ -937,6 +1048,10 @@ precompute_rope_freqs(HeadDim, Theta) ->
     [math:pow(Theta, -2.0 * float(I) / float(HeadDim))
      || I <- lists:seq(0, Half - 1)].
 
+precompute_rope_freqs_bin(HeadDim, Theta) ->
+    Freqs = precompute_rope_freqs(HeadDim, Theta),
+    << <<F:32/float-little>> || F <- Freqs >>.
+
 precompute_rope_table(MaxPos, HeadDim, Theta) ->
     Freqs = precompute_rope_freqs(HeadDim, Theta),
     list_to_tuple(
@@ -1080,6 +1195,10 @@ load_linear(Header, Name, OutF, InF) ->
 load_rmsnorm(Header, Name) ->
     {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
     viva_tensor_safetensors_ffi:rmsnorm_weight_to_fp32_list(Bf16).
+
+load_rmsnorm_bin(Header, Name) ->
+    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
+    viva_tensor_safetensors_ffi:bf16_to_fp32_binary(Bf16).
 
 %% Embedding table loaded lazily: stash the bf16 binary + meta, look up
 %% row by index on demand to avoid materializing all 32000×2048 floats.
