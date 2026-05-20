@@ -43,6 +43,10 @@ typedef struct {
                          */
   size_t scales_count;
 
+  void *d_fp16_cache;   /* Optional persistent W8A16 dequant cache. */
+  size_t fp16_cache_bytes;
+  int fp16_cache_ready;
+
   int in_features;
   int out_features;
   int block_size;       /* 0 = per-channel (default); 32/128 = per-block along K. */
