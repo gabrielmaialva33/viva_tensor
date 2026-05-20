@@ -1609,7 +1609,9 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   signature = mix_ptr(signature, g_decode_final_norm.buf.ptr);
   signature = mix_ptr(signature, g_decode_rope.buf.ptr);
 
-  int graph_ok = !g_decode_graph_disabled &&
+  const char *disable_graph = getenv("VIVA_DECODE_GRAPH_DISABLE");
+  int graph_ok = !(disable_graph && disable_graph[0] && disable_graph[0] != '0') &&
+                 !g_decode_graph_disabled &&
                  all_decode_weights_captureable(decode_layers, layer_count, lm_head);
   int rc = 0;
   if (graph_ok) {
@@ -1868,7 +1870,9 @@ ERL_NIF_TERM nt_forward_decode_step_v2(ErlNifEnv *env, int argc, const ERL_NIF_T
 
   DecodeLayerParams *decode_layers = ml->layers;
   int layer_count = ml->layer_count;
-  int graph_ok = !g_decode_graph_disabled &&
+  const char *disable_graph = getenv("VIVA_DECODE_GRAPH_DISABLE");
+  int graph_ok = !(disable_graph && disable_graph[0] && disable_graph[0] != '0') &&
+                 !g_decode_graph_disabled &&
                  all_decode_weights_captureable(decode_layers, layer_count, lm_head);
   int rc = 0;
   if (graph_ok) {
