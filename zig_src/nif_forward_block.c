@@ -25,6 +25,8 @@ extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const fl
                                     const void *k_cache, const void *v_cache, float *out,
                                     int past_len, int num_heads, int num_kv_heads,
                                     int head_dim);
+extern void vt_block_set_stream(void *stream);
+extern void cuda_fp8_dequant_set_stream(void *stream);
 
 typedef struct {
   void *ptr;
@@ -34,6 +36,7 @@ typedef struct {
 static cublasLtHandle_t g_block_lt = NULL;
 static void *g_block_workspace = NULL;
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
+static cudaStream_t g_block_stream = NULL;
 
 static BlockBuf b_hidden16 = {0}, b_hidden32 = {0}, b_norm16 = {0};
 static BlockBuf b_norm1 = {0}, b_norm2 = {0}, b_rope = {0};
@@ -42,6 +45,31 @@ static BlockBuf b_attn = {0}, b_attn16 = {0}, b_o = {0}, b_h1 = {0};
 static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
+
+typedef enum {
+  BLOCK_GRAPH_NORM1 = 1,
+  BLOCK_GRAPH_ROPE_ATTN = 2,
+  BLOCK_GRAPH_POST_ATTN = 3,
+  BLOCK_GRAPH_FFN = 4,
+  BLOCK_GRAPH_OUT = 5
+} BlockGraphKind;
+
+typedef struct {
+  int kind;
+  int hidden;
+  int kv_dim;
+  int ffn;
+  int pos;
+  int past_len;
+  cudaGraph_t graph;
+  cudaGraphExec_t exec;
+  unsigned launches;
+} BlockGraphEntry;
+
+#define BLOCK_GRAPH_MAX 256
+static BlockGraphEntry g_block_graphs[BLOCK_GRAPH_MAX];
+static int g_block_graph_count = 0;
+static int g_block_graph_disabled = 0;
 
 static int ensure_block_buf(BlockBuf *buf, size_t needed) {
   if (buf->cap >= needed) return 0;
@@ -55,12 +83,20 @@ static int ensure_block_buf(BlockBuf *buf, size_t needed) {
 }
 
 static int ensure_block_lt(void) {
-  if (g_block_lt) return 0;
-  if (cublasLtCreate(&g_block_lt) != CUBLAS_STATUS_SUCCESS) return -1;
-  if (cudaMalloc(&g_block_workspace, g_block_workspace_size) != cudaSuccess) {
-    cublasLtDestroy(g_block_lt);
-    g_block_lt = NULL;
-    return -2;
+  if (!g_block_lt) {
+    if (cublasLtCreate(&g_block_lt) != CUBLAS_STATUS_SUCCESS) return -1;
+    if (cudaMalloc(&g_block_workspace, g_block_workspace_size) != cudaSuccess) {
+      cublasLtDestroy(g_block_lt);
+      g_block_lt = NULL;
+      return -2;
+    }
+  }
+  if (!g_block_stream) {
+    if (cudaStreamCreateWithFlags(&g_block_stream, cudaStreamNonBlocking) != cudaSuccess) {
+      return -3;
+    }
+    vt_block_set_stream((void *)g_block_stream);
+    cuda_fp8_dequant_set_stream((void *)g_block_stream);
   }
   return 0;
 }
@@ -98,7 +134,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
   if (rc != 0) return rc;
 
   size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
-  if (cudaMemset(d_out, 0, bytes_C) != cudaSuccess) return -2;
+  if (cudaMemsetAsync(d_out, 0, bytes_C, g_block_stream) != cudaSuccess) return -2;
 
   cublasLtMatmulDesc_t desc;
   if (cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS)
@@ -147,7 +183,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
                       &beta,
                       d_out, layout_c, d_out, layout_c,
                       &heur.algo, g_block_workspace, g_block_workspace_size,
-                      (cudaStream_t)0);
+                      g_block_stream);
 
   cublasLtMatmulPreferenceDestroy(pref);
   cublasLtMatrixLayoutDestroy(layout_bt);
@@ -167,6 +203,129 @@ static ERL_NIF_TERM make_block_error(ErlNifEnv *env, const char *prefix, int rc)
   char msg[96];
   snprintf(msg, sizeof(msg), "%s_%d", prefix, rc);
   return make_error(env, msg);
+}
+
+static BlockGraphEntry *find_block_graph(int kind, int hidden, int kv_dim, int ffn,
+                                         int pos, int past_len) {
+  for (int i = 0; i < g_block_graph_count; ++i) {
+    BlockGraphEntry *e = &g_block_graphs[i];
+    if (e->kind == kind && e->hidden == hidden && e->kv_dim == kv_dim &&
+        e->ffn == ffn && e->pos == pos && e->past_len == past_len) {
+      return e;
+    }
+  }
+  return NULL;
+}
+
+static BlockGraphEntry *alloc_block_graph(int kind, int hidden, int kv_dim, int ffn,
+                                          int pos, int past_len) {
+  if (g_block_graph_count >= BLOCK_GRAPH_MAX) return NULL;
+  BlockGraphEntry *e = &g_block_graphs[g_block_graph_count++];
+  memset(e, 0, sizeof(*e));
+  e->kind = kind;
+  e->hidden = hidden;
+  e->kv_dim = kv_dim;
+  e->ffn = ffn;
+  e->pos = pos;
+  e->past_len = past_len;
+  return e;
+}
+
+static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
+                               int pos, int past_len, int num_heads,
+                               int num_kv_heads) {
+  int rc;
+  switch (kind) {
+    case BLOCK_GRAPH_NORM1:
+      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) return -100 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr, (float *)b_norm1.ptr,
+                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -200 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) return -300 + rc;
+      return 0;
+    case BLOCK_GRAPH_ROPE_ATTN:
+      if ((rc = vt_rope_apply_fp32((float *)b_q.ptr, (float *)b_rope.ptr, pos,
+                                   num_heads, LLAMA_HEAD_DIM)) != 0) return -400 + rc;
+      if ((rc = vt_rope_apply_fp32((float *)b_k.ptr, (float *)b_rope.ptr, pos,
+                                   num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -500 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
+      if ((rc = vt_gqa_attn_single_token((float *)b_q.ptr, (float *)b_k.ptr, (float *)b_v.ptr,
+                                         b_k_cache.ptr, b_v_cache.ptr, (float *)b_attn.ptr,
+                                         past_len, num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -800 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) return -900 + rc;
+      return 0;
+    case BLOCK_GRAPH_POST_ATTN:
+      if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
+                                     (float *)b_h1.ptr, hidden)) != 0) return -1000 + rc;
+      if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr, (float *)b_norm2.ptr,
+                                (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -1100 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) return -1200 + rc;
+      return 0;
+    case BLOCK_GRAPH_FFN:
+      if ((rc = vt_silu_mul_fp32((float *)b_gate.ptr, (float *)b_up.ptr, (float *)b_sw.ptr, ffn)) != 0) return -1300 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn)) != 0) return -1400 + rc;
+      return 0;
+    case BLOCK_GRAPH_OUT:
+      if ((rc = vt_residual_add_fp32((float *)b_h1.ptr, (float *)b_down.ptr,
+                                     (float *)b_x2.ptr, hidden)) != 0) return -1500 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0) return -1600 + rc;
+      return 0;
+    default:
+      return -9999;
+  }
+}
+
+static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
+                            int pos, int past_len, int num_heads,
+                            int num_kv_heads) {
+  if (g_block_graph_disabled) {
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  }
+
+  BlockGraphEntry *e = find_block_graph(kind, hidden, kv_dim, ffn, pos, past_len);
+  if (e && e->exec) {
+    cudaError_t err = cudaGraphLaunch(e->exec, g_block_stream);
+    if (err == cudaSuccess) {
+      e->launches++;
+      return 0;
+    }
+    return -2000 - (int)err;
+  }
+
+  e = alloc_block_graph(kind, hidden, kv_dim, ffn, pos, past_len);
+  if (!e) {
+    g_block_graph_disabled = 1;
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  }
+
+  cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
+  if (err != cudaSuccess) {
+    g_block_graph_disabled = 1;
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  }
+
+  int rc = run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  cudaGraph_t graph = NULL;
+  err = cudaStreamEndCapture(g_block_stream, &graph);
+  if (rc != 0 || err != cudaSuccess || !graph) {
+    if (graph) cudaGraphDestroy(graph);
+    g_block_graph_disabled = 1;
+    return rc != 0 ? rc : (-2100 - (int)err);
+  }
+
+  cudaGraphExec_t exec = NULL;
+  err = cudaGraphInstantiate(&exec, graph, NULL, NULL, 0);
+  if (err != cudaSuccess || !exec) {
+    cudaGraphDestroy(graph);
+    g_block_graph_disabled = 1;
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  }
+
+  e->graph = graph;
+  e->exec = exec;
+  e->launches = 1;
+  err = cudaGraphLaunch(exec, g_block_stream);
+  return err == cudaSuccess ? 0 : (-2200 - (int)err);
 }
 
 #endif
@@ -257,13 +416,11 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     return make_error(env, "cuda_malloc_ffn_failed");
   }
 
-  if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0)
-    return make_block_error(env, "cast_hidden", rc);
-  if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr, (float *)b_norm1.ptr,
-                            (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0)
-    return make_block_error(env, "rmsnorm1", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0)
-    return make_block_error(env, "cast_norm1", rc);
+  if (ensure_block_lt() != 0) return make_error(env, "cuda_stream_init_failed");
+
+  if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0)
+    return make_block_error(env, "graph_norm1", rc);
 
   if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
     return make_block_error(env, "gemm_q", rc);
@@ -272,49 +429,29 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
     return make_block_error(env, "gemm_v", rc);
 
-  if ((rc = vt_rope_apply_fp32((float *)b_q.ptr, (float *)b_rope.ptr, pos,
-                               num_heads, LLAMA_HEAD_DIM)) != 0)
-    return make_block_error(env, "rope_q", rc);
-  if ((rc = vt_rope_apply_fp32((float *)b_k.ptr, (float *)b_rope.ptr, pos,
-                               num_kv_heads, LLAMA_HEAD_DIM)) != 0)
-    return make_block_error(env, "rope_k", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0)
-    return make_block_error(env, "cast_k_append", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0)
-    return make_block_error(env, "cast_v_append", rc);
-
-  if ((rc = vt_gqa_attn_single_token((float *)b_q.ptr, (float *)b_k.ptr, (float *)b_v.ptr,
-                                     b_k_cache.ptr, b_v_cache.ptr, (float *)b_attn.ptr,
-                                     past_len, num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0)
-    return make_block_error(env, "attention", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0)
-    return make_block_error(env, "cast_attn", rc);
+  if ((rc = run_helper_graph(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
+                             num_heads, num_kv_heads)) != 0)
+    return make_block_error(env, "graph_rope_attn", rc);
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
     return make_block_error(env, "gemm_o", rc);
-  if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
-                                 (float *)b_h1.ptr, hidden)) != 0)
-    return make_block_error(env, "residual1", rc);
-
-  if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr, (float *)b_norm2.ptr,
-                            (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0)
-    return make_block_error(env, "rmsnorm2", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0)
-    return make_block_error(env, "cast_norm2", rc);
+  if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0)
+    return make_block_error(env, "graph_post_attn", rc);
   if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
     return make_block_error(env, "gemm_gate", rc);
   if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
     return make_block_error(env, "gemm_up", rc);
-  if ((rc = vt_silu_mul_fp32((float *)b_gate.ptr, (float *)b_up.ptr, (float *)b_sw.ptr, ffn)) != 0)
-    return make_block_error(env, "silu_mul", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn)) != 0)
-    return make_block_error(env, "cast_sw", rc);
+  if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0)
+    return make_block_error(env, "graph_ffn", rc);
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
     return make_block_error(env, "gemm_down", rc);
-  if ((rc = vt_residual_add_fp32((float *)b_h1.ptr, (float *)b_down.ptr,
-                                 (float *)b_x2.ptr, hidden)) != 0)
-    return make_block_error(env, "residual2", rc);
-  if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0)
-    return make_block_error(env, "cast_hout", rc);
+  if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0)
+    return make_block_error(env, "graph_out", rc);
+
+  if (cudaStreamSynchronize(g_block_stream) != cudaSuccess)
+    return make_error(env, "block_stream_sync_failed");
 
   ErlNifBinary out_hidden, out_k, out_v;
   if (!enif_alloc_binary(hidden16_bytes, &out_hidden) ||
