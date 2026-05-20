@@ -15,7 +15,9 @@
 -module(viva_tensor_safetensors_ffi).
 
 -export([
+    open/1,
     open_header/1,
+    open_sharded_header/1,
     list_tensor_names/1,
     tensor_info/2,
     read_tensor_bf16/2,
@@ -23,6 +25,18 @@
     transpose_fp32/3,
     rmsnorm_weight_to_fp32_list/1
 ]).
+
+open(Path0) ->
+    Path = to_binary(Path0),
+    PathList = binary_to_list(Path),
+    case filelib:is_dir(PathList) of
+        true -> open_dir(Path);
+        false ->
+            case filename:basename(PathList) of
+                "model.safetensors.index.json" -> open_sharded_header(Path);
+                _ -> open_header(Path)
+            end
+    end.
 
 %% Returns {ok, #{header := map(), data_start := integer(), path := binary()}}.
 %% header is the parsed JSON metadata: #{TensorName => #{dtype, shape, offsets}}.
@@ -52,9 +66,122 @@ open_header(Path) ->
             Error
     end.
 
+open_sharded_header(Path0) ->
+    Path = to_binary(Path0),
+    PathList = binary_to_list(Path),
+    case filelib:is_dir(PathList) of
+        true -> open_sharded_from_index(filename:join(PathList, "model.safetensors.index.json"));
+        false -> open_sharded_from_index(PathList)
+    end.
+
+open_dir(Path) ->
+    Dir = binary_to_list(Path),
+    Index = filename:join(Dir, "model.safetensors.index.json"),
+    Single = filename:join(Dir, "model.safetensors"),
+    case filelib:is_file(Index) of
+        true ->
+            open_sharded_from_index(Index);
+        false ->
+            case filelib:is_file(Single) of
+                true ->
+                    open_header(list_to_binary(Single));
+                false ->
+                    open_sharded_from_dir(Dir)
+            end
+    end.
+
+open_sharded_from_index(IndexPath) ->
+    case file:read_file(IndexPath) of
+        {ok, Bin} ->
+            try
+                Index = json:decode(Bin),
+                WeightMap = maps:get(<<"weight_map">>, Index),
+                open_sharded_weight_map(filename:dirname(IndexPath), WeightMap)
+            catch
+                Class:Reason ->
+                    {error, {invalid_safetensors_index, Class, Reason}}
+            end;
+        Error ->
+            Error
+    end.
+
+open_sharded_from_dir(Dir) ->
+    ShardPaths = lists:sort(filelib:wildcard(filename:join(Dir, "*.safetensors"))),
+    case ShardPaths of
+        [] ->
+            {error, {not_found, no_safetensors_files, list_to_binary(Dir)}};
+        [Only] ->
+            open_header(list_to_binary(Only));
+        _ ->
+            open_sharded_scan(ShardPaths)
+    end.
+
+open_sharded_scan(ShardPaths) ->
+    case open_shards([{list_to_binary(filename:basename(P)), list_to_binary(P)} || P <- ShardPaths]) of
+        {ok, Shards} ->
+            try
+                WeightMap = maps:fold(
+                    fun(ShardName, Header, Acc0) ->
+                        lists:foldl(
+                            fun(TensorName, Acc) ->
+                                case maps:is_key(TensorName, Acc) of
+                                    true -> error({duplicate_tensor_in_shards, TensorName});
+                                    false -> maps:put(TensorName, ShardName, Acc)
+                                end
+                            end,
+                            Acc0,
+                            list_tensor_names(Header)
+                        )
+                    end,
+                    #{},
+                    Shards
+                ),
+                {ok, #{sharded => true, weight_map => WeightMap, shards => Shards}}
+            catch
+                Class:Reason ->
+                    {error, {invalid_safetensors_shards, Class, Reason}}
+            end;
+        Error ->
+            Error
+    end.
+
+open_sharded_weight_map(Dir, WeightMap0) ->
+    WeightMap = maps:map(fun(_Name, Shard) -> to_binary(Shard) end, WeightMap0),
+    ShardNames = lists:usort(maps:values(WeightMap)),
+    ShardSpecs = [
+        {ShardName, list_to_binary(filename:join(Dir, binary_to_list(ShardName)))}
+        || ShardName <- ShardNames
+    ],
+    case open_shards(ShardSpecs) of
+        {ok, Shards} -> {ok, #{sharded => true, weight_map => WeightMap, shards => Shards}};
+        Error -> Error
+    end.
+
+open_shards(ShardSpecs) ->
+    lists:foldl(
+        fun
+            ({ShardName, ShardPath}, {ok, Acc}) ->
+                case open_header(ShardPath) of
+                    {ok, Header} -> {ok, maps:put(ShardName, Header, Acc)};
+                    Error -> {error, {open_shard_failed, ShardPath, Error}}
+                end;
+            (_Spec, Error) ->
+                Error
+        end,
+        {ok, #{}},
+        ShardSpecs
+    ).
+
+list_tensor_names(#{sharded := true, weight_map := WeightMap}) ->
+    lists:sort(maps:keys(WeightMap));
 list_tensor_names(#{header := H}) ->
     lists:sort(maps:keys(H)).
 
+tensor_info(#{sharded := true} = Header, Name) when is_binary(Name) ->
+    case sharded_tensor_header(Header, Name) of
+        {ok, ShardHeader} -> tensor_info(ShardHeader, Name);
+        Error -> Error
+    end;
 tensor_info(#{header := H}, Name) when is_binary(Name) ->
     case maps:find(Name, H) of
         {ok, Info} -> {ok, Info};
@@ -62,6 +189,11 @@ tensor_info(#{header := H}, Name) when is_binary(Name) ->
     end.
 
 %% Read raw bf16 bytes for a tensor. Returns {ok, binary()}.
+read_tensor_bf16(#{sharded := true} = Header, Name) when is_binary(Name) ->
+    case sharded_tensor_header(Header, Name) of
+        {ok, ShardHeader} -> read_tensor_bf16(ShardHeader, Name);
+        Error -> Error
+    end;
 read_tensor_bf16(#{header := H, data_start := DS, path := Path}, Name) ->
     case maps:find(Name, H) of
         {ok, #{dtype := <<"BF16">>, offsets := {Start, End}}} ->
@@ -73,6 +205,17 @@ read_tensor_bf16(#{header := H, data_start := DS, path := Path}, Name) ->
             {ok, Bin};
         {ok, #{dtype := Other}} ->
             {error, {unsupported_dtype, Other}};
+        error ->
+            {error, not_found}
+    end.
+
+sharded_tensor_header(#{weight_map := WeightMap, shards := Shards}, Name) ->
+    case maps:find(Name, WeightMap) of
+        {ok, ShardName} ->
+            case maps:find(ShardName, Shards) of
+                {ok, ShardHeader} -> {ok, ShardHeader};
+                error -> {error, {missing_shard, ShardName}}
+            end;
         error ->
             {error, not_found}
     end.
@@ -135,3 +278,7 @@ rmsnorm_weight_to_fp32_list(BF16) when is_binary(BF16) ->
 bf16_to_float(U) ->
     <<F:32/float-little>> = <<0:16, U:16/unsigned-little>>,
     F.
+
+to_binary(V) when is_binary(V) -> V;
+to_binary(V) when is_list(V) -> unicode:characters_to_binary(V);
+to_binary(V) -> unicode:characters_to_binary(io_lib:format("~p", [V])).

@@ -23,7 +23,7 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
     try
         SafetensorsPath = to_binary(SafetensorsPath0),
         T0 = us(),
-        {ok, Header} = viva_tensor_safetensors_ffi:open_header(SafetensorsPath),
+        {ok, Header} = viva_tensor_safetensors_ffi:open(SafetensorsPath),
         Config = model_config(Header, SafetensorsPath, Opts0),
         TokenizerPath = tokenizer_path(SafetensorsPath, Opts0),
         {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(TokenizerPath),
@@ -108,7 +108,8 @@ generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, 
     end.
 
 path_exists(Path) ->
-    filelib:is_file(binary_to_list(to_binary(Path))).
+    PathList = binary_to_list(to_binary(Path)),
+    filelib:is_file(PathList) orelse filelib:is_dir(PathList).
 
 generate_argmax(Handle, Prompt, Opts) ->
     Config = maps:get(config, Handle),
@@ -326,8 +327,8 @@ model_config(Header, SafetensorsPath, Opts) ->
         _ -> HiddenSize div NumHeads
     end,
     KvDim = NumKvHeads * HeadDim,
-    FfnSize = int_config(FileConfig, <<"intermediate_size">>,
-                         first_layer_ffn(Header)),
+    FfnSize = int_config_lazy(FileConfig, <<"intermediate_size">>,
+                              fun() -> first_layer_ffn(Header) end),
     #{
         num_layers => NumLayers,
         block_size => BlockSize,
@@ -346,8 +347,7 @@ model_config(Header, SafetensorsPath, Opts) ->
     }.
 
 read_hf_config(SafetensorsPath) ->
-    Path = binary_to_list(SafetensorsPath),
-    ConfigPath = filename:join(filename:dirname(Path), "config.json"),
+    ConfigPath = filename:join(model_dir(SafetensorsPath), "config.json"),
     case file:read_file(ConfigPath) of
         {ok, Bin} ->
             try json:decode(Bin)
@@ -380,6 +380,17 @@ shape2(Header, Name) ->
 build_layer_blocked(Header, LayerIdx, Config) ->
     Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
     P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+    require_tensors(Header, [
+        P("self_attn.q_proj.weight"),
+        P("self_attn.k_proj.weight"),
+        P("self_attn.v_proj.weight"),
+        P("self_attn.o_proj.weight"),
+        P("mlp.gate_proj.weight"),
+        P("mlp.up_proj.weight"),
+        P("mlp.down_proj.weight"),
+        P("input_layernorm.weight"),
+        P("post_attention_layernorm.weight")
+    ], LayerIdx),
     Hidden = maps:get(hidden_size, Config),
     KvDim = maps:get(kv_dim, Config),
     Ffn = maps:get(ffn_size, Config),
@@ -414,6 +425,17 @@ build_layer_blocked(Header, LayerIdx, Config) ->
         gate_up => prepack_blocked(GateUpProj, Hidden, Ffn + Ffn, BlockSize),
         down => prepack_blocked(DownProj, Ffn, Hidden, BlockSize)
     }.
+
+require_tensors(Header, Names, LayerIdx) ->
+    lists:foreach(
+        fun(Name) ->
+            case viva_tensor_safetensors_ffi:tensor_info(Header, Name) of
+                {ok, _} -> ok;
+                {error, _} -> error({missing_llama_tensor, LayerIdx, Name})
+            end
+        end,
+        Names
+    ).
 
 load_linear(Header, Name, OutF, InF) ->
     {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
@@ -475,18 +497,26 @@ generation_options(Opts) ->
 tokenizer_path(SafetensorsPath, Opts) ->
     case opt(Opts, tokenizer_path, undefined) of
         undefined ->
+            default_tokenizer_path(SafetensorsPath);
+        Path ->
+            to_binary(Path)
+    end.
+
+default_tokenizer_path(SafetensorsPath) ->
+    Sibling = sibling_tokenizer_path(SafetensorsPath),
+    case filelib:is_dir(binary_to_list(SafetensorsPath)) of
+        true ->
+            Sibling;
+        false ->
             Inferred = inferred_tokenizer_path(SafetensorsPath),
             case filelib:is_file(binary_to_list(Inferred)) of
                 true -> Inferred;
                 false ->
-                    Sibling = sibling_tokenizer_path(SafetensorsPath),
                     case filelib:is_file(binary_to_list(Sibling)) of
                         true -> Sibling;
                         false -> Inferred
                     end
-            end;
-        Path ->
-            to_binary(Path)
+            end
     end.
 
 inferred_tokenizer_path(SafetensorsPath) ->
@@ -494,8 +524,14 @@ inferred_tokenizer_path(SafetensorsPath) ->
     list_to_binary(Root ++ "_tokenizer.json").
 
 sibling_tokenizer_path(SafetensorsPath) ->
-    Path = binary_to_list(SafetensorsPath),
-    list_to_binary(filename:join(filename:dirname(Path), "tokenizer.json")).
+    list_to_binary(filename:join(model_dir(SafetensorsPath), "tokenizer.json")).
+
+model_dir(Path0) ->
+    Path = binary_to_list(Path0),
+    case filelib:is_dir(Path) of
+        true -> Path;
+        false -> filename:dirname(Path)
+    end.
 
 opt(Map, Key, Default) ->
     case maps:find(Key, Map) of
@@ -513,6 +549,13 @@ int_config(Config, Key, Default) ->
         V when is_integer(V) -> V;
         V when is_float(V) -> trunc(V);
         _ -> Default
+    end.
+
+int_config_lazy(Config, Key, DefaultFun) ->
+    case maps:get(Key, Config, undefined) of
+        V when is_integer(V) -> V;
+        V when is_float(V) -> trunc(V);
+        _ -> DefaultFun()
     end.
 
 float_config(Config, Key, Default) ->
