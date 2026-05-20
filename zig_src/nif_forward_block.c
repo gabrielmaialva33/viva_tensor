@@ -439,12 +439,20 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   if (argc != 14) return make_error(env, "bad_arity");
 
   ErlNifBinary hidden_bin, norm1_bin, norm2_bin, rope_bin, k_cache_bin, v_cache_bin;
+  BlockKvCache *kv_cache_res = NULL;
+  int use_kv_resource = 0;
   if (!enif_inspect_binary(env, argv[0], &hidden_bin)) return make_error(env, "invalid_hidden");
   if (!enif_inspect_binary(env, argv[8], &norm1_bin)) return make_error(env, "invalid_norm1");
   if (!enif_inspect_binary(env, argv[9], &norm2_bin)) return make_error(env, "invalid_norm2");
   if (!enif_inspect_binary(env, argv[11], &rope_bin)) return make_error(env, "invalid_rope");
-  if (!enif_inspect_binary(env, argv[12], &k_cache_bin)) return make_error(env, "invalid_k_cache");
-  if (!enif_inspect_binary(env, argv[13], &v_cache_bin)) return make_error(env, "invalid_v_cache");
+  if (enif_get_resource(env, argv[12], BLOCK_KV_CACHE_RES, (void **)&kv_cache_res)) {
+    use_kv_resource = 1;
+    memset(&k_cache_bin, 0, sizeof(k_cache_bin));
+    memset(&v_cache_bin, 0, sizeof(v_cache_bin));
+  } else {
+    if (!enif_inspect_binary(env, argv[12], &k_cache_bin)) return make_error(env, "invalid_k_cache");
+    if (!enif_inspect_binary(env, argv[13], &v_cache_bin)) return make_error(env, "invalid_v_cache");
+  }
 
   int pos = 0;
   if (!enif_get_int(env, argv[10], &pos) || pos < 0) return make_error(env, "invalid_pos");
@@ -486,18 +494,33 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       norm2_bin.size != hidden32_bytes || rope_bin.size != (size_t)(LLAMA_HEAD_DIM / 2) * sizeof(float)) {
     return make_error(env, "input_size_mismatch");
   }
-  if (k_cache_bin.size != v_cache_bin.size || (kv16_bytes > 0 && k_cache_bin.size % kv16_bytes != 0)) {
-    return make_error(env, "cache_size_mismatch");
+  int past_len = 0;
+  if (use_kv_resource) {
+    if (kv_cache_res->kv_dim != kv_dim || kv_cache_res->len < 0 || kv_cache_res->len >= kv_cache_res->max_seq) {
+      return make_error(env, "kv_resource_mismatch");
+    }
+    past_len = kv_cache_res->len;
+  } else {
+    if (k_cache_bin.size != v_cache_bin.size || (kv16_bytes > 0 && k_cache_bin.size % kv16_bytes != 0)) {
+      return make_error(env, "cache_size_mismatch");
+    }
+    past_len = (int)(k_cache_bin.size / kv16_bytes);
   }
-  int past_len = (int)(k_cache_bin.size / kv16_bytes);
 
   int rc = 0;
   if ((rc = upload_binary(&b_hidden16, &hidden_bin)) != 0) return make_block_error(env, "upload_hidden", rc);
   if ((rc = upload_binary(&b_norm1, &norm1_bin)) != 0) return make_block_error(env, "upload_norm1", rc);
   if ((rc = upload_binary(&b_norm2, &norm2_bin)) != 0) return make_block_error(env, "upload_norm2", rc);
   if ((rc = upload_binary(&b_rope, &rope_bin)) != 0) return make_block_error(env, "upload_rope", rc);
-  if ((rc = upload_binary(&b_k_cache, &k_cache_bin)) != 0) return make_block_error(env, "upload_k_cache", rc);
-  if ((rc = upload_binary(&b_v_cache, &v_cache_bin)) != 0) return make_block_error(env, "upload_v_cache", rc);
+  if (use_kv_resource) {
+    g_attn_k_cache_ptr = kv_cache_res->d_k;
+    g_attn_v_cache_ptr = kv_cache_res->d_v;
+  } else {
+    if ((rc = upload_binary(&b_k_cache, &k_cache_bin)) != 0) return make_block_error(env, "upload_k_cache", rc);
+    if ((rc = upload_binary(&b_v_cache, &v_cache_bin)) != 0) return make_block_error(env, "upload_v_cache", rc);
+    g_attn_k_cache_ptr = b_k_cache.ptr;
+    g_attn_v_cache_ptr = b_v_cache.ptr;
+  }
 
   BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
                       &b_attn, &b_attn16, &b_down, &b_hout16};
@@ -553,6 +576,17 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                              num_heads, num_kv_heads)) != 0)
     return make_block_error(env, "graph_out", rc);
 
+  if (use_kv_resource) {
+    size_t offset = (size_t)past_len * kv16_bytes;
+    if (cudaMemcpyAsync((uint8_t *)kv_cache_res->d_k + offset, b_k_append.ptr, kv16_bytes,
+                        cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess ||
+        cudaMemcpyAsync((uint8_t *)kv_cache_res->d_v + offset, b_v_append.ptr, kv16_bytes,
+                        cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess) {
+      return make_error(env, "kv_cache_append_failed");
+    }
+    kv_cache_res->len = past_len + 1;
+  }
+
   if (cudaStreamSynchronize(g_block_stream) != cudaSuccess)
     return make_error(env, "block_stream_sync_failed");
   vt_block_set_stream(NULL);
@@ -560,13 +594,18 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
   ErlNifBinary out_hidden, out_k, out_v;
   if (!enif_alloc_binary(hidden16_bytes, &out_hidden) ||
-      !enif_alloc_binary(kv16_bytes, &out_k) ||
-      !enif_alloc_binary(kv16_bytes, &out_v)) {
+      !enif_alloc_binary(use_kv_resource ? 0 : kv16_bytes, &out_k) ||
+      !enif_alloc_binary(use_kv_resource ? 0 : kv16_bytes, &out_v)) {
     return make_error(env, "alloc_output_failed");
   }
-  if (cudaMemcpy(out_hidden.data, b_hout16.ptr, hidden16_bytes, cudaMemcpyDeviceToHost) != cudaSuccess ||
-      cudaMemcpy(out_k.data, b_k_append.ptr, kv16_bytes, cudaMemcpyDeviceToHost) != cudaSuccess ||
-      cudaMemcpy(out_v.data, b_v_append.ptr, kv16_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+  int download_ok = cudaMemcpy(out_hidden.data, b_hout16.ptr, hidden16_bytes,
+                               cudaMemcpyDeviceToHost) == cudaSuccess;
+  if (download_ok && !use_kv_resource) {
+    download_ok =
+        cudaMemcpy(out_k.data, b_k_append.ptr, kv16_bytes, cudaMemcpyDeviceToHost) == cudaSuccess &&
+        cudaMemcpy(out_v.data, b_v_append.ptr, kv16_bytes, cudaMemcpyDeviceToHost) == cudaSuccess;
+  }
+  if (!download_ok) {
     enif_release_binary(&out_hidden);
     enif_release_binary(&out_k);
     enif_release_binary(&out_v);
