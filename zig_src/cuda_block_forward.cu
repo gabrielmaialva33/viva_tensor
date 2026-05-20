@@ -5,6 +5,12 @@
 
 extern "C" {
 
+static cudaStream_t g_vt_block_stream = 0;
+
+void vt_block_set_stream(void *stream) {
+  g_vt_block_stream = (cudaStream_t)stream;
+}
+
 __global__ void fp16_to_fp32_cast_kernel(const uint16_t *in, float *out, int n) {
   int i = blockIdx.x * blockDim.x + threadIdx.x;
   if (i < n) out[i] = __half2float(reinterpret_cast<const __half *>(in)[i]);
@@ -201,26 +207,26 @@ __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *
 int vt_fp16_to_fp32_cast(const void *in, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  fp16_to_fp32_cast_kernel<<<grid, block>>>((const uint16_t *)in, out, n);
+  fp16_to_fp32_cast_kernel<<<grid, block, 0, g_vt_block_stream>>>((const uint16_t *)in, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_fp32_to_fp16_cast(const float *in, void *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  fp32_to_fp16_cast_kernel<<<grid, block>>>(in, (uint16_t *)out, n);
+  fp32_to_fp16_cast_kernel<<<grid, block, 0, g_vt_block_stream>>>(in, (uint16_t *)out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n, float eps) {
-  rmsnorm_fp32_kernel<<<1, 256>>>(x, gamma, out, n, eps);
+  rmsnorm_fp32_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, gamma, out, n, eps);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_residual_add_fp32(const float *a, const float *b, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  residual_add_fp32_kernel<<<grid, block>>>(a, b, out, n);
+  residual_add_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(a, b, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
@@ -228,14 +234,14 @@ int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int
   int total = num_heads * (head_dim / 2);
   int block = 128;
   int grid = (total + block - 1) / block;
-  rope_apply_fp32_kernel<<<grid, block>>>(x, freqs, pos, num_heads, head_dim);
+  rope_apply_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(x, freqs, pos, num_heads, head_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  silu_mul_fp32_kernel<<<grid, block>>>(gate, up, out, n);
+  silu_mul_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(gate, up, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
@@ -248,11 +254,11 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
   if (head_dim == 64) {
     (void)seq_len;
     (void)shared;
-    gqa_attn_flash_single_token_kernel<<<num_heads, 32>>>(
+    gqa_attn_flash_single_token_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   } else {
-    gqa_attn_naive_single_token_kernel<<<num_heads, 1, shared>>>(
+    gqa_attn_naive_single_token_kernel<<<num_heads, 1, shared, g_vt_block_stream>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   }
