@@ -1425,6 +1425,12 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
               decode_graph_debug("instantiate_failed", 0, (int)err, past_len);
               graph_ok = 0;
             } else {
+              cudaGraphExec_t rolling_exec = NULL;
+              cudaError_t roll_err = cudaGraphInstantiate(&rolling_exec, graph, 0);
+              if (roll_err == cudaSuccess && rolling_exec) {
+                set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
+                                        layer_count, signature);
+              }
               entry = alloc_decode_graph(pos, past_len, hidden, embed->vocab,
                                          layer_count, signature);
               if (entry) {
@@ -1433,12 +1439,6 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                 entry->launches = 1;
               } else {
                 cudaGraphDestroy(graph);
-              }
-              cudaGraphExec_t rolling_exec = NULL;
-              err = cudaGraphInstantiate(&rolling_exec, graph, 0);
-              if (err == cudaSuccess && rolling_exec) {
-                set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
-                                        layer_count, signature);
               }
               err = cudaGraphLaunch(exec, g_block_stream);
               if (err != cudaSuccess) {
@@ -1489,9 +1489,10 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   cuda_fp8_dequant_set_stream(NULL);
   if (decode_graph_debug_enabled()) {
     fprintf(stderr,
-            "[decode_graph] stats cached=%d captures=%u hits=%u failures=%u last_err=%d\n",
+            "[decode_graph] stats cached=%d captures=%u hits=%u updates=%u update_failures=%u failures=%u last_err=%d\n",
             g_decode_graph_count, g_decode_graph_captures, g_decode_graph_hits,
-            g_decode_graph_failures, (int)g_decode_last_capture_error);
+            g_decode_graph_updates, g_decode_graph_update_failures, g_decode_graph_failures,
+            (int)g_decode_last_capture_error);
   }
 
   return make_ok(env, enif_make_int(env, next_token));
