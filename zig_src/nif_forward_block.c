@@ -1776,3 +1776,204 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   return make_ok(env, enif_make_int(env, next_token));
 #endif
 }
+
+ERL_NIF_TERM nt_forward_decode_step_v2(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 7) return make_error(env, "bad_arity");
+
+  int token_id = 0, pos = 0;
+  if (!enif_get_int(env, argv[0], &token_id) || token_id < 0) return make_error(env, "invalid_token");
+  EmbeddingTable *embed = get_embedding_table(env, argv[1]);
+  if (!embed || token_id >= embed->vocab || embed->hidden <= 0) return make_error(env, "invalid_embedding");
+  ModelLayers *ml = NULL;
+  if (!enif_get_resource(env, argv[2], MODEL_LAYERS_RES, (void **)&ml) || !ml) {
+    return make_error(env, "invalid_model_layers");
+  }
+  if (!enif_get_int(env, argv[5], &pos) || pos < 0) return make_error(env, "invalid_pos");
+
+  ErlNifBinary final_norm_bin, rope_bin;
+  if (!enif_inspect_binary(env, argv[3], &final_norm_bin)) return make_error(env, "invalid_final_norm");
+  PackedWeight *lm_head = get_packed_weight(env, argv[4]);
+  if (!validate_fp8_weight(lm_head)) return make_error(env, "invalid_lm_head");
+  if (!enif_inspect_binary(env, argv[6], &rope_bin)) return make_error(env, "invalid_rope");
+
+  int hidden = embed->hidden;
+  if (lm_head->in_features != hidden || final_norm_bin.size != (size_t)hidden * sizeof(float) ||
+      rope_bin.size != (size_t)(LLAMA_HEAD_DIM / 2) * sizeof(float)) {
+    return make_error(env, "shape_mismatch");
+  }
+  if (ml->layer_count <= 0 || ml->layer_count > DECODE_MAX_LAYERS) {
+    return make_error(env, "invalid_model_layers");
+  }
+
+  int past_len = -1;
+  for (int i = 0; i < ml->layer_count; ++i) {
+    DecodeLayerParams *l = &ml->layers[i];
+    if (!l->cache || l->cache->len < 0 || l->cache->len >= l->cache->max_seq) {
+      return make_error(env, "invalid_kv_cache");
+    }
+    if (past_len < 0) {
+      past_len = l->cache->len;
+    } else if (l->cache->len != past_len) {
+      return make_error(env, "kv_cache_len_mismatch");
+    }
+  }
+  if (past_len < 0) return make_error(env, "invalid_past_len");
+
+  if (ensure_block_lt() != 0) return make_error(env, "cuda_stream_init_failed");
+  vt_block_set_stream((void *)g_block_stream);
+  cuda_fp8_dequant_set_stream((void *)g_block_stream);
+
+  size_t hidden16_bytes = (size_t)hidden * sizeof(uint16_t);
+  size_t hidden32_bytes = (size_t)hidden * sizeof(float);
+  if (ensure_block_buf(&b_hidden16, hidden16_bytes) != 0 ||
+      ensure_block_buf(&b_hidden32, hidden32_bytes) != 0 ||
+      ensure_block_buf(&b_norm1, hidden32_bytes) != 0 ||
+      ensure_block_buf(&b_x2, hidden32_bytes) != 0 ||
+      ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
+      ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
+      ensure_block_buf(&b_argmax, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_token_id, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_pos_id, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_past_len_id, sizeof(int)) != 0) {
+    return make_error(env, "cuda_malloc_decode_failed");
+  }
+
+  int const_rc = ensure_decode_const(&g_decode_final_norm, &final_norm_bin);
+  if (const_rc != 0) return make_block_error(env, "upload_final_norm", const_rc);
+  const_rc = ensure_decode_const(&g_decode_rope, &rope_bin);
+  if (const_rc != 0) return make_block_error(env, "upload_decode_rope", const_rc);
+
+  if (cudaMemcpyAsync(b_token_id.ptr, &token_id, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess) {
+    return make_error(env, "upload_token_id_failed");
+  }
+  if (cudaMemcpyAsync(b_pos_id.ptr, &pos, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess ||
+      cudaMemcpyAsync(b_past_len_id.ptr, &past_len, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess) {
+    return make_error(env, "upload_decode_scalar_failed");
+  }
+
+  uintptr_t signature = ml->signature;
+  signature = mix_ptr(signature, embed->d_weight);
+  signature = mix_ptr(signature, lm_head->d_weight);
+  signature = mix_ptr(signature, lm_head->d_scales);
+  signature = mix_ptr(signature, g_decode_final_norm.buf.ptr);
+  signature = mix_ptr(signature, g_decode_rope.buf.ptr);
+
+  DecodeLayerParams *decode_layers = ml->layers;
+  int layer_count = ml->layer_count;
+  int graph_ok = !g_decode_graph_disabled &&
+                 all_decode_weights_captureable(decode_layers, layer_count, lm_head);
+  int rc = 0;
+  if (graph_ok) {
+    DecodeGraphEntry *entry = find_decode_graph(-1, -1, hidden, embed->vocab,
+                                                layer_count, signature);
+    if (entry && entry->exec) {
+      cudaError_t launch_err = cudaGraphLaunch(entry->exec, g_block_stream);
+      if (launch_err != cudaSuccess) {
+        return make_block_error(env, "decode_graph_launch", -2000 - (int)launch_err);
+      }
+      entry->launches++;
+      g_decode_graph_hits++;
+      for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len + 1;
+    } else {
+      cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
+      if (err != cudaSuccess) {
+        g_decode_graph_disabled = 1;
+        g_decode_graph_failures++;
+        g_decode_last_capture_error = err;
+        graph_ok = 0;
+      } else {
+        g_full_decode_capture = 1;
+        g_dyn_pos_ptr = (int *)b_pos_id.ptr;
+        g_dyn_past_len_ptr = (int *)b_past_len_id.ptr;
+        rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
+                                       (float *)g_decode_final_norm.buf.ptr, lm_head,
+                                       (float *)g_decode_rope.buf.ptr, pos);
+        g_dyn_pos_ptr = NULL;
+        g_dyn_past_len_ptr = NULL;
+        g_full_decode_capture = 0;
+        cudaGraph_t graph = NULL;
+        err = cudaStreamEndCapture(g_block_stream, &graph);
+        if (rc != 0 || err != cudaSuccess || !graph) {
+          if (graph) cudaGraphDestroy(graph);
+          for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+          (void)cudaGetLastError();
+          g_decode_graph_disabled = 1;
+          g_decode_graph_failures++;
+          g_decode_last_capture_error = err;
+          decode_graph_debug("capture_failed", rc, (int)err, past_len);
+          graph_ok = 0;
+        } else {
+          g_decode_graph_captures++;
+          cudaGraphExec_t exec = NULL;
+          err = cudaGraphInstantiate(&exec, graph, 0);
+          if (err != cudaSuccess || !exec) {
+            cudaGraphDestroy(graph);
+            for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+            (void)cudaGetLastError();
+            g_decode_graph_disabled = 1;
+            g_decode_graph_failures++;
+            g_decode_last_capture_error = err;
+            decode_graph_debug("instantiate_failed", 0, (int)err, past_len);
+            graph_ok = 0;
+          } else {
+            cudaGraphExec_t rolling_exec = NULL;
+            cudaError_t roll_err = cudaGraphInstantiate(&rolling_exec, graph, 0);
+            if (roll_err == cudaSuccess && rolling_exec) {
+              set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
+                                      layer_count, signature);
+            }
+            entry = alloc_decode_graph(-1, -1, hidden, embed->vocab, layer_count, signature);
+            if (entry) {
+              entry->graph = graph;
+              entry->exec = exec;
+              entry->launches = 1;
+            } else {
+              cudaGraphDestroy(graph);
+            }
+            err = cudaGraphLaunch(exec, g_block_stream);
+            if (err != cudaSuccess) {
+              return make_block_error(env, "decode_graph_launch", -2100 - (int)err);
+            }
+            decode_graph_debug("capture_ok", g_decode_graph_count, g_decode_graph_captures,
+                               past_len);
+          }
+        }
+      }
+    }
+  }
+
+  if (!graph_ok) {
+    g_dyn_pos_ptr = NULL;
+    g_dyn_past_len_ptr = NULL;
+    rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
+                                   (float *)g_decode_final_norm.buf.ptr, lm_head,
+                                   (float *)g_decode_rope.buf.ptr, pos);
+    if (rc != 0) return make_block_error(env, "decode_token", rc);
+  }
+
+  int next_token = 0;
+  if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
+      cudaMemcpy(&next_token, b_argmax.ptr, sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
+    return make_error(env, "download_argmax_failed");
+  }
+  vt_block_set_stream(NULL);
+  cuda_fp8_dequant_set_stream(NULL);
+  if (decode_graph_debug_enabled()) {
+    fprintf(stderr,
+            "[decode_graph] stats cached=%d captures=%u hits=%u updates=%u update_failures=%u failures=%u last_err=%d\n",
+            g_decode_graph_count, g_decode_graph_captures, g_decode_graph_hits,
+            g_decode_graph_updates, g_decode_graph_update_failures, g_decode_graph_failures,
+            (int)g_decode_last_capture_error);
+  }
+
+  return make_ok(env, enif_make_int(env, next_token));
+#endif
+}
