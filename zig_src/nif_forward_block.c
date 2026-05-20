@@ -14,8 +14,8 @@
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
 
-#define LLAMA_HEAD_DIM 64
-#define LLAMA_EPS 1.0e-5f
+#define DEFAULT_LLAMA_HEAD_DIM 64
+#define DEFAULT_LLAMA_EPS 1.0e-5f
 
 extern int vt_fp16_to_fp32_cast(const void *in, float *out, int n);
 extern int vt_fp32_to_fp16_cast(const float *in, void *out, int n);
@@ -98,6 +98,8 @@ typedef struct {
   int ffn;
   int pos;
   int past_len;
+  int head_dim;
+  uint32_t eps_bits;
   cudaGraph_t graph;
   cudaGraphExec_t exec;
   unsigned launches;
@@ -295,12 +297,25 @@ static ERL_NIF_TERM make_block_error(ErlNifEnv *env, const char *prefix, int rc)
   return make_error(env, msg);
 }
 
+static uint32_t float_bits_u32(float value) {
+  uint32_t bits;
+  memcpy(&bits, &value, sizeof(bits));
+  return bits;
+}
+
+static int valid_decode_head_dim(int head_dim) {
+  return head_dim == 32 || head_dim == 64 || head_dim == 128;
+}
+
 static BlockGraphEntry *find_block_graph(int kind, int hidden, int kv_dim, int ffn,
-                                         int pos, int past_len) {
+                                         int pos, int past_len, int head_dim,
+                                         float eps) {
+  uint32_t eps_bits = float_bits_u32(eps);
   for (int i = 0; i < g_block_graph_count; ++i) {
     BlockGraphEntry *e = &g_block_graphs[i];
     if (e->kind == kind && e->hidden == hidden && e->kv_dim == kv_dim &&
-        e->ffn == ffn && e->pos == pos && e->past_len == past_len) {
+        e->ffn == ffn && e->pos == pos && e->past_len == past_len &&
+        e->head_dim == head_dim && e->eps_bits == eps_bits) {
       return e;
     }
   }
@@ -308,7 +323,8 @@ static BlockGraphEntry *find_block_graph(int kind, int hidden, int kv_dim, int f
 }
 
 static BlockGraphEntry *alloc_block_graph(int kind, int hidden, int kv_dim, int ffn,
-                                          int pos, int past_len) {
+                                          int pos, int past_len, int head_dim,
+                                          float eps) {
   if (g_block_graph_count >= BLOCK_GRAPH_MAX) return NULL;
   BlockGraphEntry *e = &g_block_graphs[g_block_graph_count++];
   memset(e, 0, sizeof(*e));
@@ -318,38 +334,40 @@ static BlockGraphEntry *alloc_block_graph(int kind, int hidden, int kv_dim, int 
   e->ffn = ffn;
   e->pos = pos;
   e->past_len = past_len;
+  e->head_dim = head_dim;
+  e->eps_bits = float_bits_u32(eps);
   return e;
 }
 
 static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
                                int pos, int past_len, int num_heads,
-                               int num_kv_heads) {
+                               int num_kv_heads, int head_dim, float eps) {
   int rc;
   switch (kind) {
     case BLOCK_GRAPH_NORM1:
       if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) return -100 + rc;
       if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr,
-                                g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
-                                 (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -200 + rc;
+                                 g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
+                                  (float *)b_x2.ptr, hidden, eps)) != 0) return -200 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) return -300 + rc;
       return 0;
     case BLOCK_GRAPH_ROPE_ATTN:
       if (g_dyn_pos_ptr) {
         if ((rc = vt_rope_apply_fp32_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                         g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
-                                         g_dyn_pos_ptr, num_heads, LLAMA_HEAD_DIM)) != 0)
+                                          g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                          g_dyn_pos_ptr, num_heads, head_dim)) != 0)
           return -400 + rc;
         if ((rc = vt_rope_apply_fp32_dyn(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                         g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
-                                         g_dyn_pos_ptr, num_kv_heads, LLAMA_HEAD_DIM)) != 0)
+                                          g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                          g_dyn_pos_ptr, num_kv_heads, head_dim)) != 0)
           return -500 + rc;
       } else {
         if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                     g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                     num_heads, LLAMA_HEAD_DIM)) != 0) return -400 + rc;
+                                      g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                      num_heads, head_dim)) != 0) return -400 + rc;
         if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                     g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                     num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -500 + rc;
+                                      g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                      num_kv_heads, head_dim)) != 0) return -500 + rc;
       }
       if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
       if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
@@ -358,23 +376,23 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
                                                g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
                                                g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
                                                g_attn_k_cache_ptr, g_attn_v_cache_ptr,
-                                               (float *)b_attn.ptr, g_dyn_past_len_ptr,
-                                               num_heads, num_kv_heads, LLAMA_HEAD_DIM)) != 0)
+                                                (float *)b_attn.ptr, g_dyn_past_len_ptr,
+                                                num_heads, num_kv_heads, head_dim)) != 0)
           return -800 + rc;
       } else if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
                                                 g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
                                                 g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
                                                 g_attn_k_cache_ptr, g_attn_v_cache_ptr,
-                                                (float *)b_attn.ptr, past_len, num_heads,
-                                                num_kv_heads, LLAMA_HEAD_DIM)) != 0) return -800 + rc;
+                                                 (float *)b_attn.ptr, past_len, num_heads,
+                                                 num_kv_heads, head_dim)) != 0) return -800 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) return -900 + rc;
       return 0;
     case BLOCK_GRAPH_POST_ATTN:
       if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
                                       (float *)b_h1.ptr, hidden)) != 0) return -1000 + rc;
       if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr,
-                                g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
-                                 (float *)b_x2.ptr, hidden, LLAMA_EPS)) != 0) return -1100 + rc;
+                                 g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
+                                  (float *)b_x2.ptr, hidden, eps)) != 0) return -1100 + rc;
       if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) return -1200 + rc;
       return 0;
     case BLOCK_GRAPH_FFN:
@@ -394,13 +412,15 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
 }
 
 static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
-                            int pos, int past_len, int num_heads,
-                            int num_kv_heads) {
+                             int pos, int past_len, int num_heads,
+                             int num_kv_heads, int head_dim, float eps) {
   if (g_block_graph_disabled || g_full_decode_capture) {
-    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads,
+                               num_kv_heads, head_dim, eps);
   }
 
-  BlockGraphEntry *e = find_block_graph(kind, hidden, kv_dim, ffn, pos, past_len);
+  BlockGraphEntry *e = find_block_graph(kind, hidden, kv_dim, ffn, pos, past_len,
+                                        head_dim, eps);
   if (e && e->exec) {
     cudaError_t err = cudaGraphLaunch(e->exec, g_block_stream);
     if (err == cudaSuccess) {
@@ -410,19 +430,22 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
     return -2000 - (int)err;
   }
 
-  e = alloc_block_graph(kind, hidden, kv_dim, ffn, pos, past_len);
+  e = alloc_block_graph(kind, hidden, kv_dim, ffn, pos, past_len, head_dim, eps);
   if (!e) {
     g_block_graph_disabled = 1;
-    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads,
+                               num_kv_heads, head_dim, eps);
   }
 
   cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
   if (err != cudaSuccess) {
     g_block_graph_disabled = 1;
-    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads,
+                               num_kv_heads, head_dim, eps);
   }
 
-  int rc = run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+  int rc = run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads,
+                               num_kv_heads, head_dim, eps);
   cudaGraph_t graph = NULL;
   err = cudaStreamEndCapture(g_block_stream, &graph);
   if (rc != 0 || err != cudaSuccess || !graph) {
@@ -436,7 +459,8 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   if (err != cudaSuccess || !exec) {
     cudaGraphDestroy(graph);
     g_block_graph_disabled = 1;
-    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads, num_kv_heads);
+    return run_helper_sequence(kind, hidden, kv_dim, ffn, pos, past_len, num_heads,
+                               num_kv_heads, head_dim, eps);
   }
 
   e->graph = graph;
@@ -493,6 +517,22 @@ static int map_get_binary(ErlNifEnv *env, ERL_NIF_TERM map, const char *key,
   return enif_inspect_binary(env, val, out);
 }
 
+static int map_get_int_default(ErlNifEnv *env, ERL_NIF_TERM map, const char *key,
+                               int default_value) {
+  ERL_NIF_TERM val;
+  int out;
+  if (!enif_get_map_value(env, map, enif_make_atom(env, key), &val)) return default_value;
+  return enif_get_int(env, val, &out) ? out : default_value;
+}
+
+static float map_get_float_default(ErlNifEnv *env, ERL_NIF_TERM map, const char *key,
+                                   float default_value) {
+  ERL_NIF_TERM val;
+  double out;
+  if (!enif_get_map_value(env, map, enif_make_atom(env, key), &val)) return default_value;
+  return enif_get_double(env, val, &out) ? (float)out : default_value;
+}
+
 static PackedWeight *map_get_weight(ErlNifEnv *env, ERL_NIF_TERM map, const char *key) {
   ERL_NIF_TERM val;
   if (!enif_get_map_value(env, map, enif_make_atom(env, key), &val)) return NULL;
@@ -503,10 +543,11 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
                                     PackedWeight *o, PackedWeight *gate,
                                     PackedWeight *up, PackedWeight *down,
                                     PackedWeight *qkv, PackedWeight *gate_up,
-                                    const ErlNifBinary *norm1_bin,
-                                    const ErlNifBinary *norm2_bin,
-                                    const ErlNifBinary *rope_bin,
-                                   BlockKvCache *kv_cache_res, int pos) {
+                                     const ErlNifBinary *norm1_bin,
+                                     const ErlNifBinary *norm2_bin,
+                                     const ErlNifBinary *rope_bin,
+                                    BlockKvCache *kv_cache_res, int pos,
+                                    int head_dim, float eps) {
   if (!validate_fp8_weight(q) || !validate_fp8_weight(k) || !validate_fp8_weight(v) ||
       !validate_fp8_weight(o) || !validate_fp8_weight(gate) || !validate_fp8_weight(up) ||
       !validate_fp8_weight(down)) {
@@ -518,10 +559,10 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   int ffn = gate->out_features;
   int use_qkv = qkv && validate_fp8_weight(qkv);
   int use_gate_up = gate_up && validate_fp8_weight(gate_up);
-  int num_heads = hidden / LLAMA_HEAD_DIM;
-  int num_kv_heads = kv_dim / LLAMA_HEAD_DIM;
+  int num_heads = hidden / head_dim;
+  int num_kv_heads = kv_dim / head_dim;
   if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
-      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
+      !valid_decode_head_dim(head_dim) || hidden % head_dim != 0 || kv_dim % head_dim != 0 ||
       q->out_features != hidden || k->in_features != hidden || v->in_features != hidden ||
       v->out_features != kv_dim || o->in_features != hidden || o->out_features != hidden ||
       gate->in_features != hidden || up->in_features != hidden || up->out_features != ffn ||
@@ -542,7 +583,7 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
   size_t ffn32_bytes = (size_t)ffn * sizeof(float);
   if (norm1_bin->size != hidden32_bytes || norm2_bin->size != hidden32_bytes ||
-      rope_bin->size != (size_t)(LLAMA_HEAD_DIM / 2) * sizeof(float)) {
+      rope_bin->size != (size_t)(head_dim / 2) * sizeof(float)) {
     return -12;
   }
   if (!kv_cache_res || kv_cache_res->kv_dim != kv_dim || kv_cache_res->len < 0 ||
@@ -594,7 +635,7 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_up_ptr = NULL;
 
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -200 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
       return -300 + rc;
@@ -610,12 +651,12 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
       return -340 + rc;
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
-                                 past_len, num_heads, num_kv_heads)) != 0)
+                                  past_len, num_heads, num_kv_heads, head_dim, eps)) != 0)
     return -400 + rc;
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
     return -500 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -600 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate_up.ptr)) != 0)
       return -700 + rc;
@@ -628,11 +669,11 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
       return -720 + rc;
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -800 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
     return -900 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -1000 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
 
   size_t offset = (size_t)past_len * kv16_bytes;
   if (cudaMemcpyAsync((uint8_t *)kv_cache_res->d_k + offset, b_k_append.ptr, kv16_bytes,
@@ -658,6 +699,13 @@ typedef struct {
   BlockKvCache *cache;
   float *norm1;
   float *norm2;
+  int hidden_size;
+  int kv_size;
+  int ffn_size;
+  int head_dim;
+  int num_heads;
+  int num_kv_heads;
+  float eps;
 } DecodeLayerParams;
 
 typedef struct {
@@ -843,12 +891,14 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
   int hidden = l->q->in_features;
   int kv_dim = l->k->out_features;
   int ffn = l->gate->out_features;
+  int head_dim = l->head_dim > 0 ? l->head_dim : DEFAULT_LLAMA_HEAD_DIM;
+  float eps = l->eps > 0.0f ? l->eps : DEFAULT_LLAMA_EPS;
   int use_qkv = l->qkv && validate_fp8_weight(l->qkv);
   int use_gate_up = l->gate_up && validate_fp8_weight(l->gate_up);
-  int num_heads = hidden / LLAMA_HEAD_DIM;
-  int num_kv_heads = kv_dim / LLAMA_HEAD_DIM;
+  int num_heads = hidden / head_dim;
+  int num_kv_heads = kv_dim / head_dim;
   if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
-      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
+      !valid_decode_head_dim(head_dim) || hidden % head_dim != 0 || kv_dim % head_dim != 0 ||
       l->q->out_features != hidden || l->k->in_features != hidden ||
       l->v->in_features != hidden || l->v->out_features != kv_dim ||
       l->o->in_features != hidden || l->o->out_features != hidden ||
@@ -908,7 +958,7 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
 
   int rc = 0;
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -200 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1,
                                  (float *)b_qkv.ptr)) != 0) return -300 + rc;
@@ -924,11 +974,11 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
                                  (float *)b_v.ptr)) != 0) return -340 + rc;
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
-                                past_len, num_heads, num_kv_heads)) != 0) return -400 + rc;
+                                past_len, num_heads, num_kv_heads, head_dim, eps)) != 0) return -400 + rc;
   if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1,
                                (float *)b_o.ptr)) != 0) return -500 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -600 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
                                  (float *)b_gate_up.ptr)) != 0) return -700 + rc;
@@ -941,11 +991,11 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
                                  (float *)b_up.ptr)) != 0) return -720 + rc;
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -800 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
   if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1,
                                (float *)b_down.ptr)) != 0) return -900 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0) return -1000 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
 
   if (g_dyn_past_len_ptr) {
     rc = vt_kv_cache_append_fp16_dyn(l->cache->d_k, l->cache->d_v, b_k_append.ptr,
@@ -965,9 +1015,9 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
 }
 
 static int run_decode_token_sequence(EmbeddingTable *embed, int token_id,
-                                     DecodeLayerParams *layers, int layer_count,
-                                     float *final_norm, PackedWeight *lm_head,
-                                     float *rope, int pos) {
+                                      DecodeLayerParams *layers, int layer_count,
+                                      float *final_norm, PackedWeight *lm_head,
+                                      float *rope, int pos, int head_dim, float eps) {
   int rc = vt_embedding_lookup_fp16(embed->d_weight, (const int *)b_token_id.ptr,
                                     b_hidden16.ptr, embed->hidden, embed->vocab);
   if (rc != 0) return -10000 + rc;
@@ -978,7 +1028,8 @@ static int run_decode_token_sequence(EmbeddingTable *embed, int token_id,
   g_norm1_ptr = final_norm;
   g_norm2_ptr = NULL;
   g_rope_ptr = rope;
-  rc = run_helper_graph(BLOCK_GRAPH_NORM1, embed->hidden, 0, 0, -1, -1, 0, 0);
+  rc = run_helper_graph(BLOCK_GRAPH_NORM1, embed->hidden, 0, 0, -1, -1, 0, 0,
+                        head_dim, eps);
   if (rc != 0) return -12000 + rc;
   rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
                           (float *)b_logits.ptr);
@@ -1086,10 +1137,12 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   int hidden = q->in_features;
   int kv_dim = k->out_features;
   int ffn = gate->out_features;
-  int num_heads = hidden / LLAMA_HEAD_DIM;
-  int num_kv_heads = kv_dim / LLAMA_HEAD_DIM;
+  int head_dim = DEFAULT_LLAMA_HEAD_DIM;
+  float eps = DEFAULT_LLAMA_EPS;
+  int num_heads = hidden / head_dim;
+  int num_kv_heads = kv_dim / head_dim;
   if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 ||
-      hidden % LLAMA_HEAD_DIM != 0 || kv_dim % LLAMA_HEAD_DIM != 0 ||
+      hidden % head_dim != 0 || kv_dim % head_dim != 0 ||
       q->out_features != hidden || k->in_features != hidden || v->in_features != hidden ||
       v->out_features != kv_dim || o->in_features != hidden || o->out_features != hidden ||
       gate->in_features != hidden || up->in_features != hidden || up->out_features != ffn ||
@@ -1104,7 +1157,7 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
   size_t ffn32_bytes = (size_t)ffn * sizeof(float);
   if (hidden_bin.size != hidden16_bytes || norm1_bin.size != hidden32_bytes ||
-      norm2_bin.size != hidden32_bytes || rope_bin.size != (size_t)(LLAMA_HEAD_DIM / 2) * sizeof(float)) {
+      norm2_bin.size != hidden32_bytes || rope_bin.size != (size_t)(head_dim / 2) * sizeof(float)) {
     return make_error(env, "input_size_mismatch");
   }
   int past_len = 0;
@@ -1158,7 +1211,7 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   cuda_fp8_dequant_set_stream((void *)g_block_stream);
 
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0)
+                             num_heads, num_kv_heads, head_dim, eps)) != 0)
     return make_block_error(env, "graph_norm1", rc);
 
   if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
@@ -1170,29 +1223,29 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
   if (use_kv_resource) {
     rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
-                             num_heads, num_kv_heads);
+                             num_heads, num_kv_heads, head_dim, eps);
   } else {
     rc = run_helper_graph(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
-                          num_heads, num_kv_heads);
+                          num_heads, num_kv_heads, head_dim, eps);
   }
   if (rc != 0)
     return make_block_error(env, "graph_rope_attn", rc);
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
     return make_block_error(env, "gemm_o", rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0)
+                             num_heads, num_kv_heads, head_dim, eps)) != 0)
     return make_block_error(env, "graph_post_attn", rc);
   if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
     return make_block_error(env, "gemm_gate", rc);
   if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
     return make_block_error(env, "gemm_up", rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0)
+                             num_heads, num_kv_heads, head_dim, eps)) != 0)
     return make_block_error(env, "graph_ffn", rc);
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
     return make_block_error(env, "gemm_down", rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads)) != 0)
+                             num_heads, num_kv_heads, head_dim, eps)) != 0)
     return make_block_error(env, "graph_out", rc);
 
   if (use_kv_resource) {
@@ -1287,6 +1340,8 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   ERL_NIF_TERM layer_term, cache_term;
   int layer_count = 0;
   int past_len = -1;
+  int model_head_dim = 0;
+  float model_eps = DEFAULT_LLAMA_EPS;
   uintptr_t signature = (uintptr_t)0xcbf29ce484222325ull;
   DecodeLayerParams decode_layers[DECODE_MAX_LAYERS];
   ErlNifBinary norm1_bins[DECODE_MAX_LAYERS];
@@ -1312,11 +1367,15 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     PackedWeight *down = map_get_weight(env, layer_term, "down");
     PackedWeight *qkv = map_get_weight(env, layer_term, "qkv");
     PackedWeight *gate_up = map_get_weight(env, layer_term, "gate_up");
+    int head_dim = map_get_int_default(env, layer_term, "head_dim", DEFAULT_LLAMA_HEAD_DIM);
+    float eps = map_get_float_default(env, layer_term, "eps", DEFAULT_LLAMA_EPS);
     BlockKvCache *cache = NULL;
     if (!enif_get_resource(env, cache_term, BLOCK_KV_CACHE_RES, (void **)&cache)) {
       return make_error(env, "invalid_kv_cache");
     }
 
+    if (!valid_decode_head_dim(head_dim)) return make_error(env, "invalid_head_dim");
+    if (eps <= 0.0f) return make_error(env, "invalid_eps");
     if (!cache || cache->len < 0) return make_error(env, "invalid_kv_cache");
     if (past_len < 0) {
       past_len = cache->len;
@@ -1343,8 +1402,23 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     decode_layers[layer_count].cache = cache;
     decode_layers[layer_count].norm1 = (float *)g_decode_norm1[layer_count].buf.ptr;
     decode_layers[layer_count].norm2 = (float *)g_decode_norm2[layer_count].buf.ptr;
+    decode_layers[layer_count].hidden_size = q ? q->in_features : 0;
+    decode_layers[layer_count].kv_size = k ? k->out_features : 0;
+    decode_layers[layer_count].ffn_size = gate ? gate->out_features : 0;
+    decode_layers[layer_count].head_dim = head_dim;
+    decode_layers[layer_count].num_heads =
+        head_dim > 0 && q ? q->in_features / head_dim : 0;
+    decode_layers[layer_count].num_kv_heads =
+        head_dim > 0 && k ? k->out_features / head_dim : 0;
+    decode_layers[layer_count].eps = eps;
     norm1_bins[layer_count] = norm1_bin;
     norm2_bins[layer_count] = norm2_bin;
+    if (model_head_dim == 0) {
+      model_head_dim = head_dim;
+      model_eps = eps;
+    } else if (model_head_dim != head_dim || float_bits_u32(model_eps) != float_bits_u32(eps)) {
+      return make_error(env, "layer_config_mismatch");
+    }
 
     signature = mix_ptr(signature, cache->d_k);
     signature = mix_ptr(signature, cache->d_v);
@@ -1357,11 +1431,17 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     signature = mix_ptr(signature, down ? down->d_weight : NULL);
     signature = mix_ptr(signature, qkv ? qkv->d_weight : NULL);
     signature = mix_ptr(signature, gate_up ? gate_up->d_weight : NULL);
+    signature = mix_ptr(signature, (const void *)(uintptr_t)head_dim);
+    signature = mix_ptr(signature, (const void *)(uintptr_t)float_bits_u32(eps));
     layer_count++;
   }
   if (!enif_is_empty_list(env, caches_tail)) return make_error(env, "cache_count_mismatch");
   if (layer_count <= 0) return make_error(env, "empty_layers");
   if (past_len < 0) return make_error(env, "invalid_past_len");
+  if (model_head_dim == 0) model_head_dim = DEFAULT_LLAMA_HEAD_DIM;
+  if (rope_bin.size != (size_t)(model_head_dim / 2) * sizeof(float)) {
+    return make_error(env, "rope_shape_mismatch");
+  }
 
   int const_rc = ensure_decode_const(&g_decode_final_norm, &final_norm_bin);
   if (const_rc != 0) return make_block_error(env, "upload_final_norm", const_rc);
@@ -1413,8 +1493,9 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
         g_dyn_pos_ptr = (int *)b_pos_id.ptr;
         g_dyn_past_len_ptr = (int *)b_past_len_id.ptr;
         rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
-                                       (float *)g_decode_final_norm.buf.ptr, lm_head,
-                                       (float *)g_decode_rope.buf.ptr, pos);
+                                        (float *)g_decode_final_norm.buf.ptr, lm_head,
+                                        (float *)g_decode_rope.buf.ptr, pos,
+                                        model_head_dim, model_eps);
         g_dyn_pos_ptr = NULL;
         g_dyn_past_len_ptr = NULL;
         g_full_decode_capture = 0;
@@ -1519,12 +1600,14 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
                                    decode_layers[i].gate, decode_layers[i].up,
                                    decode_layers[i].down, decode_layers[i].qkv,
                                    decode_layers[i].gate_up, &norm1_bins[i],
-                                   &norm2_bins[i], &rope_bin, decode_layers[i].cache, pos);
+                                   &norm2_bins[i], &rope_bin, decode_layers[i].cache, pos,
+                                   decode_layers[i].head_dim, decode_layers[i].eps);
       if (rc != 0) return make_block_error(env, "decode_block", rc);
     }
     if (upload_binary_async(&b_norm1, &final_norm_bin) != 0)
       return make_error(env, "upload_final_norm_failed");
-    int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0);
+    int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0,
+                                    model_head_dim, model_eps);
     if (final_rc != 0) return make_block_error(env, "final_norm_gpu", final_rc);
     if ((rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
                                  (float *)b_logits.ptr)) != 0)

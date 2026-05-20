@@ -396,6 +396,69 @@ __global__ void gqa_attn_flash_single_token_dyn_kernel(const float *q, const flo
   out[q_base + d1] = acc1 * inv_l;
 }
 
+__global__ void gqa_attn_naive_single_token_dyn_kernel(const float *q, const float *new_k,
+                                                       const float *new_v,
+                                                       const uint16_t *k_cache,
+                                                       const uint16_t *v_cache,
+                                                       float *out,
+                                                       const int *past_len_ptr,
+                                                       int num_heads,
+                                                       int num_kv_heads,
+                                                       int head_dim) {
+  int qh = blockIdx.x;
+  if (qh >= num_heads || threadIdx.x != 0) return;
+
+  int past_len = *past_len_ptr;
+  int q_per_kv = num_heads / num_kv_heads;
+  int kvh = qh / q_per_kv;
+  int seq_len = past_len + 1;
+  int q_base = qh * head_dim;
+  int kv_base = kvh * head_dim;
+  float scale = rsqrtf((float)head_dim);
+
+  float max_score = -INFINITY;
+  for (int t = 0; t < seq_len; ++t) {
+    float dot = 0.0f;
+    for (int d = 0; d < head_dim; ++d) {
+      float kv = t < past_len
+          ? __half2float(__ushort_as_half(k_cache[((size_t)t * num_kv_heads + kvh) * head_dim + d]))
+          : new_k[kv_base + d];
+      dot = fmaf(q[q_base + d], kv, dot);
+    }
+    max_score = fmaxf(max_score, dot * scale);
+  }
+
+  float denom = 0.0f;
+  for (int t = 0; t < seq_len; ++t) {
+    float dot = 0.0f;
+    for (int d = 0; d < head_dim; ++d) {
+      float kv = t < past_len
+          ? __half2float(__ushort_as_half(k_cache[((size_t)t * num_kv_heads + kvh) * head_dim + d]))
+          : new_k[kv_base + d];
+      dot = fmaf(q[q_base + d], kv, dot);
+    }
+    denom += expf(dot * scale - max_score);
+  }
+
+  for (int d = 0; d < head_dim; ++d) {
+    float acc = 0.0f;
+    for (int t = 0; t < seq_len; ++t) {
+      float dot = 0.0f;
+      for (int kd = 0; kd < head_dim; ++kd) {
+        float kv = t < past_len
+            ? __half2float(__ushort_as_half(k_cache[((size_t)t * num_kv_heads + kvh) * head_dim + kd]))
+            : new_k[kv_base + kd];
+        dot = fmaf(q[q_base + kd], kv, dot);
+      }
+      float vv = t < past_len
+          ? __half2float(__ushort_as_half(v_cache[((size_t)t * num_kv_heads + kvh) * head_dim + d]))
+          : new_v[kv_base + d];
+      acc = fmaf(expf(dot * scale - max_score), vv, acc);
+    }
+    out[q_base + d] = acc / denom;
+  }
+}
+
 __global__ void kv_cache_append_fp16_dyn_kernel(uint16_t *k_cache, uint16_t *v_cache,
                                                 const uint16_t *k_append,
                                                 const uint16_t *v_append,
@@ -483,10 +546,17 @@ int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float
                                  const void *k_cache, const void *v_cache, float *out,
                                  const int *past_len_ptr, int num_heads, int num_kv_heads,
                                  int head_dim) {
-  if (head_dim != 64) return -3;
-  gqa_attn_flash_single_token_dyn_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
-      q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
-      past_len_ptr, num_heads, num_kv_heads, head_dim);
+  if (head_dim == 64) {
+    gqa_attn_flash_single_token_dyn_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
+        q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
+        past_len_ptr, num_heads, num_kv_heads, head_dim);
+  } else if (head_dim == 32 || head_dim == 128) {
+    gqa_attn_naive_single_token_dyn_kernel<<<num_heads, 1, 0, g_vt_block_stream>>>(
+        q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
+        past_len_ptr, num_heads, num_kv_heads, head_dim);
+  } else {
+    return -3;
+  }
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
