@@ -217,7 +217,6 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
 #pragma unroll
     for (int j = 0; j < 16; ++j) {
       float wv = fp8_e4m3_to_float(w_row[base + j]) * scale;
-      wv = __half2float(__float2half_rn(wv));
       float xv = __half2float(x[base + j]);
       acc = fmaf(wv, xv, acc);
     }
