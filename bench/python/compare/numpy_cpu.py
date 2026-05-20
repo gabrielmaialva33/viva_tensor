@@ -2,7 +2,7 @@
 """Side-by-side CPU performance baseline: NumPy half of the comparison.
 
 For each op below, times the NumPy implementation across a few sizes and
-writes one CSV row per (op, size) under ``bench/perf/numpy_results.csv``.
+writes one CSV row per (op, size) under ``bench/results/numpy_cpu_baseline.csv``.
 
 CSV columns: ``op,size,iters,total_ms,per_op_us,gflops_estimate``.
 
@@ -10,7 +10,7 @@ Each measurement uses 5 warmup iterations + 20 timed iterations and reports
 the median per-op timing (more robust than the mean for short ops).
 
 Run:
-    python3 bench/perf/compare_numpy.py
+    python3 bench/python/compare/numpy_cpu.py
 
 Requires only ``numpy`` (no torch, no scipy).
 """
@@ -27,7 +27,7 @@ import numpy as np
 WARMUP_ITERS = 5
 TIMED_ITERS = 20
 
-OUT_PATH = Path(__file__).resolve().parent / "numpy_results.csv"
+OUT_PATH = Path(__file__).resolve().parents[2] / "results" / "numpy_cpu_baseline.csv"
 
 
 def _time_op(fn, warmup: int = WARMUP_ITERS, timed: int = TIMED_ITERS) -> list[float]:

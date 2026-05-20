@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Print a side-by-side comparison of NumPy vs viva_tensor CPU timings.
 
-Reads ``bench/perf/numpy_results.csv`` and
-``bench/perf/viva_tensor_results.csv`` (both produced by their respective
+Reads ``bench/results/numpy_cpu_baseline.csv`` and
+``bench/results/viva_tensor_results.csv`` (both produced by their respective
 sibling scripts) and prints a single table:
 
     op           | size        | numpy_us | viva_us | viva / numpy
@@ -11,7 +11,7 @@ sibling scripts) and prints a single table:
 If a (op, size) row is missing from one side it shows ``-``.
 
 Run:
-    python3 bench/perf/compare.py
+    python3 bench/python/compare/side_by_side.py
 """
 
 from __future__ import annotations
@@ -20,8 +20,8 @@ import csv
 import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-NUMPY_CSV = ROOT / "numpy_results.csv"
+ROOT = Path(__file__).resolve().parents[2] / "results"
+NUMPY_CSV = ROOT / "numpy_cpu_baseline.csv"
 VIVA_CSV = ROOT / "viva_tensor_results.csv"
 
 

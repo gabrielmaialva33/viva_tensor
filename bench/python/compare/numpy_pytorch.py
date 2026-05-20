@@ -10,7 +10,7 @@ Designed to match viva_tensor/bench/peak.gleam:
 Outputs a TSV-style table to stdout that's easy to splice next to the
 viva_tensor numbers. Run with the bench venv:
 
-  .bench-venv/bin/python3 bench/compare/numpy_pytorch.py
+  .bench-venv/bin/python3 bench/python/compare/numpy_pytorch.py
 """
 
 import time
@@ -130,7 +130,7 @@ def main():
         print()
 
     # Dump as Erlang term file for the Gleam showdown to consume.
-    out_path = "bench/compare/pytorch_results.term"
+    out_path = "bench/results/pytorch_results.term"
     with open(out_path, "w") as f:
         for path, n, tflops, ms in results:
             f.write(f'{{"{path}", {n}, {tflops:.2f}, {ms:.4f}}}.\n')
