@@ -24,6 +24,8 @@ extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int 
 extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim);
 extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
 extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
+extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
+                                    int hidden, int vocab);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
                                     const void *d_input, float *d_out,
                                     int in_features, int out_features);
@@ -53,10 +55,13 @@ static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
 static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0}, b_argmax = {0};
+static BlockBuf b_token_id = {0};
 static void *g_attn_k_cache_ptr = NULL;
 static void *g_attn_v_cache_ptr = NULL;
 static float *g_q_ptr = NULL, *g_k_ptr = NULL, *g_v_ptr = NULL;
 static float *g_gate_ptr = NULL, *g_up_ptr = NULL;
+static float *g_norm1_ptr = NULL, *g_norm2_ptr = NULL, *g_rope_ptr = NULL;
+static int g_full_decode_capture = 0;
 
 typedef struct {
   void *d_k;
