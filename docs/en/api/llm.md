@@ -122,10 +122,42 @@ Each `generate` call allocates fresh KV caches before prefill. KV cache
 resources are mutable during decode, so they are intentionally per call to keep
 one `ModelHandle` reusable across prompts.
 
+## Tested models
+
+| Model | Status | Decode speed | Notes |
+| :-- | :-- | --: | :-- |
+| TinyLlama-1.1B-Chat-v1.0 | validated | `2.31 ms/token` | `head_dim=64`, GQA fast path, byte-level BPE tokenizer. |
+| Llama-3.2-1B-Instruct | validated | `2.47 ms/token` | sharded SafeTensors, tied embeddings / `lm_head`, Llama-3 tokenizer path. |
+
+The same public API drives both models:
+
+```gleam
+let assert Ok(model) = t.load_model("tmp/llama32_1b/model-00001-of-00002.safetensors")
+let opts = t.default_generate_opts()
+let assert Ok(result) = t.generate(model, "Hello", opts)
+```
+
 ## Performance
 
-On the Round 7 TinyLlama-1.1B benchmark with an RTX 4090, the fused decode-step
-path runs at about `2.23 ms/token`. The public handle API keeps the same hot
-loop: generation still calls `nt_forward_decode_step/8` once per decoded token,
-so it should stay within the same `2.23-2.30 ms/token` band when CUDA graph
-cache warmup is comparable.
+On an RTX 4090, the current public handle API has been validated at
+`2.31 ms/token` for TinyLlama-1.1B and `2.47 ms/token` for
+Llama-3.2-1B-Instruct. A best TinyLlama FP8 W8A16 decode run reaches
+`448 tok/s`, ahead of the local Ollama baseline at `352 tok/s`.
+
+Generation still calls `nt_forward_decode_step/8` once per decoded token.
+Prefill is also token-by-token today; a batched prefill path is future work.
+
+## Limitations
+
+- **Phi-2 is not a drop-in target.** Its architecture and tensor naming diverge
+  from the Llama-family loader contract used by `ModelHandle`.
+- **Llama-2-7B is blocked by access, not by the loader design.** The public HF
+  checkpoint sits behind Meta's auth gate, so it is not part of the current
+  reproducible validation set.
+- **No batched prefill path yet.** The decode kernel is optimized for
+  `batch=1`; batched prompt processing is still expressed as repeated
+  decode-step calls.
+- **True FP8xFP8 is not used for LLM decode.** The numerically validated path is
+  W8A16 with blocked FP8 weights. Quantizing the single-token activation would
+  save only a few KB per token while risking the argmax/EOS behavior already
+  validated on TinyLlama and Llama-3.2-1B.

@@ -2,7 +2,7 @@
 
 [![Hex](https://img.shields.io/hexpm/v/viva_tensor.svg)](https://hex.pm/packages/viva_tensor)
 [![HexDocs](https://img.shields.io/badge/hex-docs-blueviolet)](https://hexdocs.pm/viva_tensor)
-[![Tests](https://img.shields.io/badge/tests-783%20passing-2E8B57)](./test)
+[![Tests](https://img.shields.io/badge/tests-792%20passing-2E8B57)](./test)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
 A tensor library for Gleam on the BEAM. Provides a pure-Gleam tensor API
@@ -12,6 +12,23 @@ cuSPARSELt, and CUTLASS when available.
 
 The library works fully in pure BEAM (slow but portable) and transparently
 upgrades to the native paths when the NIF shared object is loaded.
+
+## What's new in v3.0
+
+- **Public LLM API.** `viva_tensor.load_model(path)` loads a HuggingFace
+  Llama-family SafeTensors checkpoint into an opaque `ModelHandle`, and
+  `viva_tensor.generate(model, prompt, opts)` runs deterministic argmax or
+  seeded temperature/top-k/top-p sampling.
+- **Fast FP8 W8A16 decode.** The fused blocked path reaches **448 tok/s**
+  on TinyLlama-1.1B FP8 W8A16 decode on RTX 4090, ahead of the local Ollama
+  baseline at **352 tok/s**. Current public-handle validation is
+  `2.31 ms/token` for TinyLlama-1.1B and `2.47 ms/token` for
+  Llama-3.2-1B-Instruct.
+- **Validated model coverage.** TinyLlama-1.1B and Llama-3.2-1B-Instruct run
+  through the same `ModelHandle` API with weight tying, byte-level BPE,
+  sharded SafeTensors, RoPE/GQA shape metadata, and blocked FP8 weights.
+- **Reproducible sampling.** Generation options include `temperature`,
+  `top_k`, `top_p`, `seed`, `max_new_tokens`, and `stop_on_eos`.
 
 ## Install
 
@@ -65,6 +82,8 @@ once `priv/viva_tensor_zig.so` is in place.
 - **Inference API (`2.2.101+`).** `prepack_*` + `linear_*` /
   `linear_gelu_fp8` / `linear_swiglu_fp8` against opaque
   `PackedWeight*` handles that own their device memory across calls.
+- **LLM API (`3.0.0+`).** `load_model` + `generate` package the production
+  decode path behind an opaque `ModelHandle` for Llama-family HF checkpoints.
 
 ## Measured performance (RTX 4090 + Ryzen 24-core)
 
@@ -108,12 +127,31 @@ half-rate cap; sparse paths have no `torch._scaled_mm` equivalent today.
 Full methodology + raw numbers in
 [bench/results/matmul_showdown.md](bench/results/matmul_showdown.md).
 
+### Text generation
+
+| Model / runtime                              | Decode speed |
+| :------------------------------------------- | -----------: |
+| TinyLlama-1.1B FP8 W8A16 best decode run     | 448 tok/s    |
+| Ollama local baseline                        | 352 tok/s    |
+| TinyLlama-1.1B via `ModelHandle`             | 2.31 ms/token |
+| Llama-3.2-1B-Instruct via `ModelHandle`      | 2.47 ms/token |
+
 ## Inference API
 
 Higher-level surface for the championship kernels, designed for actual
 inference (the `cutlass_*_bench` NIFs are throughput probes — they
 allocate and free GEMM tensors on every call). Prepack once, run linear
 forwards many times.
+
+For Llama-family models, prefer the public `ModelHandle` API:
+
+```gleam
+import viva_tensor as t
+
+let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+let opts = t.default_generate_opts()
+let assert Ok(result) = t.generate(model, "Hello", opts)
+```
 
 ```gleam
 import gleam/option.{None}

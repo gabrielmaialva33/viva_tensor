@@ -1,14 +1,10 @@
 # Llama-style inference end-to-end
 
 This guide walks through a real text-in / text-out forward pass on
-TinyLlama-1.1B using `viva_tensor`. Same approach scales to other
-Llama-architecture models (Llama-2 7B, 13B, etc) — the difference is
-hidden_size / num_layers / intermediate_size, not the call sequence.
-
-> The reference driver lives at `dev/llama_forward.erl`. The Gleam-side
-> wrappers live under `viva_tensor` (re-exports of the prepack / linear
-> NIFs). This guide shows the Erlang flow because that's where the
-> current end-to-end driver lives, but the calls translate 1:1 to Gleam.
+TinyLlama-1.1B using the public `viva_tensor.load_model` /
+`viva_tensor.generate` API. The same call sequence is validated on
+Llama-3.2-1B-Instruct; model-specific differences are loaded from
+`config.json` and SafeTensors metadata.
 
 ## Prerequisites
 
@@ -31,10 +27,25 @@ wget https://huggingface.co/TinyLlama/TinyLlama-1.1B-Chat-v1.0/resolve/main/toke
 
 ## End-to-end run
 
-```erlang
-erlc -o /tmp dev/llama_forward.erl
-erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
-    -eval 'llama_forward:run_generate_w8a16(22, <<"Hello">>, 20, #{}, 16), halt(0).'
+```gleam
+import viva_tensor as t
+
+pub fn main() {
+  let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+
+  let opts =
+    t.GenerateOpts(
+      max_new_tokens: 20,
+      temperature: 0.0,
+      top_k: t.TopKInfinity,
+      top_p: 1.0,
+      seed: 42,
+      stop_on_eos: True,
+    )
+
+  let assert Ok(result) = t.generate(model, "Hello", opts)
+  result.text
+}
 ```
 
 Expected output (with `block_size=16`, argmax sampling):
@@ -42,7 +53,7 @@ Expected output (with `block_size=16`, argmax sampling):
 ```
 Prompt:     "Hello"
 Generated:  ", I am interested to bookmark this job for [company/brand name], please? I am"
-Throughput: ~5.6 tok/sec
+Throughput: ~2.31 ms/token on TinyLlama-1.1B
 Argmax token after BOS: 529 (matches HF transformers fp32 reference)
 ```
 
@@ -50,6 +61,7 @@ Argmax token after BOS: 529 (matches HF transformers fp32 reference)
 
 ```
 Prompt text
+   ↓ viva_tensor.generate
    ↓ viva_tensor_tokenizer_ffi:encode  (BPE, byte-fallback)
 [token_ids]
    ↓ embed_row(EmbedTbl, token_id)     (bf16 row from SafeTensors)
@@ -76,7 +88,11 @@ next_token_id
 text
 ```
 
-## Weight loading
+## What `load_model` does
+
+`viva_tensor.load_model(path)` wraps the lower-level SafeTensors and prepack
+steps behind a reusable `ModelHandle`. Internally, each linear weight follows
+this shape:
 
 ```erlang
 {ok, Header} = viva_tensor_safetensors_ffi:open_header(Path),
@@ -106,13 +122,20 @@ inference. Memory overhead is negligible (~3% of weight bytes).
 
 ## Sampling
 
-Replace the empty options map with a sampling config:
+Set `temperature > 0.0` and pass `top_k`, `top_p`, and `seed`:
 
-```erlang
-{ok, _, Text} = llama_forward:run_generate_w8a16(
-    22, <<"Hello">>, 30,
-    #{temperature => 0.8, top_k => 40, top_p => 0.95, seed => 42},
-    16).
+```gleam
+let opts =
+  t.GenerateOpts(
+    max_new_tokens: 30,
+    temperature: 0.8,
+    top_k: t.TopK(40),
+    top_p: 0.95,
+    seed: 42,
+    stop_on_eos: True,
+  )
+
+let assert Ok(result) = t.generate(model, "Hello", opts)
 ```
 
 Use `seed` to make the run reproducible across machines.
@@ -128,21 +151,10 @@ device resource (tracked as future work; see
 
 ## Performance
 
-Profile of a warm layer at 1 token / 22 layers / block_size=16 on
-RTX 4090:
-
-| Stage                | Time   | %    | Backend                                                |
-| :------------------- | :----- | :--- | :----------------------------------------------------- |
-| 7× linear FP8 GEMMs  | 4.6 ms | 83%  | CUTLASS / cuBLASLt — limited by NIF round-trips, not compute |
-| RoPE Q+K             | 160 µs | 2.7% | Pure Erlang                                            |
-| GQA softmax + attn   | 135 µs | 2.2% | Pure Erlang                                            |
-| 2× RMSNorm           | 95 µs  | 1.5% | Pure Erlang                                            |
-| fp16 encode (NIF)    | 42 µs  | 0.7% | C                                                      |
-| silu·mul (NIF)       | 30 µs  | 0.5% | C                                                      |
-
-Total per layer ≈ 6.0 ms (warm). The 7 linears average ~660 µs each;
-pure cuBLAS for the same shape on a 4090 is 50–120 µs — the rest is BEAM
-↔ NIF marshaling and PCIe round-trip overhead.
+On RTX 4090, the public `ModelHandle` path has been validated at
+`2.31 ms/token` for TinyLlama-1.1B and `2.47 ms/token` for
+Llama-3.2-1B-Instruct. A best TinyLlama FP8 W8A16 decode run reaches
+`448 tok/s`, ahead of the local Ollama baseline at `352 tok/s`.
 
 ## What's next
 
@@ -151,7 +163,21 @@ compute. The next throughput jump (5.5 → ~11 tok/sec) needs a fused
 single-block NIF that keeps the hidden state device-resident across the
 whole block. This is tracked at
 [`bench/plans/INFERENCE_API_PLAN.md`](../../../bench/plans/INFERENCE_API_PLAN.md)
-and [task #83 in the working journal](../../../dev/llama_forward.erl).
+and the debug runner.
+
+## Advanced / Debug
+
+The historical reference driver remains useful for bisecting individual
+weights and kernels:
+
+```bash
+erlc -o /tmp dev/llama_forward.erl
+erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
+    -eval 'llama_forward:run_generate_w8a16(22, <<"Hello">>, 20, #{}, 16), halt(0).'
+```
+
+Use it for maintainer debugging only. New application code should use
+`viva_tensor.load_model` and `viva_tensor.generate`.
 
 ## Troubleshooting
 

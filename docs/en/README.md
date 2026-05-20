@@ -11,7 +11,7 @@ flowchart LR
     subgraph PublicAPI["Public Gleam API"]
         T[Tensor ops, layout, named axes]
         Q[Quantization]
-        I[Inference helpers]
+        I[Inference helpers + ModelHandle]
     end
     subgraph Native["Native acceleration (optional)"]
         MKL[Intel MKL]
@@ -33,7 +33,7 @@ flowchart LR
 | INT4 2:4 sparse (CUTLASS Sm80)     | Production  | ~1854 TOPS. byte-exact end-to-end (kernel + reorder + encoding self-tested).              |
 | SafeTensors loader                 | Functional  | bf16 → fp32, transpose via NIF (3 min → 25 s for full TinyLlama).                         |
 | BPE tokenizer                      | Functional  | Encode/decode bit-exact vs HuggingFace transformers.                                      |
-| End-to-end Llama-1.1B forward      | Functional  | 22 layers + RoPE + GQA + KV cache + LM head + argmax. Same argmax token as HF reference. |
+| Public LLM `ModelHandle` API       | Production  | `load_model` + `generate` for TinyLlama-1.1B and Llama-3.2-1B-Instruct.                  |
 | Advanced sampling (temp/top-k/p)   | Functional  | Multinomial with reproducible seed.                                                       |
 
 ## Quick Start
@@ -53,11 +53,12 @@ pub fn main() {
 }
 ```
 
-For the inference path (CUDA required):
+For Llama-family text generation (CUDA required):
 
 ```gleam
-let assert Ok(packed) = t.prepack_fp8_weight(weight_tensor)
-let assert Ok(logits) = t.linear_fp8(input, packed, None)
+let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+let opts = t.default_generate_opts()
+let assert Ok(result) = t.generate(model, "Hello", opts)
 ```
 
 See [`guides/inference.md`](guides/inference.md) for end-to-end TinyLlama-1.1B
@@ -69,6 +70,7 @@ text generation.
 | :-------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------- |
 | [`api/tensor.md`](api/tensor.md)                                      | Stable public surface — tensor creation, math, reductions, layout, named axes.                  |
 | [`api/inference.md`](api/inference.md)                                | FP8 prepack + linear, INT8/INT4 sparse, fused SwiGLU, packed weight handles.                    |
+| [`api/llm.md`](api/llm.md)                                            | Public `ModelHandle` API: `load_model`, `generate`, options, tested models.                     |
 | [`guides/inference.md`](guides/inference.md)                          | End-to-end Llama-1.1B inference: SafeTensors → prepack → forward → sample → decode.             |
 | [`guides/ffi-architecture.md`](guides/ffi-architecture.md)            | Maintainer-facing FFI ownership contract (NIF / CUDA / Zig boundary).                           |
 | [`reference/project-structure.md`](reference/project-structure.md)    | Package layout and module boundaries.                                                           |
@@ -86,7 +88,9 @@ methodology + tables across shapes and dtypes.
 | FP8 dense (CUTLASS, K=4096)           | ~588 TFLOPS       |
 | INT8 2:4 sparse (cuSPARSELt)          | ~1320 TOPS        |
 | INT4 2:4 sparse (CUTLASS Sm89)        | ~1854 TOPS        |
-| TinyLlama-1.1B end-to-end (single-tok)| ~5.6 tok/sec      |
+| TinyLlama-1.1B best FP8 W8A16 decode  | 448 tok/s         |
+| TinyLlama-1.1B via `ModelHandle`      | 2.31 ms/token     |
+| Llama-3.2-1B-Instruct via `ModelHandle` | 2.47 ms/token   |
 
 The Llama tok/sec figure is bounded by NIF round-trip + BEAM marshaling, not
 GPU compute — a fused single-block NIF is the next throughput target.

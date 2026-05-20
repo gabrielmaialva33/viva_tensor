@@ -4,6 +4,47 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+No changes yet.
+
+## [3.0.0] - 2026-05-20
+
+### Release summary
+
+- Public LLM `ModelHandle` API shipped: `viva_tensor.load_model/1`,
+  `viva_tensor.generate/3`, `default_generate_opts/0`, deterministic argmax,
+  and seeded temperature/top-k/top-p sampling. Erlang callers can use
+  `viva_tensor_llm:load/2` and `viva_tensor_llm:generate/3` directly.
+- Llama-family SafeTensors loading for full checkpoints, including
+  `config.json` shape metadata, weight tying, byte-level BPE tokenizer
+  support, BF16 embedding resources, packed `lm_head`, RoPE frequency
+  tables, and sharded SafeTensors.
+- Fused CUDA decode-step path for TinyLlama-1.1B and Llama-3.2-1B-Instruct:
+  blocked FP8 W8A16 linears, fused QKV and gate/up packing, device-side
+  RMSNorm/RoPE/GQA/SwiGLU/residual/argmax, CUDA graph cache keys that include
+  model shape metadata, and dynamic fallback coverage for non-TinyLlama
+  `head_dim` values.
+- GPU decode benchmark workflow prep for self-hosted CUDA/RTX validation.
+- TinyLlama-1.1B: `2.31 ms/token` through the public `ModelHandle` decode path;
+  best FP8 W8A16 decode run reaches `448 tok/s`, ahead of local Ollama at
+  `352 tok/s`.
+- Llama-3.2-1B-Instruct: `2.47 ms/token` through the same public API.
+- Sampling with `temperature`, `top_k`, `top_p`, and `seed` is reproducible.
+- Full test suite: `792` tests passing.
+
+### Deferred
+
+- True FP8xFP8 decode remains deferred. The existing CUTLASS FP8 GEMM is useful
+  for dense batched GEMM, but the numerically validated LLM path needs
+  per-K-block weight scales and the decode workload is `batch=1`, where FP16
+  input traffic is only about 4 KB/token and weight bandwidth dominates.
+- Decode prefill remains token-by-token through the decode-step path. A batched
+  prefill path is the point where FP8 activations may become worth revisiting.
+
+### Documentation
+
+- Root docs now present the v3.0 LLM API as the public entry point instead of
+  steering users to `dev/llama_forward.erl`.
+
 ### Fixed
 
 - **cuBLASLt FP8 path now writes FP32 output buffers** (was FP16): the

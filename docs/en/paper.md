@@ -170,9 +170,12 @@ RTX 4090:
 | Stage                           | Time             |
 | :------------------------------ | :--------------- |
 | Load + prepack (22 layers + LM head) | ~28 s         |
-| Prefill (2 prompt tokens)       | 250 ms           |
-| Per-token decode (warm)         | ~180 ms          |
-| Throughput                      | ~5.6 tok/sec     |
+| Public-handle decode            | 2.31 ms/token    |
+| Best FP8 W8A16 decode run       | 448 tok/sec      |
+| Ollama local baseline           | 352 tok/sec      |
+
+Llama-3.2-1B-Instruct validates through the same `ModelHandle` API at
+`2.47 ms/token`.
 
 The end-to-end throughput is currently limited by the BEAM ↔ NIF
 marshaling cost per linear, not by GPU compute. The 7 linears per layer
@@ -194,7 +197,7 @@ across the whole block is the planned next throughput jump
   [`guides/inference.md`](guides/inference.md)).
 - **Tokenizer**: encode/decode is bit-exact vs HuggingFace `transformers`
   on 4 cross-language samples (PT, EN, emoji, newlines).
-- **789 / 789** unit + behavior tests passing as of this writing.
+- **792 / 792** unit + behavior tests passing as of this writing.
 
 ---
 
@@ -209,18 +212,26 @@ across the whole block is the planned next throughput jump
    binaries on the host. For long contexts (> 2k tokens) this should
    migrate to a device-resident resource ref.
 
-3. **Multi-GPU / continuous batching**. Out of scope. `viva_tensor` is
+3. **True FP8xFP8 decode is deferred.** `zig_src/cuda_fp8_cutlass.cu`
+   already contains functional CUTLASS FP8xFP8 GEMM entrypoints, but the
+   production LLM path uses per-K-block weight scales (`block_size=16`) and a
+   W8A16 custom GEMV for `batch=1` decode. Quantizing the single-token input
+   would save roughly 4 KB/token at hidden size 2048, while the FP8 weights
+   dominate memory traffic. This is only likely to matter with a real batched
+   prefill path (`batch >= 8`), which is not shipped yet.
+
+4. **Multi-GPU / continuous batching**. Out of scope. `viva_tensor` is
    designed as a building block, not a serving system. Pair with
    external schedulers (vLLM, llama.cpp) if those features are
    required.
 
-4. **Calibration**. SmoothQuant prototype is shipped in
+5. **Calibration**. SmoothQuant prototype is shipped in
    `dev/llama_calibration.erl` but not wired by default. AWQ / GPTQ
    integration would close the remaining magnitude gap on
    block_size=128 (we use block=16 today, which makes calibration
    unnecessary at this model scale).
 
-5. **Hardware coverage**. Ada SM89 is the primary target. Hopper SM90 +
+6. **Hardware coverage**. Ada SM89 is the primary target. Hopper SM90 +
    Blackwell-class FP4 / NVFP4 are tracked in
    [`bench/plans/NVFP4_EVT_PLAN.md`](../../bench/plans/NVFP4_EVT_PLAN.md)
    but not yet implemented (no hardware on hand).

@@ -4,7 +4,30 @@ Quick path from zero to a running tensor program. The pure-Gleam path
 needs nothing but `gleam`. The CUDA inference path needs a recent CUDA
 toolkit and an Ada-or-better NVIDIA GPU.
 
-## Pure-Gleam path
+## Run a model with the public API
+
+```bash
+git clone https://github.com/gabrielmaialva33/viva_tensor
+cd viva_tensor
+make cutlass-libs     # CUTLASS + cuSPARSELt static archives
+make zig              # the NIF .so
+```
+
+```gleam
+import viva_tensor as t
+
+pub fn main() {
+  let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+  let opts = t.default_generate_opts()
+  let assert Ok(result) = t.generate(model, "Hello", opts)
+  result.text
+}
+```
+
+That is the preferred v3.0 path for Llama-family HF checkpoints. The same API
+has been validated on TinyLlama-1.1B and Llama-3.2-1B-Instruct.
+
+## Pure-Gleam tensor path
 
 ```bash
 gleam new my_app
@@ -45,11 +68,9 @@ Prerequisites:
 Build:
 
 ```bash
-git clone https://github.com/gabrielmaialva33/viva_tensor
-cd viva_tensor
 make cutlass-libs     # CUTLASS + cuSPARSELt static archives
 make zig              # the NIF .so
-gleam test            # 789 tests, all should pass with NIF loaded
+gleam test            # 792 tests, all should pass with NIF loaded
 ```
 
 If the NIF .so isn't present, the same `gleam test` still runs — it
@@ -73,7 +94,8 @@ erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
 ```
 
 Expected: the model prints a continuation of "Hello" generated at
-~5.6 tok/sec.
+~2.31 ms/token through the public handle path. The `dev/llama_forward.erl`
+runner is kept for advanced debugging and kernel bisects.
 
 ## Verify your install
 
