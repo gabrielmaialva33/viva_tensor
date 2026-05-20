@@ -106,7 +106,7 @@ The FP8 win over PyTorch's `_scaled_mm` (392 vs 308 TFLOPS) comes from
 the CUTLASS f16-accum path that bypasses the GeForce FP32-accum
 half-rate cap; sparse paths have no `torch._scaled_mm` equivalent today.
 Full methodology + raw numbers in
-[bench/compare/RESULTS.md](bench/compare/RESULTS.md).
+[bench/results/matmul_showdown.md](bench/results/matmul_showdown.md).
 
 ## Inference API
 
@@ -138,7 +138,7 @@ depending on `K`, on uniform random fixtures). Tighter bands need an
 FP32 output buffer (a planned CUTLASS template change).
 
 Numerical / known limitations are tracked in
-[bench/compare/INFERENCE_API_PLAN.md](bench/compare/INFERENCE_API_PLAN.md).
+[bench/plans/INFERENCE_API_PLAN.md](bench/plans/INFERENCE_API_PLAN.md).
 
 ## Architecture (text)
 
@@ -183,7 +183,7 @@ Numerical / known limitations are tracked in
 - FFI architecture: [docs/en/ffi-architecture.md](docs/en/ffi-architecture.md)
 - Stability policy: [docs/en/stability.md](docs/en/stability.md)
 - Technical paper: [docs/en/paper.md](docs/en/paper.md)
-- Inference API roadmap: [bench/compare/INFERENCE_API_PLAN.md](bench/compare/INFERENCE_API_PLAN.md)
+- Inference API roadmap: [bench/plans/INFERENCE_API_PLAN.md](bench/plans/INFERENCE_API_PLAN.md)
 - HexDocs site: <https://hexdocs.pm/viva_tensor>
 - Project site: <https://gabrielmaialva33.github.io/viva_tensor/>
 

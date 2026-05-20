@@ -1,8 +1,8 @@
 //// CPU performance baseline for viva_tensor vs NumPy.
 ////
 //// For each op, this script times the pure-Gleam viva_tensor implementation
-//// at the same shapes used by ``bench/perf/compare_numpy.py`` and writes one
-//// CSV row per (op, size) under ``bench/perf/viva_tensor_results.csv``.
+//// at the same shapes used by ``bench/python/compare/numpy_cpu.py`` and writes one
+//// CSV row per (op, size) under ``bench/results/viva_tensor_results.csv``.
 ////
 //// CSV columns: ``op,size,iters,total_ms,per_op_us,gflops_estimate``.
 ////
@@ -26,7 +26,7 @@ import simplifile
 import viva_tensor as t
 import viva_tensor/core/ffi
 
-const out_path = "bench/perf/viva_tensor_results.csv"
+const out_path = "bench/results/viva_tensor_results.csv"
 
 // Iteration policy:
 // - Most ops:        5 warmup, 20 timed.

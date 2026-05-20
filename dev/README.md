@@ -30,7 +30,7 @@ The eight modules that are actively maintained:
 | `peak`       | Tour every accelerated backend (FP16 / FP8 / sparse) at fixed shapes; the canonical TFLOPS dump. |
 | `autotune`   | Sweep CUTLASS configs + cuSPARSELt modes per shape; pick the winner.                             |
 | `cache`      | Persist autotune winners to `priv/autotune_cache.term` for later runs.                           |
-| `showdown`   | Head-to-head viva_tensor vs PyTorch / NumPy using `bench/compare/pytorch_results.term`.          |
+| `showdown`   | Head-to-head viva_tensor vs PyTorch / NumPy using `bench/results/pytorch_results.term`.          |
 | `graph`      | CUDA Graphs vs loop launches — quantifies per-kernel driver overhead.                            |
 | `full`       | Quantisation quality benchmark (INT8 / NF4 / AWQ) for `make bench`.                              |
 | `rtx`        | RTX 4090 vs MKL comparison for `make bench-rtx`.                                                 |
