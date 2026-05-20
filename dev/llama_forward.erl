@@ -537,6 +537,8 @@ build_layer_blocked(Header, LayerIdx, BlockSize) ->
     GateProj = load_linear(Header, P("mlp.gate_proj.weight"),    ?FFN,    ?HIDDEN),
     UpProj   = load_linear(Header, P("mlp.up_proj.weight"),      ?FFN,    ?HIDDEN),
     DownProj = load_linear(Header, P("mlp.down_proj.weight"),    ?HIDDEN, ?FFN),
+    QKVProj  = concat_linear_columns([{QProj, ?HIDDEN}, {KProj, ?KV_DIM}, {VProj, ?KV_DIM}], ?HIDDEN),
+    GateUpProj = concat_linear_columns([{GateProj, ?FFN}, {UpProj, ?FFN}], ?HIDDEN),
 
     Layer = #{
         norm1 => load_rmsnorm(Header, P("input_layernorm.weight")),
@@ -549,6 +551,8 @@ build_layer_blocked(Header, LayerIdx, BlockSize) ->
         o     => prepack_blocked(OProj,    ?HIDDEN, ?HIDDEN, BlockSize),
         gate  => prepack_blocked(GateProj, ?HIDDEN, ?FFN,    BlockSize),
         up    => prepack_blocked(UpProj,   ?HIDDEN, ?FFN,    BlockSize),
+        qkv   => prepack_blocked(QKVProj,  ?HIDDEN, ?HIDDEN + ?KV_DIM + ?KV_DIM, BlockSize),
+        gate_up => prepack_blocked(GateUpProj, ?HIDDEN, ?FFN + ?FFN, BlockSize),
         down  => prepack_blocked(DownProj, ?FFN,    ?HIDDEN, BlockSize)
     },
     io:format("[~5w ms]   layer ~2.. p loaded (block=~p)~n",
@@ -1287,6 +1291,14 @@ load_linear(Header, Name, OutF, InF) ->
     %% [in, out] row-major — transpose.
     {ok, Trans} = viva_tensor_safetensors_ffi:transpose_fp32(Fp32, OutF, InF),
     Trans.
+
+concat_linear_columns(Parts, InF) ->
+    BytesPerFloat = 4,
+    list_to_binary([
+        [binary:part(Bin, Row * OutF * BytesPerFloat, OutF * BytesPerFloat)
+         || {Bin, OutF} <- Parts]
+        || Row <- lists:seq(0, InF - 1)
+    ]).
 
 load_rmsnorm(Header, Name) ->
     {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
