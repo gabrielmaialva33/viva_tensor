@@ -1,9 +1,32 @@
-# 入门指南
+# 入门
 
-从零到运行的快速路径。纯 Gleam 路径只需要 `gleam`。CUDA 推理路径需要最近的
-CUDA 工具包和 NVIDIA Ada 或更新的 GPU。
+从零到运行张量程序的快速路径。纯 Gleam 路径只需要 `gleam`。CUDA 推理路径需要较新的
+CUDA toolkit 和 Ada 或更新的 NVIDIA GPU。
 
-## 纯 Gleam 路径
+## 使用公共 API 运行模型
+
+```bash
+git clone https://github.com/gabrielmaialva33/viva_tensor
+cd viva_tensor
+make cutlass-libs     # CUTLASS + cuSPARSELt static archives
+make zig              # the NIF .so
+```
+
+```gleam
+import viva_tensor as t
+
+pub fn main() {
+  let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+  let opts = t.default_generate_opts()
+  let assert Ok(result) = t.generate(model, "Hello", opts)
+  result.text
+}
+```
+
+这是 Llama-family HF checkpoints 推荐的 v2.2.102 路径。同一个 API 已在 TinyLlama-1.1B
+和 Llama-3.2-1B-Instruct 上验证。
+
+## 纯 Gleam 张量路径
 
 ```bash
 gleam new my_app
@@ -14,7 +37,6 @@ gleam add viva_tensor
 ```gleam
 // src/my_app.gleam
 import gleam/io
-import gleam/string
 import viva_tensor as t
 
 pub fn main() {
@@ -29,35 +51,31 @@ pub fn main() {
 gleam run
 ```
 
-在 Gleam 支持的任何平台上都能运行。不需要 NIF。
+这可在任何 Gleam 支持的平台上工作。不需要 NIF。
 
-## CUDA 路径
+## CUDA 推理路径
 
-前置要求：
+前置条件：
 
-- NVIDIA GPU，建议 Ada SM89（RTX 4090）或更新
-- CUDA 12.0+（`nvcc`）
-- 驱动 555+
-- `zig` 0.14+（构建系统）
-- `g++` 14（GCC 16 在 `<functional>` 上有已知 nvcc 兼容问题；Makefile
-  会自动检测 `g++-15` 作为 host 编译器）
+- NVIDIA GPU，推荐 Ada SM89 (RTX 4090) 或更新
+- CUDA 12.0+ toolkit (`nvcc`)
+- Driver 555+
+- `zig` 0.14+（build system）
+- `g++` 14（GCC 16 在 `<functional>` 上存在已知 nvcc 破坏；Makefile 会自动检测 `g++-15` 作为 host compiler）
 
 构建：
 
 ```bash
-git clone https://github.com/gabrielmaialva33/viva_tensor
-cd viva_tensor
-make cutlass-libs     # CUTLASS + cuSPARSELt 静态归档
-make zig              # NIF .so
-gleam test            # 789 个测试，NIF 加载后应全部通过
+make cutlass-libs     # CUTLASS + cuSPARSELt static archives
+make zig              # the NIF .so
+gleam test            # 792 tests, all should pass with NIF loaded
 ```
 
-如果 NIF .so 不存在，`gleam test` 仍能运行 — 只是跳过原生路径。
+如果 NIF .so 不存在，相同的 `gleam test` 仍会运行，只是跳过 native-only paths。
 
-## 运行 TinyLlama-1.1B 端到端
+## 端到端运行 TinyLlama-1.1B
 
-简短版本（完整步骤见
-[`../../en/guides/inference.md`](../../en/guides/inference.md)）：
+完整 walkthrough 见 [`inference.md`](inference.md)。快速版本：
 
 ```bash
 mkdir -p tmp/tinyllama && cd tmp/tinyllama
@@ -71,24 +89,25 @@ erl -pa /tmp -pa build/dev/erlang/viva_tensor/ebin -noshell \
     -eval 'llama_forward:run_generate_w8a16(22, <<"Hello">>, 20, #{}, 16), halt(0).'
 ```
 
-期望：模型以约 5.6 tok/s 的速度打印 "Hello" 的延续。
+预期：模型通过公共 handle 路径以约 ~2.31 ms/token 生成 "Hello" 的续写。
+`dev/llama_forward.erl` runner 保留用于高级调试和 kernel bisects。
 
 ## 验证安装
 
 ```bash
-# 检查 NIF 是否加载
+# Check NIF loaded
 erl -pa build/dev/erlang/viva_tensor/ebin -noshell -eval \
     'io:format("~p~n", [viva_tensor_zig:cuda_available()]), halt(0).'
-# -> true   （CPU-only 构建为 false）
+# -> true   (or false on CPU-only build)
 
-# 快速运行 CUDA matmul
+# Run a quick CUDA matmul
 gleam run -m viva_tensor/bench/peak
 ```
 
-## 下一步
+## 后续步骤
 
-- [`api.md`](../api.md) — tensor API 参考（中文）。
-- [`../../en/api/inference.md`](../../en/api/inference.md) — prepack /
-  linear / sampling / tokenizer 参考（英文）。
-- [`../../en/guides/inference.md`](../../en/guides/inference.md) —
-  完整 Llama 端到端走查（英文）。
+- [`inference.md`](inference.md) — 完整端到端 Llama walkthrough。
+- [`../api/tensor.md`](../api/tensor.md) — 公共张量 API reference。
+- [`../api/inference.md`](../api/inference.md) — prepack / linear /
+  sampling / tokenizer reference。
+- [`ffi-architecture.md`](ffi-architecture.md) — Gleam ↔ NIF 边界如何工作（面向维护者）。

@@ -2,27 +2,39 @@
 
 **[English](../en/README.md)** | **[Português](../pt-br/README.md)**
 
-Gleam/BEAM 的张量库，配备纯 Gleam 公共 API 和可选的 CUDA + CUTLASS NIF，
-用于高吞吐量推理。同样的 `import viva_tensor as t` 代码在没有 CUDA 的笔
-记本和具有 FP8 Tensor Cores 的 RTX 4090 上都能运行。
+面向 Gleam/BEAM 的张量库，提供纯 Gleam 公共 API，并可选配
+CUDA + CUTLASS NIF 以支持高吞吐推理。同一份 `import viva_tensor as t`
+代码既可以在没有 CUDA 的笔记本上运行，也可以在带 FP8 Tensor Cores 的 RTX 4090 上运行。
 
-> **规范语言**：完整文档位于 [`docs/en/`](../en/README.md)。这个文件夹
-> 用中文涵盖核心内容 — 如果需要更多页面的翻译请提 issue 或 PR。
+```mermaid
+flowchart LR
+    subgraph PublicAPI["Public Gleam API"]
+        T[Tensor ops, layout, named axes]
+        Q[Quantization]
+        I[Inference helpers + ModelHandle]
+    end
+    subgraph Native["Native acceleration (optional)"]
+        MKL[Intel MKL]
+        CUTLASS[CUTLASS / cuBLASLt]
+        SPARSE[cuSPARSELt 2:4]
+    end
+    PublicAPI -.dispatch.-> Native
+```
 
-## 现已提供
+## 当前提供的能力
 
-| 子系统                                | 状态         | 亮点                                                                          |
-| :----------------------------------- | :----------- | :---------------------------------------------------------------------------- |
-| 纯 Gleam tensor API                   | 稳定         | shape、广播、基础 autograd、命名轴、纯 BEAM fallback。                          |
-| FP8 密集（CUTLASS + cuBLASLt）         | 生产级       | RTX 4090 上约 588 TFLOPS。FP32 输出缓冲区（无 FP16 饱和）。                    |
-| FP8 W8A16 + per-block-16 缩放         | 生产级       | 关闭与 HF transformers 的数值差距；argmax token 与 fp32 参考相同。              |
-| Fused SwiGLU（NIF）                   | 生产级       | 单 kernel 完成 `silu(gate)·up` + per-channel dequant。                         |
-| INT8 2:4 稀疏（cuSPARSELt）           | 生产级       | 约 1320 TOPS。通过 reorder_meta shim 实现字节精确元数据。                       |
-| INT4 2:4 稀疏（CUTLASS Sm80）          | 生产级       | 约 1854 TOPS。kernel + reorder + 编码端到端字节精确自测。                       |
-| SafeTensors 加载器                    | 可用         | bf16 → fp32，通过 NIF 转置（TinyLlama 加载从 3 分钟降到 25 秒）。                |
-| BPE Tokenizer                         | 可用         | encode/decode 与 HuggingFace transformers 比特精确匹配。                       |
-| Llama-1.1B 端到端 forward             | 可用         | 22 层 + RoPE + GQA + KV cache + LM head + argmax。argmax token 与 HF 一致。  |
-| 高级采样（temp/top-k/p）              | 可用         | 多项式采样，支持可重现的 seed。                                                 |
+| 子系统                              | 状态        | 亮点                                                                                      |
+| :--------------------------------- | :---------- | :---------------------------------------------------------------------------------------- |
+| 纯 Gleam 张量 API                  | 稳定        | 形状、广播、基础自动微分、命名轴、回退执行。                                              |
+| FP8 dense (CUTLASS + cuBLASLt)     | 生产可用    | RTX 4090 上约 ~588 TFLOPS。FP32 输出缓冲区（无 FP16 饱和）。                              |
+| FP8 W8A16 + per-block-16 scales    | 生产可用    | 缩小相对 HF transformers 的数值差距；argmax token 与 fp32 参考一致。                      |
+| Fused SwiGLU NIF                   | 生产可用    | 单个 kernel 执行 `silu(gate)·up`，并在 kernel 内进行 per-channel dequant。                 |
+| INT8 2:4 sparse (cuSPARSELt)       | 生产可用    | ~1320 TOPS。通过 reorder_meta shim 获得字节精确 metadata。                                 |
+| INT4 2:4 sparse (CUTLASS Sm80)     | 生产可用    | ~1854 TOPS。端到端字节精确（kernel + reorder + encoding 已自测）。                        |
+| SafeTensors loader                 | 功能可用    | bf16 → fp32，通过 NIF 转置（完整 TinyLlama 从 3 分钟降至 25 秒）。                         |
+| BPE tokenizer                      | 功能可用    | Encode/decode 与 HuggingFace transformers 位级一致。                                       |
+| 公共 LLM `ModelHandle` API         | 生产可用    | 面向 TinyLlama-1.1B 和 Llama-3.2-1B-Instruct 的 `load_model` + `generate`。                |
+| 高级采样 (temp/top-k/p)            | 功能可用    | 带可复现 seed 的 multinomial。                                                            |
 
 ## 快速开始
 
@@ -41,22 +53,42 @@ pub fn main() {
 }
 ```
 
-推理路径（需要 CUDA）：
+对于 Llama-family 文本生成（需要 CUDA）：
 
 ```gleam
-let assert Ok(packed) = t.prepack_fp8_weight(weight_tensor)
-let assert Ok(logits) = t.linear_fp8(input, packed, None)
+let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+let opts = t.default_generate_opts()
+let assert Ok(result) = t.generate(model, "Hello", opts)
 ```
 
-完整的安装 + 第一个程序见 [`guides/getting-started.md`](guides/getting-started.md)。
+端到端 TinyLlama-1.1B 文本生成见 [`guides/inference.md`](guides/inference.md)。
 
-## 中文页面
+## 文档地图
 
-| 页面                                                       | 内容                                                     |
-| :--------------------------------------------------------- | :------------------------------------------------------- |
-| [`guides/getting-started.md`](guides/getting-started.md)   | 安装、构建、运行第一个程序。                              |
-| [`api.md`](api.md)                                         | 纯 Gleam tensor API 快速参考。                            |
-| [`paper.md`](paper.md)                                     | 技术论文（中文版）。                                      |
+| 章节                                                                  | 内容                                                                                           |
+| :-------------------------------------------------------------------- | :--------------------------------------------------------------------------------------------- |
+| [`api/tensor.md`](api/tensor.md)                                      | 稳定公共表面：张量创建、数学运算、归约、布局、命名轴。                                         |
+| [`api/inference.md`](api/inference.md)                                | FP8 prepack + linear、INT8/INT4 sparse、fused SwiGLU、packed weight handles。                   |
+| [`api/llm.md`](api/llm.md)                                            | 公共 `ModelHandle` API：`load_model`、`generate`、选项、已测试模型。                           |
+| [`guides/inference.md`](guides/inference.md)                          | 端到端 Llama-1.1B 推理：SafeTensors → prepack → forward → sample → decode。                    |
+| [`guides/ffi-architecture.md`](guides/ffi-architecture.md)            | 面向维护者的 FFI 所有权契约（NIF / CUDA / Zig 边界）。                                         |
+| [`reference/project-structure.md`](reference/project-structure.md)    | 包布局与模块边界。                                                                             |
+| [`reference/stability.md`](reference/stability.md)                    | 稳定与实验边界、semver 预期。                                                                  |
+| [`paper.md`](paper.md)                                                | 技术论文。                                                                                     |
 
-未翻译的主题（推理端到端指南、FP8/INT4 参考、FFI 契约）请见
-[`docs/en/`](../en/README.md)。
+## 性能快照
+
+在 RTX 4090 (Ada SM89)、Driver 595.71.05、CUDA 12.9 上测得。形状和 dtype 的
+完整方法与表格见 [`bench/results/matmul_showdown.md`](../../bench/results/matmul_showdown.md)。
+
+| 路径                                  | 吞吐             |
+| :------------------------------------ | :--------------- |
+| FP8 dense (CUTLASS, K=4096)           | ~588 TFLOPS      |
+| INT8 2:4 sparse (cuSPARSELt)          | ~1320 TOPS       |
+| INT4 2:4 sparse (CUTLASS Sm89)        | ~1854 TOPS       |
+| TinyLlama-1.1B best FP8 W8A16 decode  | 448 tok/s        |
+| TinyLlama-1.1B via `ModelHandle`      | 2.31 ms/token    |
+| Llama-3.2-1B-Instruct via `ModelHandle` | 2.47 ms/token  |
+
+Llama tok/sec 数字受 NIF round-trip + BEAM marshaling 限制，而不是 GPU compute；
+下一阶段吞吐目标是 fused single-block NIF。
