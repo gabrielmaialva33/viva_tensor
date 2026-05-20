@@ -19,6 +19,16 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **Round 8 decode shape metadata**: the fused TinyLlama decode path now carries
+  runtime layer metadata (`hidden_size`, `kv_size`, `ffn_size`, `num_heads`,
+  `num_kv_heads`, `head_dim`, `eps`, `rope_theta`) instead of baking the decode
+  NIF to one fixed attention shape. `head_dim=64` keeps the existing optimized
+  GQA flash path; `head_dim=32` and `head_dim=128` use a correctness-first
+  dynamic fallback so non-TinyLlama shapes no longer fail at dispatch.
+- **GPU decode benchmark workflow prep** (`.github/workflows/bench.yml`): a
+  self-hosted CUDA/RTX job builds CUTLASS libs, builds the NIF, runs
+  `gleam test`, compiles `dev/llama_forward.erl`, and fails when TinyLlama
+  decode exceeds `3.0 ms/token`.
 - **TinyLlama-1.1B layer-0 forward smoke test** (`dev/llama_smoke.erl`):
   end-to-end forward pass through a real transformer block using
   HuggingFace TinyLlama-1.1B-Chat weights. Loads SafeTensors via the
@@ -45,6 +55,10 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- Prepared Hex package metadata for the `3.0.0` release line. The release is
+  not published automatically.
+- CUDA graph cache keys now include `head_dim` and RMSNorm `eps`, preventing a
+  graph captured for one decode configuration from being reused for another.
 - `nif_prepack_int_sparse`: INT4 2:4 metadata is now derived from the
   already-pruned `h_quant` buffer (row-major) instead of re-reading `W` in
   column-major. The previous code disagreed with the quant loop and named
