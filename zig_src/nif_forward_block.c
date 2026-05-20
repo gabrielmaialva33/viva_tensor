@@ -138,6 +138,13 @@ static int upload_binary(BlockBuf *buf, const ErlNifBinary *bin) {
   return cudaMemcpy(buf->ptr, bin->data, bin->size, cudaMemcpyHostToDevice) == cudaSuccess ? 0 : -2;
 }
 
+static int upload_binary_async(BlockBuf *buf, const ErlNifBinary *bin) {
+  if (ensure_block_buf(buf, bin->size) != 0) return -1;
+  if (bin->size == 0) return 0;
+  return cudaMemcpyAsync(buf->ptr, bin->data, bin->size, cudaMemcpyHostToDevice,
+                         g_block_stream) == cudaSuccess ? 0 : -2;
+}
+
 static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
   size_t bytes = (size_t)w->in_features * (size_t)w->out_features * sizeof(uint16_t);
   PackedWeight *mw = (PackedWeight *)w;
@@ -478,9 +485,9 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   int past_len = kv_cache_res->len;
 
   int rc = 0;
-  if ((rc = upload_binary(&b_norm1, norm1_bin)) != 0) return -100 + rc;
-  if ((rc = upload_binary(&b_norm2, norm2_bin)) != 0) return -120 + rc;
-  if ((rc = upload_binary(&b_rope, rope_bin)) != 0) return -140 + rc;
+  if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) return -100 + rc;
+  if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) return -120 + rc;
+  if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) return -140 + rc;
 
   BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q, &b_o, &b_h1, &b_x2, &b_x2_16,
                       &b_attn, &b_attn16, &b_down, &b_hout16};
@@ -503,8 +510,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_attn_k_cache_ptr = kv_cache_res->d_k;
   g_attn_v_cache_ptr = kv_cache_res->d_v;
 
-  if ((rc = run_helper_sequence(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                                num_heads, num_kv_heads)) != 0) return -200 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -200 + rc;
   if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
     return -300 + rc;
   if ((rc = gemm_w8a16_dequant(k, (uint16_t *)b_norm16.ptr, 1, (float *)b_k.ptr)) != 0)
@@ -516,18 +523,18 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     return -400 + rc;
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
     return -500 + rc;
-  if ((rc = run_helper_sequence(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                                num_heads, num_kv_heads)) != 0) return -600 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -600 + rc;
   if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
     return -700 + rc;
   if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
     return -720 + rc;
-  if ((rc = run_helper_sequence(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                                num_heads, num_kv_heads)) != 0) return -800 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -800 + rc;
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
     return -900 + rc;
-  if ((rc = run_helper_sequence(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                                num_heads, num_kv_heads)) != 0) return -1000 + rc;
+  if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
+                             num_heads, num_kv_heads)) != 0) return -1000 + rc;
 
   size_t offset = (size_t)past_len * kv16_bytes;
   if (cudaMemcpyAsync((uint8_t *)kv_cache_res->d_k + offset, b_k_append.ptr, kv16_bytes,

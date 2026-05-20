@@ -205,3 +205,27 @@ ERL_NIF_TERM nt_embedding_table_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   return make_ok(env, term);
 #endif
 }
+
+ERL_NIF_TERM nt_embedding_row(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 2) return make_error(env, "bad_arity");
+  EmbeddingTable *table = get_embedding_table(env, argv[0]);
+  int token_id = 0;
+  if (!table) return make_error(env, "invalid_embedding");
+  if (!enif_get_int(env, argv[1], &token_id) || token_id < 0 || token_id >= table->vocab)
+    return make_error(env, "invalid_token");
+  size_t row_bytes = (size_t)table->hidden * sizeof(uint16_t);
+  ErlNifBinary out;
+  if (!enif_alloc_binary(row_bytes, &out)) return make_error(env, "alloc_row_failed");
+  const uint8_t *row = (const uint8_t *)table->d_weight + (size_t)token_id * row_bytes;
+  if (cudaMemcpy(out.data, row, row_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+    enif_release_binary(&out);
+    return make_error(env, "download_row_failed");
+  }
+  return make_ok(env, enif_make_binary(env, &out));
+#endif
+}
