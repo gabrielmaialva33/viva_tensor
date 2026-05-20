@@ -212,12 +212,14 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight,
   for (int b = lane; b < num_blocks; b += 32) {
     int base = b * 16;
     float scale = s_row[b];
+    float block_acc = 0.0f;
 #pragma unroll
     for (int j = 0; j < 16; ++j) {
-      float wv = fp8_e4m3_to_float(w_row[base + j]) * scale;
+      float wv = fp8_e4m3_to_float(w_row[base + j]);
       float xv = __half2float(x[base + j]);
-      acc = fmaf(wv, xv, acc);
+      block_acc = fmaf(wv, xv, block_acc);
     }
+    acc = fmaf(block_acc, scale, acc);
   }
 
   acc = warp_sum(acc);
