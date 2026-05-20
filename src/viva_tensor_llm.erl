@@ -438,8 +438,7 @@ require_tensors(Header, Names, LayerIdx) ->
     ).
 
 load_linear(Header, Name, OutF, InF) ->
-    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
-    Fp32 = viva_tensor_safetensors_ffi:bf16_to_fp32_binary(Bf16),
+    {ok, Fp32} = viva_tensor_safetensors_ffi:read_tensor_fp32(Header, Name),
     {ok, Transposed} = viva_tensor_safetensors_ffi:transpose_fp32(Fp32, OutF, InF),
     Transposed.
 
@@ -452,16 +451,20 @@ concat_linear_columns(Parts, InF) ->
     ]).
 
 load_rmsnorm_bin(Header, Name) ->
-    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(Header, Name),
-    viva_tensor_safetensors_ffi:bf16_to_fp32_binary(Bf16).
+    {ok, Fp32} = viva_tensor_safetensors_ffi:read_tensor_fp32(Header, Name),
+    Fp32.
 
 load_embed_table_resource(Header, Config) ->
-    {ok, Bf16} = viva_tensor_safetensors_ffi:read_tensor_bf16(
+    {ok, Dtype, Bin} = viva_tensor_safetensors_ffi:read_tensor_raw(
         Header, <<"model.embed_tokens.weight">>),
-    case viva_tensor_zig:nt_embedding_table_new(
-             Bf16, maps:get(vocab_size, Config), maps:get(hidden_size, Config)) of
+    NewTable = case Dtype of
+        <<"BF16">> -> fun viva_tensor_zig:nt_embedding_table_new/3;
+        <<"F16">> -> fun viva_tensor_zig:nt_embedding_table_new_fp16/3;
+        Unsupported -> error({unsupported_dtype, Unsupported})
+    end,
+    case NewTable(Bin, maps:get(vocab_size, Config), maps:get(hidden_size, Config)) of
         {ok, Resource} when is_reference(Resource) -> Resource;
-        Other -> error({embedding_table_resource_failed, Other})
+        LoadError -> error({embedding_table_resource_failed, LoadError})
     end.
 
 prepack_blocked(Bin, InF, OutF, BlockSize) when is_binary(Bin) ->

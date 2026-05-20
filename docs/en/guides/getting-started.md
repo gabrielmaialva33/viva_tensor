@@ -24,7 +24,7 @@ pub fn main() {
 }
 ```
 
-That is the preferred v3.0 path for Llama-family HF checkpoints. The same API
+That is the preferred v2.2.102 path for Llama-family HF checkpoints. The same API
 has been validated on TinyLlama-1.1B and Llama-3.2-1B-Instruct.
 
 ## Pure-Gleam tensor path

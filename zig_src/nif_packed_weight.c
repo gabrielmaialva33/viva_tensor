@@ -205,3 +205,41 @@ ERL_NIF_TERM nt_embedding_table_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   return make_ok(env, term);
 #endif
 }
+
+ERL_NIF_TERM nt_embedding_table_new_fp16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 3) return make_error(env, "bad_arity");
+
+  ErlNifBinary fp16_bin;
+  int vocab = 0, hidden = 0;
+  if (!enif_inspect_binary(env, argv[0], &fp16_bin)) return make_error(env, "invalid_embedding");
+  if (!enif_get_int(env, argv[1], &vocab) || vocab <= 0) return make_error(env, "invalid_vocab");
+  if (!enif_get_int(env, argv[2], &hidden) || hidden <= 0) return make_error(env, "invalid_hidden");
+
+  size_t elems = (size_t)vocab * (size_t)hidden;
+  if (fp16_bin.size != elems * sizeof(uint16_t)) return make_error(env, "embedding_size_mismatch");
+
+  EmbeddingTable *table = (EmbeddingTable *)enif_alloc_resource(
+      EMBEDDING_TABLE_RES, sizeof(EmbeddingTable));
+  if (!table) return make_error(env, "resource_alloc_failed");
+
+  memset(table, 0, sizeof(*table));
+  table->vocab = vocab;
+  table->hidden = hidden;
+  table->bytes = elems * sizeof(uint16_t);
+
+  if (cudaMalloc(&table->d_weight, table->bytes) != cudaSuccess ||
+      cudaMemcpy(table->d_weight, fp16_bin.data, table->bytes, cudaMemcpyHostToDevice) != cudaSuccess) {
+    enif_release_resource(table);
+    return make_error(env, "cuda_upload_embedding_failed");
+  }
+
+  ERL_NIF_TERM term = enif_make_resource(env, table);
+  enif_release_resource(table);
+  return make_ok(env, term);
+#endif
+}

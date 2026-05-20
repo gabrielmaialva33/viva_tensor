@@ -20,8 +20,11 @@
     open_sharded_header/1,
     list_tensor_names/1,
     tensor_info/2,
+    read_tensor_raw/2,
+    read_tensor_fp32/2,
     read_tensor_bf16/2,
     bf16_to_fp32_binary/1,
+    fp16_to_fp32_binary/1,
     transpose_fp32/3,
     rmsnorm_weight_to_fp32_list/1
 ]).
@@ -188,6 +191,34 @@ tensor_info(#{header := H}, Name) when is_binary(Name) ->
         error -> {error, not_found}
     end.
 
+%% Read raw tensor bytes plus dtype. Returns {ok, Dtype, binary()}.
+read_tensor_raw(#{sharded := true} = Header, Name) when is_binary(Name) ->
+    case sharded_tensor_header(Header, Name) of
+        {ok, ShardHeader} -> read_tensor_raw(ShardHeader, Name);
+        Error -> Error
+    end;
+read_tensor_raw(#{header := H, data_start := DS, path := Path}, Name) ->
+    case maps:find(Name, H) of
+        {ok, #{dtype := Dtype, offsets := {Start, End}}} ->
+            ByteCount = End - Start,
+            {ok, F} = file:open(Path, [read, raw, binary]),
+            {ok, _} = file:position(F, DS + Start),
+            {ok, Bin} = file:read(F, ByteCount),
+            file:close(F),
+            {ok, Dtype, Bin};
+        error ->
+            {error, not_found}
+    end.
+
+%% Read tensor bytes and normalize supported HF storage dtypes to fp32 binary.
+read_tensor_fp32(Header, Name) when is_binary(Name) ->
+    case read_tensor_raw(Header, Name) of
+        {ok, <<"BF16">>, Bin} -> {ok, bf16_to_fp32_binary(Bin)};
+        {ok, <<"F16">>, Bin} -> {ok, fp16_to_fp32_binary(Bin)};
+        {ok, Other, _Bin} -> {error, {unsupported_dtype, Other}};
+        Error -> Error
+    end.
+
 %% Read raw bf16 bytes for a tensor. Returns {ok, binary()}.
 read_tensor_bf16(#{sharded := true} = Header, Name) when is_binary(Name) ->
     case sharded_tensor_header(Header, Name) of
@@ -229,6 +260,31 @@ bf16_to_fp32_binary(BF16) when is_binary(BF16) ->
 bf16_to_fp32(<<>>, Acc) -> Acc;
 bf16_to_fp32(<<U:16/unsigned-little, Rest/binary>>, Acc) ->
     bf16_to_fp32(Rest, <<Acc/binary, 0:16/unsigned-little, U:16/unsigned-little>>).
+
+fp16_to_fp32_binary(FP16) when is_binary(FP16) ->
+    try viva_tensor_zig:nt_fp16_to_fp32_binary(FP16)
+    catch
+        error:nif_not_loaded -> fp16_to_fp32_binary_erlang(FP16);
+        error:undef          -> fp16_to_fp32_binary_erlang(FP16);
+        error:badarg         -> fp16_to_fp32_binary_erlang(FP16)
+    end.
+
+fp16_to_fp32_binary_erlang(FP16) ->
+    << <<(fp16_to_float(H)):32/float-little>>
+       || <<H:16/unsigned-little>> <= FP16 >>.
+
+fp16_to_float(H) ->
+    Sign = (H bsr 15) band 1,
+    Exp = (H bsr 10) band 16#1F,
+    Frac = H band 16#3FF,
+    V = case Exp of
+        0 when Frac =:= 0 -> 0.0;
+        0 -> (Frac / 1024.0) * math:pow(2.0, -14.0);
+        16#1F when Frac =:= 0 -> 1.7976931348623157e308;
+        16#1F -> 0.0;
+        _ -> (1.0 + Frac / 1024.0) * math:pow(2.0, float(Exp - 15))
+    end,
+    case Sign of 0 -> V; 1 -> -V end.
 
 %% Transpose an fp32 row-major matrix of shape {Rows, Cols} into a new
 %% binary with shape {Cols, Rows} (still row-major). Used to flip

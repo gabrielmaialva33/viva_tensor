@@ -86,6 +86,7 @@ EmbeddingTable *get_embedding_table(ErlNifEnv *env, ERL_NIF_TERM term);
 ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_embedding_table_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
+ERL_NIF_TERM nt_embedding_table_new_fp16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
 ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);

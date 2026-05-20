@@ -45,7 +45,8 @@
     %% CPU scaffolding — softmax_axis / layer_norm / gelu_exact
     nt_softmax_axis/2, nt_layer_norm/4, nt_gelu_exact/1,
     %% Fast FP32 transpose for safetensors loader
-    nt_transpose_fp32/3
+    nt_transpose_fp32/3,
+    nt_fp16_to_fp32_binary/1
 ]).
 
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput
@@ -129,6 +130,7 @@
     nt_prepack_fp8/2,
     nt_prepack_fp8_blocked/3,
     nt_embedding_table_new/3,
+    nt_embedding_table_new_fp16/3,
     nt_floats_to_fp16_binary/1,
     nt_silu_mul/2,
     nt_list_add_fp16/2,
@@ -486,6 +488,7 @@ nt_gelu_exact(_Ref) -> erlang:nif_error(nif_not_loaded).
 
 %% Fast FP32 transpose (used by safetensors loader to flip HF [out,in] -> [in,out])
 nt_transpose_fp32(_Bin, _Rows, _Cols) -> erlang:nif_error(nif_not_loaded).
+nt_fp16_to_fp32_binary(_Bin) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% LNS (True Log-Number System) - f32 via IADD, 8x throughput
@@ -602,6 +605,7 @@ cublaslt_fp8_algo_sweep(_M, _N, _K, _Iters, _MaxAlgos) -> erlang:nif_error(nif_n
 nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize) -> erlang:nif_error(nif_not_loaded).
 nt_embedding_table_new(_Bf16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).
+nt_embedding_table_new_fp16(_Fp16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).
 nt_floats_to_fp16_binary(_Floats) -> erlang:nif_error(nif_not_loaded).
 nt_silu_mul(_Gate, _Up) -> erlang:nif_error(nif_not_loaded).
 nt_list_add_fp16(_A, _B) -> erlang:nif_error(nif_not_loaded).

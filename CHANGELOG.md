@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 No changes yet.
 
-## [3.0.0] - 2026-05-20
+## [2.2.102] - 2026-05-20
 
 ### Release summary
 
@@ -42,7 +42,7 @@ No changes yet.
 
 ### Documentation
 
-- Root docs now present the v3.0 LLM API as the public entry point instead of
+- Root docs now present the v2.2.102 LLM API as the public entry point instead of
   steering users to `dev/llama_forward.erl`.
 
 ### Fixed
@@ -96,7 +96,7 @@ No changes yet.
 
 ### Changed
 
-- Prepared Hex package metadata for the `3.0.0` release line. The release is
+- Prepared Hex package metadata for the `2.2.102` release line. The release is
   not published automatically.
 - CUDA graph cache keys now include `head_dim` and RMSNorm `eps`, preventing a
   graph captured for one decode configuration from being reused for another.

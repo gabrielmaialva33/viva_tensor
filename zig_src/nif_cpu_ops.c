@@ -842,7 +842,7 @@ uint16_t float_to_half(float f) {
  * new binary 2× as large, and writes IEEE-754 binary16 little-endian.
  */
 ERL_NIF_TERM nt_floats_to_fp16_binary(ErlNifEnv *env, int argc,
-                                        const ERL_NIF_TERM argv[]) {
+                                         const ERL_NIF_TERM argv[]) {
   (void)argc;
   unsigned n = 0;
   if (!enif_get_list_length(env, argv[0], &n))
@@ -869,6 +869,56 @@ ERL_NIF_TERM nt_floats_to_fp16_binary(ErlNifEnv *env, int argc,
     dst[(size_t)i * 2 + 0] = (unsigned char)(h & 0xFF);
     dst[(size_t)i * 2 + 1] = (unsigned char)((h >> 8) & 0xFF);
     ++i;
+  }
+  return out_bin_term;
+}
+
+static float half_to_float(uint16_t h) {
+  uint32_t sign = (uint32_t)(h & 0x8000) << 16;
+  uint32_t exp = (h >> 10) & 0x1F;
+  uint32_t mant = h & 0x3FF;
+
+  uint32_t bits;
+  if (exp == 0) {
+    if (mant == 0) {
+      bits = sign;
+    } else {
+      exp = 1;
+      while ((mant & 0x400) == 0) {
+        mant <<= 1;
+        exp--;
+      }
+      mant &= 0x3FF;
+      bits = sign | ((exp - 1 + 127 - 15) << 23) | (mant << 13);
+    }
+  } else if (exp == 31) {
+    bits = sign | 0x7F800000u | (mant << 13);
+  } else {
+    bits = sign | ((exp - 15 + 127) << 23) | (mant << 13);
+  }
+
+  float f;
+  memcpy(&f, &bits, sizeof(float));
+  return f;
+}
+
+ERL_NIF_TERM nt_fp16_to_fp32_binary(ErlNifEnv *env, int argc,
+                                    const ERL_NIF_TERM argv[]) {
+  (void)argc;
+  ErlNifBinary src;
+  if (!enif_inspect_binary(env, argv[0], &src) || (src.size % 2) != 0)
+    return enif_make_badarg(env);
+
+  size_t n = src.size / sizeof(uint16_t);
+  ERL_NIF_TERM out_bin_term;
+  unsigned char *dst_bytes = enif_make_new_binary(env, n * sizeof(float), &out_bin_term);
+  if (!dst_bytes) return enif_make_badarg(env);
+
+  const unsigned char *src_bytes = src.data;
+  float *dst = (float *)dst_bytes;
+  for (size_t i = 0; i < n; ++i) {
+    uint16_t h = (uint16_t)src_bytes[i * 2] | ((uint16_t)src_bytes[i * 2 + 1] << 8);
+    dst[i] = half_to_float(h);
   }
   return out_bin_term;
 }

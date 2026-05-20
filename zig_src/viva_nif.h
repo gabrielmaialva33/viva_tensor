@@ -681,6 +681,7 @@ NIF_FUNC_DECL(nt_matmul_blas);
 NIF_FUNC_DECL(nt_matmul_inplace);
 NIF_FUNC_DECL(nt_matmul_cuda);
 NIF_FUNC_DECL(nt_transpose);
+NIF_FUNC_DECL(nt_fp16_to_fp32_binary);
 NIF_FUNC_DECL(nt_relu);
 NIF_FUNC_DECL(nt_sigmoid);
 NIF_FUNC_DECL(nt_exp_nif);

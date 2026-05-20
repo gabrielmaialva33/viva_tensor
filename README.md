@@ -8,7 +8,7 @@
 [![CUDA](https://img.shields.io/badge/CUDA_12+-76B900?style=for-the-badge&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
 [![SM89](https://img.shields.io/badge/RTX_4090-Ada_SM89-76B900?style=for-the-badge)](https://www.nvidia.com/en-us/geforce/graphics-cards/40-series/rtx-4090/)
 [![Tests](https://img.shields.io/badge/tests-792_passing-00875A?style=for-the-badge)](./test)
-[![Version](https://img.shields.io/badge/version-3.0.0-CD5C5C?style=for-the-badge)](./CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-2.2.102-CD5C5C?style=for-the-badge)](./CHANGELOG.md)
 [![License](https://img.shields.io/badge/license-MIT-228B22?style=for-the-badge)](./LICENSE)
 
 **[🇧🇷 Português](docs/pt-br/README.md)** · **[🇺🇸 English](docs/en/README.md)** · **[🇨🇳 中文](docs/zh-cn/README.md)**
@@ -298,7 +298,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
 
-## 📜 What's new in v3.0
+## 📜 What's new in 2.2.102
 
 - **Public LLM API.** `viva_tensor.load_model(path)` accepts a HuggingFace
   Llama-family checkpoint (single file, sharded, or folder) and returns
