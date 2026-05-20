@@ -2,31 +2,42 @@
 
 **[English](../en/README.md)** | **[中文](../zh-cn/README.md)**
 
-Biblioteca de tensors para Gleam/BEAM com API pública pure-Gleam e NIF
-opcional CUDA + CUTLASS para inferência de alto throughput. O mesmo
-código `import viva_tensor as t` roda num notebook sem CUDA e numa
-RTX 4090 com FP8 Tensor Cores.
+Biblioteca de tensores pra Gleam/BEAM com API pública 100% Gleam e uma NIF
+opcional em CUDA + CUTLASS pra inferência de alto throughput. O mesmo
+`import viva_tensor as t` roda num notebook sem CUDA e numa RTX 4090 com
+Tensor Cores FP8.
 
-> **Idioma canônico**: a documentação completa está em
-> [`docs/en/`](../en/README.md). Esta pasta cobre o essencial em
-> português — abra uma issue ou PR se quiser mais páginas traduzidas.
+```mermaid
+flowchart LR
+    subgraph APIPublica["API Pública Gleam"]
+        T[Ops de tensor, layout, eixos nomeados]
+        Q[Quantização]
+        I[Helpers de inferência + ModelHandle]
+    end
+    subgraph Native["Aceleração nativa (opcional)"]
+        MKL[Intel MKL]
+        CUTLASS[CUTLASS / cuBLASLt]
+        SPARSE[cuSPARSELt 2:4]
+    end
+    APIPublica -.dispatch.-> Native
+```
 
-## O que está pronto hoje
+## O que já tá pronto
 
-| Subsistema                          | Status        | Destaques                                                                          |
-| :---------------------------------- | :------------ | :--------------------------------------------------------------------------------- |
-| API tensor pure-Gleam               | Estável       | Shape, broadcast, autograd básico, named axes, fallback puro.                      |
-| FP8 dense (CUTLASS + cuBLASLt)      | Produção      | ~588 TFLOPS na RTX 4090. Buffer de saída FP32 (sem saturação FP16).                |
-| FP8 W8A16 + escalas per-block-16    | Produção      | Fecha o gap numérico vs HF transformers; argmax bate fp32 reference.               |
-| SwiGLU fundido (NIF)                | Produção      | Kernel único para `silu(gate)·up` com dequant per-channel dentro do kernel.        |
-| INT8 2:4 sparse (cuSPARSELt)        | Produção      | ~1320 TOPS. Metadata byte-exata via reorder_meta shim.                             |
-| INT4 2:4 sparse (CUTLASS Sm80)      | Produção      | ~1854 TOPS. Pipeline byte-exato (kernel + reorder + encoding self-tested).         |
-| Loader SafeTensors                  | Funcional     | bf16 → fp32, transpose via NIF (3 min → 25 s para TinyLlama).                       |
-| Tokenizer BPE                       | Funcional     | Encode/decode bit-exato vs HuggingFace transformers.                               |
-| Llama-1.1B forward end-to-end       | Funcional     | 22 layers + RoPE + GQA + KV cache + LM head + argmax. Mesmo token que HF fp32.    |
-| Sampling avançado (temp/top-k/p)    | Funcional     | Multinomial com seed reprodutível.                                                  |
+| Subsistema                            | Status      | Destaques                                                                                |
+| :------------------------------------ | :---------- | :--------------------------------------------------------------------------------------- |
+| API de tensor 100% Gleam              | Estável     | Shape, broadcast, autograd básico, eixos nomeados, execução fallback.                    |
+| FP8 dense (CUTLASS + cuBLASLt)        | Produção    | ~588 TFLOPS na RTX 4090. Buffers de saída FP32 (sem saturação FP16).                     |
+| FP8 W8A16 + scales por bloco-16       | Produção    | Fecha o gap numérico vs HF transformers; token argmax bate com referência fp32.          |
+| NIF SwiGLU fundida                    | Produção    | Kernel único pra `silu(gate)·up` com dequantização per-channel dentro do kernel.         |
+| INT8 2:4 sparse (cuSPARSELt)          | Produção    | ~1320 TOPS. Metadata byte-exact via shim de reorder_meta.                                |
+| INT4 2:4 sparse (CUTLASS Sm80)        | Produção    | ~1854 TOPS. byte-exact end-to-end (kernel + reorder + encoding com self-test).           |
+| Loader SafeTensors                    | Funcional   | bf16 → fp32, transpose via NIF (3 min → 25 s pro TinyLlama inteiro).                     |
+| Tokenizer BPE                         | Funcional   | Encode/decode bit-exact vs HuggingFace transformers.                                     |
+| API pública LLM `ModelHandle`         | Produção    | `load_model` + `generate` pra TinyLlama-1.1B e Llama-3.2-1B-Instruct.                    |
+| Sampling avançado (temp/top-k/p)      | Funcional   | Multinomial com seed reprodutível.                                                       |
 
-## Início rápido
+## Quick Start
 
 ```bash
 gleam add viva_tensor
@@ -43,23 +54,45 @@ pub fn main() {
 }
 ```
 
-Para o caminho de inferência (requer CUDA):
+Pra geração de texto da família Llama (precisa de CUDA):
 
 ```gleam
-let assert Ok(packed) = t.prepack_fp8_weight(weight_tensor)
-let assert Ok(logits) = t.linear_fp8(input, packed, None)
+let assert Ok(model) = t.load_model("tmp/tinyllama/model.safetensors")
+let opts = t.default_generate_opts()
+let assert Ok(result) = t.generate(model, "Hello", opts)
 ```
 
-Veja [`guides/getting-started.md`](guides/getting-started.md) para o passo
-completo de instalação + primeiro programa rodando.
+Veja [`guides/inference.md`](guides/inference.md) pra geração de texto
+end-to-end com TinyLlama-1.1B.
 
-## Recursos em português
+## Mapa da documentação
 
-| Página                                                  | O que é                                                              |
-| :------------------------------------------------------ | :------------------------------------------------------------------- |
-| [`guides/getting-started.md`](guides/getting-started.md) | Instalação, build, primeiro programa.                                |
-| [`api.md`](api.md)                                      | Referência rápida da API tensor pure-Gleam.                          |
-| [`paper.md`](paper.md)                                  | Paper técnico (versão em português).                                  |
+| Seção                                                                 | O que tem dentro                                                                                |
+| :-------------------------------------------------------------------- | :---------------------------------------------------------------------------------------------- |
+| [`api/tensor.md`](api/tensor.md)                                      | Superfície pública estável — criação de tensor, math, reduções, layout, eixos nomeados.         |
+| [`api/inference.md`](api/inference.md)                                | Prepack FP8 + linear, INT8/INT4 sparse, SwiGLU fundida, handles de peso empacotado.             |
+| [`api/llm.md`](api/llm.md)                                            | API pública `ModelHandle`: `load_model`, `generate`, opções, modelos testados.                  |
+| [`guides/inference.md`](guides/inference.md)                          | Inferência Llama-1.1B end-to-end: SafeTensors → prepack → forward → sample → decode.            |
+| [`guides/ffi-architecture.md`](guides/ffi-architecture.md)            | Contrato de ownership FFI voltado pra mantenedor (fronteira NIF / CUDA / Zig).                  |
+| [`reference/project-structure.md`](reference/project-structure.md)    | Layout do pacote e fronteiras entre módulos.                                                    |
+| [`reference/stability.md`](reference/stability.md)                    | Fronteira estável vs experimental, expectativas de semver.                                      |
+| [`paper.md`](paper.md)                                                | Paper técnico.                                                                                  |
 
-Para tópicos não traduzidos — guia de inferência fim-a-fim, referência
-de FP8/INT4, contrato FFI — abra o [`docs/en/`](../en/README.md).
+## Snapshot de performance
+
+Medido em RTX 4090 (Ada SM89), Driver 595.71.05, CUDA 12.9. Veja
+[`bench/results/matmul_showdown.md`](../../bench/results/matmul_showdown.md)
+pra metodologia + tabelas por shape e dtype.
+
+| Caminho                                 | Throughput        |
+| :-------------------------------------- | :---------------- |
+| FP8 dense (CUTLASS, K=4096)             | ~588 TFLOPS       |
+| INT8 2:4 sparse (cuSPARSELt)            | ~1320 TOPS        |
+| INT4 2:4 sparse (CUTLASS Sm89)          | ~1854 TOPS        |
+| TinyLlama-1.1B melhor decode FP8 W8A16  | 448 tok/s         |
+| TinyLlama-1.1B via `ModelHandle`        | 2.31 ms/token     |
+| Llama-3.2-1B-Instruct via `ModelHandle` | 2.47 ms/token     |
+
+O número de tok/s do Llama tá limitado por round-trip da NIF + marshaling
+BEAM, não pelo compute na GPU — uma NIF de bloco único fundida é o próximo
+alvo de throughput.
