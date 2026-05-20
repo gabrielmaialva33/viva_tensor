@@ -1165,21 +1165,23 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       ensure_block_buf(&b_x2, hidden32_bytes) != 0 ||
       ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
       ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
-      ensure_block_buf(&b_argmax, sizeof(int)) != 0) {
+      ensure_block_buf(&b_argmax, sizeof(int)) != 0 ||
+      ensure_block_buf(&b_token_id, sizeof(int)) != 0) {
     return make_error(env, "cuda_malloc_decode_failed");
-  }
-
-  const uint8_t *row = (const uint8_t *)embed->d_weight + (size_t)token_id * hidden16_bytes;
-  if (cudaMemcpyAsync(b_hidden16.ptr, row, hidden16_bytes, cudaMemcpyDeviceToDevice,
-                      g_block_stream) != cudaSuccess) {
-    return make_error(env, "embedding_lookup_failed");
   }
 
   ERL_NIF_TERM layers_tail = argv[2];
   ERL_NIF_TERM caches_tail = argv[5];
   ERL_NIF_TERM layer_term, cache_term;
   int layer_count = 0;
+  int past_len = -1;
+  uintptr_t signature = (uintptr_t)0xcbf29ce484222325ull;
+  DecodeLayerParams decode_layers[DECODE_MAX_LAYERS];
+  ErlNifBinary norm1_bins[DECODE_MAX_LAYERS];
+  ErlNifBinary norm2_bins[DECODE_MAX_LAYERS];
+  memset(decode_layers, 0, sizeof(decode_layers));
   while (enif_get_list_cell(env, layers_tail, &layer_term, &layers_tail)) {
+    if (layer_count >= DECODE_MAX_LAYERS) return make_error(env, "too_many_layers");
     if (!enif_get_list_cell(env, caches_tail, &cache_term, &caches_tail)) {
       return make_error(env, "cache_count_mismatch");
     }
@@ -1203,28 +1205,164 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       return make_error(env, "invalid_kv_cache");
     }
 
-    int rc = run_decode_block_device(q, k, v, o, gate, up, down,
-                                     qkv, gate_up,
-                                     &norm1_bin, &norm2_bin, &rope_bin, cache, pos);
-    if (rc != 0) return make_block_error(env, "decode_block", rc);
+    if (!cache || cache->len < 0) return make_error(env, "invalid_kv_cache");
+    if (past_len < 0) {
+      past_len = cache->len;
+    } else if (cache->len != past_len) {
+      return make_error(env, "kv_cache_len_mismatch");
+    }
+
+    int rc = ensure_decode_const(&g_decode_norm1[layer_count], &norm1_bin);
+    if (rc != 0) return make_block_error(env, "upload_decode_norm1", rc);
+    rc = ensure_decode_const(&g_decode_norm2[layer_count], &norm2_bin);
+    if (rc != 0) return make_block_error(env, "upload_decode_norm2", rc);
+
+    decode_layers[layer_count].q = q;
+    decode_layers[layer_count].k = k;
+    decode_layers[layer_count].v = v;
+    decode_layers[layer_count].o = o;
+    decode_layers[layer_count].gate = gate;
+    decode_layers[layer_count].up = up;
+    decode_layers[layer_count].down = down;
+    decode_layers[layer_count].qkv = qkv;
+    decode_layers[layer_count].gate_up = gate_up;
+    decode_layers[layer_count].cache = cache;
+    decode_layers[layer_count].norm1 = (float *)g_decode_norm1[layer_count].buf.ptr;
+    decode_layers[layer_count].norm2 = (float *)g_decode_norm2[layer_count].buf.ptr;
+    norm1_bins[layer_count] = norm1_bin;
+    norm2_bins[layer_count] = norm2_bin;
+
+    signature = mix_ptr(signature, cache->d_k);
+    signature = mix_ptr(signature, cache->d_v);
+    signature = mix_ptr(signature, q ? q->d_weight : NULL);
+    signature = mix_ptr(signature, k ? k->d_weight : NULL);
+    signature = mix_ptr(signature, v ? v->d_weight : NULL);
+    signature = mix_ptr(signature, o ? o->d_weight : NULL);
+    signature = mix_ptr(signature, gate ? gate->d_weight : NULL);
+    signature = mix_ptr(signature, up ? up->d_weight : NULL);
+    signature = mix_ptr(signature, down ? down->d_weight : NULL);
+    signature = mix_ptr(signature, qkv ? qkv->d_weight : NULL);
+    signature = mix_ptr(signature, gate_up ? gate_up->d_weight : NULL);
     layer_count++;
   }
   if (!enif_is_empty_list(env, caches_tail)) return make_error(env, "cache_count_mismatch");
   if (layer_count <= 0) return make_error(env, "empty_layers");
+  if (past_len < 0) return make_error(env, "invalid_past_len");
 
-  if (upload_binary_async(&b_norm1, &final_norm_bin) != 0)
-    return make_error(env, "upload_final_norm_failed");
-  int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0);
-  if (final_rc != 0) return make_block_error(env, "final_norm_gpu", final_rc);
+  int const_rc = ensure_decode_const(&g_decode_final_norm, &final_norm_bin);
+  if (const_rc != 0) return make_block_error(env, "upload_final_norm", const_rc);
+  const_rc = ensure_decode_const(&g_decode_rope, &rope_bin);
+  if (const_rc != 0) return make_block_error(env, "upload_decode_rope", const_rc);
 
+  if (cudaMemcpyAsync(b_token_id.ptr, &token_id, sizeof(int), cudaMemcpyHostToDevice,
+                      g_block_stream) != cudaSuccess) {
+    return make_error(env, "upload_token_id_failed");
+  }
+
+  signature = mix_ptr(signature, embed->d_weight);
+  signature = mix_ptr(signature, lm_head->d_weight);
+  signature = mix_ptr(signature, lm_head->d_scales);
+  signature = mix_ptr(signature, g_decode_final_norm.buf.ptr);
+  signature = mix_ptr(signature, g_decode_rope.buf.ptr);
+
+  int graph_ok = !g_decode_graph_disabled &&
+                 all_decode_weights_captureable(decode_layers, layer_count, lm_head);
   int rc = 0;
-  if ((rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
-                               (float *)b_logits.ptr)) != 0)
-    return make_block_error(env, "lm_head", rc);
+  if (graph_ok) {
+    DecodeGraphEntry *entry = find_decode_graph(pos, past_len, hidden, embed->vocab,
+                                                layer_count, signature);
+    if (entry && entry->exec) {
+      cudaError_t launch_err = cudaGraphLaunch(entry->exec, g_block_stream);
+      if (launch_err != cudaSuccess) {
+        return make_block_error(env, "decode_graph_launch", -2000 - (int)launch_err);
+      }
+      entry->launches++;
+      g_decode_graph_hits++;
+      for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len + 1;
+    } else {
+      entry = alloc_decode_graph(pos, past_len, hidden, embed->vocab, layer_count, signature);
+      if (!entry) {
+        g_decode_graph_disabled = 1;
+        graph_ok = 0;
+      } else {
+        cudaError_t err = cudaStreamBeginCapture(g_block_stream, cudaStreamCaptureModeThreadLocal);
+        if (err != cudaSuccess) {
+          g_decode_graph_disabled = 1;
+          g_decode_graph_failures++;
+          g_decode_last_capture_error = err;
+          graph_ok = 0;
+        } else {
+          g_full_decode_capture = 1;
+          rc = run_decode_token_sequence(embed, token_id, decode_layers, layer_count,
+                                         (float *)g_decode_final_norm.buf.ptr, lm_head,
+                                         (float *)g_decode_rope.buf.ptr, pos);
+          g_full_decode_capture = 0;
+          cudaGraph_t graph = NULL;
+          err = cudaStreamEndCapture(g_block_stream, &graph);
+          if (rc != 0 || err != cudaSuccess || !graph) {
+            if (graph) cudaGraphDestroy(graph);
+            for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+            g_decode_graph_disabled = 1;
+            g_decode_graph_failures++;
+            g_decode_last_capture_error = err;
+            decode_graph_debug("capture_failed", rc, (int)err, past_len);
+            graph_ok = 0;
+          } else {
+            cudaGraphExec_t exec = NULL;
+            err = cudaGraphInstantiate(&exec, graph, 0);
+            if (err != cudaSuccess || !exec) {
+              cudaGraphDestroy(graph);
+              for (int i = 0; i < layer_count; ++i) decode_layers[i].cache->len = past_len;
+              g_decode_graph_disabled = 1;
+              g_decode_graph_failures++;
+              g_decode_last_capture_error = err;
+              decode_graph_debug("instantiate_failed", 0, (int)err, past_len);
+              graph_ok = 0;
+            } else {
+              entry->graph = graph;
+              entry->exec = exec;
+              entry->launches = 1;
+              g_decode_graph_captures++;
+              err = cudaGraphLaunch(exec, g_block_stream);
+              if (err != cudaSuccess) {
+                return make_block_error(env, "decode_graph_launch", -2100 - (int)err);
+              }
+              decode_graph_debug("capture_ok", g_decode_graph_count, g_decode_graph_captures,
+                                 past_len);
+            }
+          }
+        }
+      }
+    }
+  }
 
-  int argmax_rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
-                                         (int *)b_argmax.ptr);
-  if (argmax_rc != 0) return make_block_error(env, "argmax_gpu", argmax_rc);
+  if (!graph_ok) {
+    const uint8_t *row = (const uint8_t *)embed->d_weight + (size_t)token_id * hidden16_bytes;
+    if (cudaMemcpyAsync(b_hidden16.ptr, row, hidden16_bytes, cudaMemcpyDeviceToDevice,
+                        g_block_stream) != cudaSuccess) {
+      return make_error(env, "embedding_lookup_failed");
+    }
+    for (int i = 0; i < layer_count; ++i) {
+      rc = run_decode_block_device(decode_layers[i].q, decode_layers[i].k,
+                                   decode_layers[i].v, decode_layers[i].o,
+                                   decode_layers[i].gate, decode_layers[i].up,
+                                   decode_layers[i].down, decode_layers[i].qkv,
+                                   decode_layers[i].gate_up, &norm1_bins[i],
+                                   &norm2_bins[i], &rope_bin, decode_layers[i].cache, pos);
+      if (rc != 0) return make_block_error(env, "decode_block", rc);
+    }
+    if (upload_binary_async(&b_norm1, &final_norm_bin) != 0)
+      return make_error(env, "upload_final_norm_failed");
+    int final_rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, 0, 0, -1, -1, 0, 0);
+    if (final_rc != 0) return make_block_error(env, "final_norm_gpu", final_rc);
+    if ((rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
+                                 (float *)b_logits.ptr)) != 0)
+      return make_block_error(env, "lm_head", rc);
+    int argmax_rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
+                                           (int *)b_argmax.ptr);
+    if (argmax_rc != 0) return make_block_error(env, "argmax_gpu", argmax_rc);
+  }
+
   int next_token = 0;
   if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
       cudaMemcpy(&next_token, b_argmax.ptr, sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
@@ -1232,6 +1370,12 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   }
   vt_block_set_stream(NULL);
   cuda_fp8_dequant_set_stream(NULL);
+  if (decode_graph_debug_enabled()) {
+    fprintf(stderr,
+            "[decode_graph] stats cached=%d captures=%u hits=%u failures=%u last_err=%d\n",
+            g_decode_graph_count, g_decode_graph_captures, g_decode_graph_hits,
+            g_decode_graph_failures, (int)g_decode_last_capture_error);
+  }
 
   return make_ok(env, enif_make_int(env, next_token));
 #endif
