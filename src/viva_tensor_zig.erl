@@ -143,6 +143,7 @@
     nt_kv_cache_new/2,
     nt_forward_block_w8a16/14,
     nt_forward_decode_step/8,
+    nt_forward_decode_step_topk/9,
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
     cutlass_int8_sparse_bench_ex/6,    %% Extended: (M,N,K,Iters,Config,SplitK) with split-K
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
@@ -618,6 +619,9 @@ nt_forward_block_w8a16(_HiddenFp16, _Q, _K, _V, _O, _Gate, _Up, _Down,
                        _KCacheFp16, _VCacheFp16) -> erlang:nif_error(nif_not_loaded).
 nt_forward_decode_step(_TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
                        _LmHead, _KvCaches, _Pos, _RopeFreqsFp32) ->
+    erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step_topk(_TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
+                            _LmHead, _KvCaches, _Pos, _RopeFreqsFp32, _K) ->
     erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench(_M, _N, _K, _Iters, _Config) -> erlang:nif_error(nif_not_loaded).
 cutlass_int8_sparse_bench_ex(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).

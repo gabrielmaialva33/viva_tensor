@@ -26,6 +26,8 @@ extern int vt_rope_apply_fp32_dyn(float *x, const float *freqs, const int *pos_p
                                   int num_heads, int head_dim);
 extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
 extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
+extern int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices,
+                                float *out_values);
 extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
                                     int hidden, int vocab);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
@@ -64,6 +66,7 @@ static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
 static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
 static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
 static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0}, b_argmax = {0};
+static BlockBuf b_topk_indices = {0}, b_topk_values = {0};
 static BlockBuf b_token_id = {0}, b_pos_id = {0}, b_past_len_id = {0};
 static void *g_attn_k_cache_ptr = NULL;
 static void *g_attn_v_cache_ptr = NULL;
@@ -1292,15 +1295,18 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 #endif
 }
 
-ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc,
+                                                const ERL_NIF_TERM argv[],
+                                                int return_topk) {
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
   (void)argc;
   (void)argv;
+  (void)return_topk;
   return make_error(env, "cuda_not_available");
 #else
-  if (argc != 8) return make_error(env, "bad_arity");
+  if (argc != (return_topk ? 9 : 8)) return make_error(env, "bad_arity");
 
-  int token_id = 0, pos = 0;
+  int token_id = 0, pos = 0, topk = 0;
   if (!enif_get_int(env, argv[0], &token_id) || token_id < 0) return make_error(env, "invalid_token");
   EmbeddingTable *embed = get_embedding_table(env, argv[1]);
   if (!embed || token_id >= embed->vocab || embed->hidden <= 0) return make_error(env, "invalid_embedding");
@@ -1311,6 +1317,12 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
   PackedWeight *lm_head = get_packed_weight(env, argv[4]);
   if (!validate_fp8_weight(lm_head)) return make_error(env, "invalid_lm_head");
   if (!enif_inspect_binary(env, argv[7], &rope_bin)) return make_error(env, "invalid_rope");
+  if (return_topk) {
+    if (!enif_get_int(env, argv[8], &topk) || topk <= 0 || topk > 256 ||
+        topk > lm_head->out_features) {
+      return make_error(env, "invalid_topk");
+    }
+  }
 
   int hidden = embed->hidden;
   if (lm_head->in_features != hidden || final_norm_bin.size != (size_t)hidden * sizeof(float)) {
@@ -1329,6 +1341,9 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
       ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
       ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
       ensure_block_buf(&b_argmax, sizeof(int)) != 0 ||
+      (return_topk &&
+       (ensure_block_buf(&b_topk_indices, (size_t)topk * sizeof(int)) != 0 ||
+        ensure_block_buf(&b_topk_values, (size_t)topk * sizeof(float)) != 0)) ||
       ensure_block_buf(&b_token_id, sizeof(int)) != 0 ||
       ensure_block_buf(&b_pos_id, sizeof(int)) != 0 ||
       ensure_block_buf(&b_past_len_id, sizeof(int)) != 0) {
@@ -1617,9 +1632,35 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (argmax_rc != 0) return make_block_error(env, "argmax_gpu", argmax_rc);
   }
 
+  if (return_topk) {
+    int topk_rc = vt_topk_fp32_partial((float *)b_logits.ptr, lm_head->out_features, topk,
+                                       (int *)b_topk_indices.ptr,
+                                       (float *)b_topk_values.ptr);
+    if (topk_rc != 0) return make_block_error(env, "topk_gpu", topk_rc);
+  }
+
   int next_token = 0;
-  if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
-      cudaMemcpy(&next_token, b_argmax.ptr, sizeof(int), cudaMemcpyDeviceToHost) != cudaSuccess) {
+  ErlNifBinary out_indices, out_values;
+  if (return_topk) {
+    if (!enif_alloc_binary((size_t)topk * sizeof(int), &out_indices)) {
+      return make_error(env, "alloc_topk_binary_failed");
+    }
+    if (!enif_alloc_binary((size_t)topk * sizeof(float), &out_values)) {
+      enif_release_binary(&out_indices);
+      return make_error(env, "alloc_topk_binary_failed");
+    }
+    if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
+        cudaMemcpy(out_indices.data, b_topk_indices.ptr, out_indices.size,
+                   cudaMemcpyDeviceToHost) != cudaSuccess ||
+        cudaMemcpy(out_values.data, b_topk_values.ptr, out_values.size,
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+      enif_release_binary(&out_indices);
+      enif_release_binary(&out_values);
+      return make_error(env, "download_topk_failed");
+    }
+  } else if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
+             cudaMemcpy(&next_token, b_argmax.ptr, sizeof(int),
+                        cudaMemcpyDeviceToHost) != cudaSuccess) {
     return make_error(env, "download_argmax_failed");
   }
   vt_block_set_stream(NULL);
@@ -1632,6 +1673,19 @@ ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM
             (int)g_decode_last_capture_error);
   }
 
+  if (return_topk) {
+    ERL_NIF_TERM indices_term = enif_make_binary(env, &out_indices);
+    ERL_NIF_TERM values_term = enif_make_binary(env, &out_values);
+    return make_ok(env, enif_make_tuple2(env, indices_term, values_term));
+  }
   return make_ok(env, enif_make_int(env, next_token));
 #endif
+}
+
+ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  return nt_forward_decode_step_impl(env, argc, argv, 0);
+}
+
+ERL_NIF_TERM nt_forward_decode_step_topk(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  return nt_forward_decode_step_impl(env, argc, argv, 1);
 }

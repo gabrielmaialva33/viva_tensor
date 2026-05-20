@@ -795,6 +795,7 @@ NIF_FUNC_DECL(nt_linear_swiglu_fp8_nif);
 NIF_FUNC_DECL(nt_kv_cache_new);
 NIF_FUNC_DECL(nt_forward_block_w8a16);
 NIF_FUNC_DECL(nt_forward_decode_step);
+NIF_FUNC_DECL(nt_forward_decode_step_topk);
 int register_block_kv_cache_resource(ErlNifEnv *env);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_ex_nif);
