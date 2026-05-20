@@ -71,6 +71,21 @@ static BlockGraphEntry g_block_graphs[BLOCK_GRAPH_MAX];
 static int g_block_graph_count = 0;
 static int g_block_graph_disabled = 0;
 
+typedef struct {
+  int in_features;
+  int out_features;
+  int batch;
+  cublasLtMatmulDesc_t desc;
+  cublasLtMatrixLayout_t layout_bt;
+  cublasLtMatrixLayout_t layout_a;
+  cublasLtMatrixLayout_t layout_c;
+  cublasLtMatmulHeuristicResult_t heur;
+} BlockGemmPlan;
+
+#define BLOCK_GEMM_PLAN_MAX 16
+static BlockGemmPlan g_block_gemm_plans[BLOCK_GEMM_PLAN_MAX];
+static int g_block_gemm_plan_count = 0;
+
 static int ensure_block_buf(BlockBuf *buf, size_t needed) {
   if (buf->cap >= needed) return 0;
   size_t new_cap = needed + (needed >> 1) + 4096;
@@ -141,6 +156,54 @@ static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
   return 0;
 }
 
+static int get_block_gemm_plan(const PackedWeight *w, int batch, BlockGemmPlan **out_plan) {
+  for (int i = 0; i < g_block_gemm_plan_count; ++i) {
+    BlockGemmPlan *p = &g_block_gemm_plans[i];
+    if (p->in_features == w->in_features && p->out_features == w->out_features &&
+        p->batch == batch) {
+      *out_plan = p;
+      return 0;
+    }
+  }
+  if (g_block_gemm_plan_count >= BLOCK_GEMM_PLAN_MAX) return -1;
+
+  BlockGemmPlan *p = &g_block_gemm_plans[g_block_gemm_plan_count];
+  memset(p, 0, sizeof(*p));
+  p->in_features = w->in_features;
+  p->out_features = w->out_features;
+  p->batch = batch;
+
+  if (cublasLtMatmulDescCreate(&p->desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS)
+    return -2;
+  cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+  cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t, sizeof(op_t));
+  cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n, sizeof(op_n));
+
+  cublasStatus_t st = cublasLtMatrixLayoutCreate(&p->layout_bt, CUDA_R_16F,
+      (uint64_t)w->in_features, (uint64_t)w->out_features, (int64_t)w->in_features);
+  if (st != CUBLAS_STATUS_SUCCESS) return -3;
+  st = cublasLtMatrixLayoutCreate(&p->layout_a, CUDA_R_16F,
+      (uint64_t)w->in_features, (uint64_t)batch, (int64_t)w->in_features);
+  if (st != CUBLAS_STATUS_SUCCESS) return -4;
+  st = cublasLtMatrixLayoutCreate(&p->layout_c, CUDA_R_32F,
+      (uint64_t)w->out_features, (uint64_t)batch, (int64_t)w->out_features);
+  if (st != CUBLAS_STATUS_SUCCESS) return -5;
+
+  cublasLtMatmulPreference_t pref;
+  cublasLtMatmulPreferenceCreate(&pref);
+  cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                       &g_block_workspace_size, sizeof(g_block_workspace_size));
+  int returned = 0;
+  st = cublasLtMatmulAlgoGetHeuristic(g_block_lt, p->desc, p->layout_bt, p->layout_a,
+                                      p->layout_c, p->layout_c, pref, 1, &p->heur, &returned);
+  cublasLtMatmulPreferenceDestroy(pref);
+  if (st != CUBLAS_STATUS_SUCCESS || returned == 0) return -6;
+
+  g_block_gemm_plan_count++;
+  *out_plan = p;
+  return 0;
+}
+
 static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
                               int batch, float *d_out) {
   if (ensure_block_lt() != 0) return -1;
@@ -152,60 +215,18 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
   size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
   if (cudaMemsetAsync(d_out, 0, bytes_C, g_block_stream) != cudaSuccess) return -2;
 
-  cublasLtMatmulDesc_t desc;
-  if (cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS)
-    return -3;
-
-  cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
-  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t, sizeof(op_t));
-  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n, sizeof(op_n));
-
-  cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
-  cublasStatus_t st = cublasLtMatrixLayoutCreate(&layout_bt, CUDA_R_16F,
-      (uint64_t)w->in_features, (uint64_t)w->out_features, (int64_t)w->in_features);
-  if (st != CUBLAS_STATUS_SUCCESS) { cublasLtMatmulDescDestroy(desc); return -4; }
-  st = cublasLtMatrixLayoutCreate(&layout_a, CUDA_R_16F,
-      (uint64_t)w->in_features, (uint64_t)batch, (int64_t)w->in_features);
-  if (st != CUBLAS_STATUS_SUCCESS) {
-    cublasLtMatrixLayoutDestroy(layout_bt); cublasLtMatmulDescDestroy(desc); return -5;
-  }
-  st = cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F,
-      (uint64_t)w->out_features, (uint64_t)batch, (int64_t)w->out_features);
-  if (st != CUBLAS_STATUS_SUCCESS) {
-    cublasLtMatrixLayoutDestroy(layout_bt); cublasLtMatrixLayoutDestroy(layout_a);
-    cublasLtMatmulDescDestroy(desc); return -6;
-  }
-
-  cublasLtMatmulPreference_t pref;
-  cublasLtMatmulPreferenceCreate(&pref);
-  cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                       &g_block_workspace_size, sizeof(g_block_workspace_size));
-
-  cublasLtMatmulHeuristicResult_t heur;
-  int returned = 0;
-  st = cublasLtMatmulAlgoGetHeuristic(g_block_lt, desc, layout_bt, layout_a, layout_c,
-                                      layout_c, pref, 1, &heur, &returned);
-  if (st != CUBLAS_STATUS_SUCCESS || returned == 0) {
-    cublasLtMatmulPreferenceDestroy(pref);
-    cublasLtMatrixLayoutDestroy(layout_bt); cublasLtMatrixLayoutDestroy(layout_a);
-    cublasLtMatrixLayoutDestroy(layout_c); cublasLtMatmulDescDestroy(desc);
-    return -7;
-  }
+  BlockGemmPlan *plan = NULL;
+  int plan_rc = get_block_gemm_plan(w, batch, &plan);
+  if (plan_rc != 0) return -7 + plan_rc;
 
   float alpha = 1.0f, beta = 0.0f;
-  st = cublasLtMatmul(g_block_lt, desc, &alpha,
-                      d_weight, layout_bt,
-                      d_input, layout_a,
+  cublasStatus_t st = cublasLtMatmul(g_block_lt, plan->desc, &alpha,
+                      d_weight, plan->layout_bt,
+                      d_input, plan->layout_a,
                       &beta,
-                      d_out, layout_c, d_out, layout_c,
-                      &heur.algo, g_block_workspace, g_block_workspace_size,
+                      d_out, plan->layout_c, d_out, plan->layout_c,
+                      &plan->heur.algo, g_block_workspace, g_block_workspace_size,
                       g_block_stream);
-
-  cublasLtMatmulPreferenceDestroy(pref);
-  cublasLtMatrixLayoutDestroy(layout_bt);
-  cublasLtMatrixLayoutDestroy(layout_a);
-  cublasLtMatrixLayoutDestroy(layout_c);
-  cublasLtMatmulDescDestroy(desc);
 
   return st == CUBLAS_STATUS_SUCCESS ? 0 : (-1000 - (int)st);
 }
