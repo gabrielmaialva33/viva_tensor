@@ -299,8 +299,7 @@ fn general_kernel(
       }
     })
 
-  let out_combos =
-    cartesian(list.map(out_shape, fn(d) { range_int(0, d - 1) }))
+  let out_combos = cartesian(list.map(out_shape, fn(d) { range_int(0, d - 1) }))
 
   let sum_dims =
     list.map(summed, fn(label) {

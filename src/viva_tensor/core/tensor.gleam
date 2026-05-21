@@ -20,7 +20,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/statistics as vm_stats
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/ffi.{type ErlangArray, type NativeTensorRef}
 import viva_tensor/core/layout_math
@@ -168,8 +168,7 @@ pub fn linspace(start: Float, end: Float, num: Int) -> Tensor {
   case num <= 1 {
     True -> from_list([start])
     False -> {
-      maths.linear_space(start, end, num, True)
-      |> result.unwrap([])
+      vm_stats.linear_space(start, end, num, True)
       |> from_list()
     }
   }

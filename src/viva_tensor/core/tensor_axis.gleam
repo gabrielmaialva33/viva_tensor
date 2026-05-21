@@ -7,7 +7,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/statistics as vm_stats
 import viva_tensor/core/error.{
   type TensorError, DimensionError, IndexOutOfBounds,
 }
@@ -169,7 +169,7 @@ pub fn min_list(values: List(Float)) -> Result(Float, TensorError) {
 }
 
 pub fn variance_list(values: List(Float)) -> Result(Float, TensorError) {
-  case maths.variance(values, 0) {
+  case vm_stats.variance(values) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("Cannot compute variance of an empty tensor"))
@@ -177,7 +177,7 @@ pub fn variance_list(values: List(Float)) -> Result(Float, TensorError) {
 }
 
 pub fn std_list(values: List(Float)) -> Result(Float, TensorError) {
-  case maths.standard_deviation(values, 0) {
+  case vm_stats.stddev(values) {
     Ok(value) -> Ok(value)
     Error(_) -> Error(DimensionError("Cannot compute std of an empty tensor"))
   }
