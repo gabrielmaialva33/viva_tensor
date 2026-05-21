@@ -151,7 +151,8 @@
     cusparselt_int8_sparse_bench/5,    %% cuSPARSELt INT8 2:4 sparse (M,N,K,Iters,Mode)
     cusparselt_fp8_sparse_bench/4,    %% cuSPARSELt FP8 E4M3 2:4 sparse (M,N,K,Iters)
     cusparselt_fp16_sparse_bench/4,   %% cuSPARSELt FP16 2:4 sparse (M,N,K,Iters)
-    cutlass_int4_sparse_bench/6      %% CUTLASS INT4 2:4 sparse (M,N,K,Iters,Config,SplitK)
+    cutlass_int4_sparse_bench/6,     %% CUTLASS INT4 2:4 sparse (M,N,K,Iters,Config,SplitK)
+    marlin_w4a16_bench/5             %% Marlin W4A16 GEMM bench (M,N,K,Groupsize,Iters)
 ]).
 
 %% SparseTensor - 2:4 Sparsity with cuSPARSELt (Linux only, 660+ TFLOPS!)
@@ -633,6 +634,7 @@ cusparselt_int8_sparse_bench(_M, _N, _K, _Iters, _Mode) -> erlang:nif_error(nif_
 cusparselt_fp8_sparse_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 cusparselt_fp16_sparse_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loaded).
 cutlass_int4_sparse_bench(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
+marlin_w4a16_bench(_M, _N, _K, _Groupsize, _Iters) -> erlang:nif_error(nif_not_loaded).
 
 %% ==========================================================================
 %% SparseTensor - 2:4 Sparsity with cuSPARSELt (660+ TFLOPS!)

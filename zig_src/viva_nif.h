@@ -588,6 +588,7 @@ extern int cutlass_int8_sparse_gemm_bench_ex(int M, int N, int K, int iters, int
 extern void cutlass_int8_sparse_info(int *out_sparse, int *out_elements_per_e, int *out_sizeof_e);
 extern int cutlass_int4_sparse_gemm_bench(int M, int N, int K, int iters, int config, int split_k);
 extern void cutlass_int4_sparse_info(int *out_sparse, int *out_elements_per_e, int *out_sizeof_e);
+extern int viva_marlin_w4a16_bench(int M, int N, int K, int groupsize, int iters);
 
 /* cuSPARSELt */
 extern int cusparselt_int8_sparse_bench(int M, int N, int K, int iters, int mode);
@@ -804,6 +805,7 @@ NIF_FUNC_DECL(cusparselt_int8_sparse_bench_nif);
 NIF_FUNC_DECL(cusparselt_fp8_sparse_bench_nif);
 NIF_FUNC_DECL(cusparselt_fp16_sparse_bench_nif);
 NIF_FUNC_DECL(cutlass_int4_sparse_bench_nif);
+NIF_FUNC_DECL(viva_marlin_w4a16_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_relu_tn_bench_nif);
 NIF_FUNC_DECL(ct16_matmul_fused_gelu_tn_bench_nif);
 NIF_FUNC_DECL(ct16_available);

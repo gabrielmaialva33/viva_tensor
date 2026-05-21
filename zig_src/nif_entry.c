@@ -362,6 +362,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_forward_decode_step_topk", 9, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"marlin_w4a16_bench", 5, viva_marlin_w4a16_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_gelu_tn_bench", 7, ct16_matmul_fused_gelu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_available", 0, ct16_available, 0},
