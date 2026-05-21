@@ -4,6 +4,72 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.104] - 2026-05-21
+
+### Added
+
+- **Dual-path FP8 + FP32-accum CUTLASS GEMM** in
+  `zig_src/cuda_fp8_cutlass.cu`. Inspired by IST-DASLab/gemm-fp8, the
+  `cutlass_fp8_gemm_f32acc` and `cutlass_fp8_gemm_f32acc_out_f32`
+  entry points now pick between two tile configurations at runtime:
+  `Gemm_FP8_F32_LargeKN` (TileShape<128,64,128>, WarpShape<64,32,128>)
+  for `K==4096 && N==4096`, and `Gemm_FP8_F32_Default`
+  (TileShape<64,128,64>, WarpShape<32,64,64>) otherwise. Three pipeline
+  stages explicit via `static constexpr int kStages = 3`.
+
+### Changed
+
+- Completed migration off `gleam_community_maths`: all callers now use
+  `viva_math` 1.2.103 (`vecn`, `statistics`, `scalar`, `precision`,
+  `constants`). `linear_space` / `logarithmic_space` / `all_close` now
+  return their values directly without the `Result.unwrap` / `list.all`
+  intermediates that were needed under the old API.
+- `try_euclidean_distance` / `try_manhattan_distance` /
+  `try_cosine_similarity` switched to a new internal
+  `paired_unzipped_data` helper that returns `#(List(Float), List(Float))`
+  directly, eliminating the `zip → unzip → zip` round-trip that the
+  initial migration introduced. Saves one O(N) allocation per call on
+  large tensors. `try_dot_similarity` keeps the original
+  `paired_tensor_data` (zero risk, it really wants pairs).
+
+### Removed
+
+- Dependency on `gleam_community_maths` (and its transitive
+  `gleam_yielder`).
+- Orphan private helper `log1p` in `nn/activations` that became
+  unreachable after `softplus` was delegated to `viva_math/scalar`.
+
+### Fixed
+
+- Doc comment on `nn/activations.tanh` no longer reads
+  `gleam_community/vm_scalar.tanh` (sed leftover from the migration).
+- `try_cosine_similarity(a, a)` test compared with
+  `should.equal(Ok(1.0))`, intermittently failing with float epsilon
+  `Ok(1.0000000000000002)` under `vecn.cosine_similarity`'s summation
+  order. Now uses `t.is_close(value, 1.0, 0.0, 1.0e-9)` following the
+  local pattern already in use for `euclidean_distance` in the same
+  test.
+
+### Performance
+
+- **CUTLASS FP8 + FP32-accum @ RTX 4090 (SM89), kernel-only TFLOPS:**
+
+  | size  | before    | after         | speedup | % of peak (330) |
+  | ----: | --------: | ------------: | ------: | --------------: |
+  | 2048² | 49.7      | **121.6**     | 2.45×   | 37%             |
+  | 4096² | 82.0      | **277.8**     | 3.39×   | 84%             |
+  | 8192² | 85.3      | **320.2**     | 3.76×   | **97%**         |
+
+  Matches IST-DASLab/gemm-fp8 within measurement noise (320.3 TFLOPS
+  on the same hardware).
+
+### Validated
+
+- 792 tests passing across 5 consecutive runs with NIF loaded
+  (CUDA + MKL), zero failures.
+- `gleam check` clean, zero warnings.
+- `make cutlass-libs` + `make zig` rebuild green.
+
 ## [2.2.103] - 2026-05-21
 
 ### Added
