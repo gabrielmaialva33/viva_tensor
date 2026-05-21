@@ -2,10 +2,10 @@
 
 import gleam/float
 import gleam/list
-import gleam_community/maths
 import gleeunit
 import gleeunit/should
 import support/numerics
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{DimensionError, IndexOutOfBounds, InvalidShape}
 import viva_tensor/nn/embedding.{
   Embedding, LearnedPositionalEncoding, embedding_forward, embedding_init,
@@ -113,10 +113,10 @@ pub fn sinusoidal_encoding_test_4d() {
     1.0,
     0.0,
     1.0,
-    maths.sin(1.0),
-    maths.cos(1.0),
-    maths.sin(0.01),
-    maths.cos(0.01),
+    vm_scalar.sin(1.0),
+    vm_scalar.cos(1.0),
+    vm_scalar.sin(0.01),
+    vm_scalar.cos(0.01),
   ]
   numerics.lists_close(data, expected, 1.0e-9, 1.0e-9)
 }
@@ -181,7 +181,7 @@ pub fn rope_basic_test() {
   let assert Ok(out) = rope(x, 10_000.0)
   tensor.shape(out) |> should.equal([2, 2])
   let data = tensor.to_list(out)
-  let expected = [1.0, 0.0, maths.cos(1.0), maths.sin(1.0)]
+  let expected = [1.0, 0.0, vm_scalar.cos(1.0), vm_scalar.sin(1.0)]
   numerics.lists_close(data, expected, 1.0e-9, 1.0e-9)
 }
 
@@ -210,10 +210,10 @@ pub fn rope_pair_rotation_test() {
     0.0,
     0.0,
     0.0,
-    maths.cos(1.0),
-    maths.sin(1.0),
-    float.negate(maths.sin(0.01)),
-    maths.cos(0.01),
+    vm_scalar.cos(1.0),
+    vm_scalar.sin(1.0),
+    float.negate(vm_scalar.sin(0.01)),
+    vm_scalar.cos(0.01),
   ]
   let _ = x
   numerics.lists_close(data, expected, 1.0e-9, 1.0e-9)

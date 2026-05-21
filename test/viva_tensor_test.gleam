@@ -970,7 +970,10 @@ pub fn tensor_distance_similarity_test() {
     Error(_) -> should.fail()
   }
 
-  t.try_cosine_similarity(a, a) |> should.equal(Ok(1.0))
+  case t.try_cosine_similarity(a, a) {
+    Ok(value) -> t.is_close(value, 1.0, 0.0, 1.0e-9) |> should.be_true()
+    Error(_) -> should.fail()
+  }
 }
 
 pub fn tensor_distance_rejects_shape_mismatch_test() {
