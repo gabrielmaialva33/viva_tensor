@@ -12,7 +12,7 @@ packages = [
   { name = "gleeunit", version = "1.10.0", build_tools = ["gleam"], requirements = ["gleam_stdlib"], otp_app = "gleeunit", source = "hex", outer_checksum = "254B697FE72EEAD7BF82E941723918E421317813AC49923EE76A18C788C61E72" },
   { name = "simplifile", version = "2.4.0", build_tools = ["gleam"], requirements = ["filepath", "gleam_stdlib"], otp_app = "simplifile", source = "hex", outer_checksum = "7C18AFA4FED0B4CE1FA5B0B4BAC1FA1744427054EA993565F6F3F82E5453170D" },
   { name = "viva_math", version = "1.2.100", build_tools = ["gleam"], requirements = ["gleam_community_maths", "gleam_stdlib"], otp_app = "viva_math", source = "hex", outer_checksum = "637FF639094FFC0CF8033AE24761E1263498C056E4CCC8B1D4141A471BC95CAD" },
-  { name = "viva_telemetry", version = "1.0.2", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "simplifile"], source = "local", path = "../viva_telemetry" },
+  { name = "viva_telemetry", version = "1.0.102", build_tools = ["gleam"], requirements = ["gleam_json", "gleam_stdlib", "simplifile"], otp_app = "viva_telemetry", source = "hex", outer_checksum = "9D28B8303ED06297A0FA8AA19AEBE807B27EA2B937495D3F46FA0ED6BA4FDA2E" },
 ]
 
 [requirements]
@@ -24,4 +24,4 @@ gleamy_bench = { version = ">= 0.6.0 and < 1.0.0" }
 gleeunit = { version = ">= 1.0.0 and < 2.0.0" }
 simplifile = { version = ">= 2.0.0 and < 3.0.0" }
 viva_math = { version = ">= 1.2.100 and < 2.0.0" }
-viva_telemetry = { path = "../viva_telemetry" }
+viva_telemetry = { version = ">= 1.0.102 and < 2.0.0" }
