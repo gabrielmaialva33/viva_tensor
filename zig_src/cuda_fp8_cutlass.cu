@@ -75,6 +75,7 @@ using GemmFP16Acc = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 
 using ElementAcc_f32 = float;
+static constexpr int kStages = 3;
 
 using EpilogueOp_f32 = cutlass::epilogue::thread::LinearCombination<
     ElementOut_f16,     /* output type = half_t */
@@ -83,21 +84,38 @@ using EpilogueOp_f32 = cutlass::epilogue::thread::LinearCombination<
     ElementAcc_f32      /* compute type = float */
 >;
 
-using GemmFP32Acc = cutlass::gemm::device::Gemm<
+using Gemm_FP8_F32_LargeKN = cutlass::gemm::device::Gemm<
     ElementA_f16, LayoutA,
     ElementB_f16, LayoutB,
     ElementOut_f16, LayoutC,
     ElementAcc_f32,                                     /* float accumulator */
     cutlass::arch::OpClassTensorOp,
     cutlass::arch::Sm89,
-    cutlass::gemm::GemmShape<128, 256, 64>,             /* same tile */
-    cutlass::gemm::GemmShape<64, 64, 64>,               /* same warp */
-    cutlass::gemm::GemmShape<16, 8, 32>,                /* same instruction */
+    cutlass::gemm::GemmShape<128, 64, 128>,
+    cutlass::gemm::GemmShape<64, 32, 128>,
+    cutlass::gemm::GemmShape<16, 8, 32>,
     EpilogueOp_f32,
     cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-    3, 16, 16,
+    kStages, 16, 16,
     false,
     cutlass::arch::OpMultiplyAdd                        /* standard FP32 accum */
+>;
+
+using Gemm_FP8_F32_Default = cutlass::gemm::device::Gemm<
+    ElementA_f16, LayoutA,
+    ElementB_f16, LayoutB,
+    ElementOut_f16, LayoutC,
+    ElementAcc_f32,
+    cutlass::arch::OpClassTensorOp,
+    cutlass::arch::Sm89,
+    cutlass::gemm::GemmShape<64, 128, 64>,
+    cutlass::gemm::GemmShape<32, 64, 64>,
+    cutlass::gemm::GemmShape<16, 8, 32>,
+    EpilogueOp_f32,
+    cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+    kStages, 16, 16,
+    false,
+    cutlass::arch::OpMultiplyAdd
 >;
 
 /* GemmFP32AccOutF32 — same as GemmFP32Acc but stores FP32 output
@@ -112,19 +130,36 @@ using EpilogueOp_f32_out_f32 = cutlass::epilogue::thread::LinearCombination<
     ElementAcc_f32                                      /* compute = float */
 >;
 
-using GemmFP32AccOutF32 = cutlass::gemm::device::Gemm<
+using Gemm_FP8_F32_out_f32_LargeKN = cutlass::gemm::device::Gemm<
     ElementA_f16, LayoutA,
     ElementB_f16, LayoutB,
     float, LayoutC,
     ElementAcc_f32,
     cutlass::arch::OpClassTensorOp,
     cutlass::arch::Sm89,
-    cutlass::gemm::GemmShape<128, 256, 64>,
-    cutlass::gemm::GemmShape<64, 64, 64>,
+    cutlass::gemm::GemmShape<128, 64, 128>,
+    cutlass::gemm::GemmShape<64, 32, 128>,
     cutlass::gemm::GemmShape<16, 8, 32>,
     EpilogueOp_f32_out_f32,
     cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
-    3, 16, 16,
+    kStages, 16, 16,
+    false,
+    cutlass::arch::OpMultiplyAdd
+>;
+
+using Gemm_FP8_F32_out_f32_Default = cutlass::gemm::device::Gemm<
+    ElementA_f16, LayoutA,
+    ElementB_f16, LayoutB,
+    float, LayoutC,
+    ElementAcc_f32,
+    cutlass::arch::OpClassTensorOp,
+    cutlass::arch::Sm89,
+    cutlass::gemm::GemmShape<64, 128, 64>,
+    cutlass::gemm::GemmShape<32, 64, 64>,
+    cutlass::gemm::GemmShape<16, 8, 32>,
+    EpilogueOp_f32_out_f32,
+    cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>,
+    kStages, 16, 16,
     false,
     cutlass::arch::OpMultiplyAdd
 >;
@@ -221,11 +256,45 @@ int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
 int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K,
                                       const void *d_A, const void *d_B,
                                       float *d_C) {
-    GemmFP32AccOutF32 gemm_op;
+    if (K == 4096 && N == 4096) {
+        Gemm_FP8_F32_out_f32_LargeKN gemm_op;
+
+        float alpha = 1.0f, beta = 0.0f;
+
+        Gemm_FP8_F32_out_f32_LargeKN::Arguments args(
+            {M, N, K},
+            {static_cast<const ElementA_f16*>(d_A), K},
+            {static_cast<const ElementB_f16*>(d_B), K},
+            {d_C, N},
+            {d_C, N},
+            {alpha, beta}
+        );
+
+        cutlass::Status status = gemm_op.can_implement(args);
+        if (status != cutlass::Status::kSuccess) return -1;
+
+        size_t workspace_size = Gemm_FP8_F32_out_f32_LargeKN::get_workspace_size(args);
+        void *workspace = nullptr;
+        if (workspace_size > 0) {
+            if (cudaMalloc(&workspace, workspace_size) != cudaSuccess) return -2;
+        }
+
+        status = gemm_op.initialize(args, workspace);
+        if (status != cutlass::Status::kSuccess) {
+            if (workspace) cudaFree(workspace);
+            return -3;
+        }
+
+        status = gemm_op();
+        if (workspace) cudaFree(workspace);
+        return (status == cutlass::Status::kSuccess) ? 0 : -4;
+    }
+
+    Gemm_FP8_F32_out_f32_Default gemm_op;
 
     float alpha = 1.0f, beta = 0.0f;
 
-    GemmFP32AccOutF32::Arguments args(
+    Gemm_FP8_F32_out_f32_Default::Arguments args(
         {M, N, K},
         {static_cast<const ElementA_f16*>(d_A), K},
         {static_cast<const ElementB_f16*>(d_B), K},
@@ -237,7 +306,7 @@ int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K,
     cutlass::Status status = gemm_op.can_implement(args);
     if (status != cutlass::Status::kSuccess) return -1;
 
-    size_t workspace_size = GemmFP32AccOutF32::get_workspace_size(args);
+    size_t workspace_size = Gemm_FP8_F32_out_f32_Default::get_workspace_size(args);
     void *workspace = nullptr;
     if (workspace_size > 0) {
         if (cudaMalloc(&workspace, workspace_size) != cudaSuccess) return -2;
@@ -303,11 +372,47 @@ int cutlass_fp8_gemm_f16acc(int M, int N, int K,
  */
 int cutlass_fp8_gemm_f32acc(int M, int N, int K,
                              const void *d_A, const void *d_B, void *d_C) {
-    GemmFP32Acc gemm_op;
+    if (K == 4096 && N == 4096) {
+        Gemm_FP8_F32_LargeKN gemm_op;
+
+        float alpha = 1.0f, beta = 0.0f;
+
+        Gemm_FP8_F32_LargeKN::Arguments args(
+            {M, N, K},
+            {static_cast<const ElementA_f16*>(d_A), K},
+            {static_cast<const ElementB_f16*>(d_B), K},
+            {static_cast<ElementOut_f16*>(d_C), N},
+            {static_cast<ElementOut_f16*>(d_C), N},
+            {alpha, beta}
+        );
+
+        cutlass::Status status = gemm_op.can_implement(args);
+        if (status != cutlass::Status::kSuccess) return -1;
+
+        size_t workspace_size = Gemm_FP8_F32_LargeKN::get_workspace_size(args);
+        void *workspace = nullptr;
+        if (workspace_size > 0) {
+            cudaError_t err = cudaMalloc(&workspace, workspace_size);
+            if (err != cudaSuccess) return -2;
+        }
+
+        status = gemm_op.initialize(args, workspace);
+        if (status != cutlass::Status::kSuccess) {
+            if (workspace) cudaFree(workspace);
+            return -3;
+        }
+
+        status = gemm_op();
+        if (workspace) cudaFree(workspace);
+
+        return (status == cutlass::Status::kSuccess) ? 0 : -4;
+    }
+
+    Gemm_FP8_F32_Default gemm_op;
 
     float alpha = 1.0f, beta = 0.0f;
 
-    GemmFP32Acc::Arguments args(
+    Gemm_FP8_F32_Default::Arguments args(
         {M, N, K},
         {static_cast<const ElementA_f16*>(d_A), K},
         {static_cast<const ElementB_f16*>(d_B), K},
@@ -319,7 +424,7 @@ int cutlass_fp8_gemm_f32acc(int M, int N, int K,
     cutlass::Status status = gemm_op.can_implement(args);
     if (status != cutlass::Status::kSuccess) return -1;
 
-    size_t workspace_size = GemmFP32Acc::get_workspace_size(args);
+    size_t workspace_size = Gemm_FP8_F32_Default::get_workspace_size(args);
     void *workspace = nullptr;
     if (workspace_size > 0) {
         cudaError_t err = cudaMalloc(&workspace, workspace_size);
