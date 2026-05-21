@@ -49,7 +49,7 @@ pub fn main() {
 
   // 3. Run Training Loop
   let _final_state =
-    list.fold(list.range(0, epochs - 1), state, fn(acc_state, epoch) {
+    list.fold(range_int(0, epochs - 1), state, fn(acc_state, epoch) {
       train_step(acc_state, epoch, x_data, y_data)
     })
 
@@ -123,4 +123,15 @@ fn train_step(
     layer1: nn.Linear(w: nw1, b: nb1),
     layer2: nn.Linear(w: nw2, b: nb2),
   )
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

@@ -62,7 +62,7 @@ fn bench_parallel_creation() {
     // Sequential
     let #(seq_time, _) =
       timer_tc(fn() {
-        list.range(1, n)
+        range_int(1, n)
         |> list.map(fn(_) { tensor.random_uniform([100]) })
       })
 
@@ -70,7 +70,7 @@ fn bench_parallel_creation() {
     let #(par_time, _) =
       timer_tc(fn() {
         let parent = erlang_self()
-        list.range(1, n)
+        range_int(1, n)
         |> list.each(fn(_) {
           erlang_spawn(fn() {
             let result = tensor.random_uniform([100])
@@ -103,7 +103,7 @@ fn bench_parallel_creation() {
 fn bench_parallel_reductions() {
   // Create many tensors
   let tensors =
-    list.range(1, 1000)
+    range_int(1, 1000)
     |> list.map(fn(_) { tensor.random_uniform([1000]) })
 
   // Sequential sum of all
@@ -143,7 +143,7 @@ fn bench_parallel_similarity() {
   // Simulates embedding search: 1 query vs N documents
   let query = tensor.random_uniform([512])
   let documents =
-    list.range(1, 10_000)
+    range_int(1, 10_000)
     |> list.map(fn(_) { tensor.random_uniform([512]) })
 
   io.println("  Query vs 10K documents (512d embeddings):")
@@ -200,7 +200,7 @@ fn bench_process_spawning() {
     let #(time, _) =
       timer_tc(fn() {
         let parent = erlang_self()
-        list.range(1, n)
+        range_int(1, n)
         |> list.each(fn(_) { erlang_spawn(fn() { erlang_send(parent, 1) }) })
         collect_n(n)
       })
@@ -260,5 +260,16 @@ fn format_number(n: Int) -> String {
         True -> int.to_string(n / 1000) <> "K"
         False -> int.to_string(n)
       }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

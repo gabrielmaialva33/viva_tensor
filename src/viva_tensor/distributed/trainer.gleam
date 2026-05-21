@@ -183,7 +183,7 @@ pub fn synchronous_train_step(
 /// `train_synchronous` does not use this path. These primitives are exposed
 /// for users who want to drive their own multi-process loop.
 pub fn spawn_workers(num: Int, worker_loop: fn(Int) -> a) -> List(Worker) {
-  list.range(0, num - 1)
+  range_int(0, num - 1)
   |> list.map(fn(id) {
     let inbox: Subject(WorkerMessage) = process.new_subject()
     let outbox: Subject(#(Int, Int, List(GradPair))) = process.new_subject()
@@ -523,7 +523,7 @@ fn validate_same_shape_lists(
 fn assign_batches(batches: List(Batch), num_workers: Int) -> List(List(Batch)) {
   // Round-robin: worker i gets batches at indices i, i+num_workers, ...
   let indexed = list.index_map(batches, fn(b, i) { #(i, b) })
-  list.range(0, num_workers - 1)
+  range_int(0, num_workers - 1)
   |> list.map(fn(worker_id) {
     indexed
     |> list.filter(fn(pair) { pair.0 % num_workers == worker_id })
@@ -551,5 +551,16 @@ fn do_take_cycle(
         [] -> do_take_cycle(full, full, n, acc)
         [head, ..rest] -> do_take_cycle(rest, full, n - 1, [head, ..acc])
       }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

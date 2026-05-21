@@ -18,6 +18,7 @@ import gleam/float
 import gleam/list
 import gleam/result
 import gleam_community/maths
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/layout_math
 import viva_tensor/core/tensor_axis
@@ -165,12 +166,8 @@ pub fn selu(t: Tensor) -> Tensor {
 /// // -> Tensor([0.8413...], [1])
 /// ```
 pub fn gelu(t: Tensor) -> Tensor {
-  tensor.map(t, gelu_scalar)
-}
-
-fn gelu_scalar(x: Float) -> Float {
-  let inv_sqrt2 = 0.7071067811865475
-  0.5 *. x *. { 1.0 +. maths.erf(x *. inv_sqrt2) }
+  // Delegate scalar form to viva_math/scalar.gelu (exact form using erf).
+  tensor.map(t, vm_scalar.gelu)
 }
 
 /// Swish (a.k.a. SiLU): `x * sigmoid(x)`.
@@ -201,7 +198,8 @@ pub fn swish(t: Tensor) -> Tensor {
 /// // -> Tensor([0.0], [1])
 /// ```
 pub fn mish(t: Tensor) -> Tensor {
-  tensor.map(t, fn(x) { x *. maths.tanh(softplus_scalar(x)) })
+  // Delegate scalar form to viva_math/scalar.mish.
+  tensor.map(t, vm_scalar.mish)
 }
 
 /// Softplus: `log(1 + exp(x))`.
@@ -217,13 +215,8 @@ pub fn mish(t: Tensor) -> Tensor {
 /// // -> Tensor([0.6931...], [1])
 /// ```
 pub fn softplus(t: Tensor) -> Tensor {
-  tensor.map(t, softplus_scalar)
-}
-
-fn softplus_scalar(x: Float) -> Float {
-  let abs_x = float.absolute_value(x)
-  let pos = float.max(x, 0.0)
-  pos +. log1p(float.exponential(0.0 -. abs_x))
+  // Delegate scalar form to viva_math/scalar.softplus.
+  tensor.map(t, vm_scalar.softplus)
 }
 
 /// `log(1 + x)` computed in a numerically stable way for small `x`.

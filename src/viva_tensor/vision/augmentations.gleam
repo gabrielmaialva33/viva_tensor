@@ -102,7 +102,7 @@ pub fn color_jitter_forward(
         True -> Ok(image)
         False -> {
           let processed =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
               let start = b * stride
               let r = slice(data, start, plane)
@@ -441,7 +441,7 @@ fn normalize_labels(
 fn one_hot_from_indices(indices: List(Float), num_classes: Int) -> List(Float) {
   list.flat_map(indices, fn(idx_f) {
     let idx = float.round(idx_f)
-    list.range(0, num_classes - 1)
+    range_int(0, num_classes - 1)
     |> list.map(fn(k) {
       case k == idx {
         True -> 1.0
@@ -490,19 +490,19 @@ fn paste_box(
 ) -> List(Float) {
   let plane = height * width
   let stride = channels * plane
-  list.range(0, batch - 1)
+  range_int(0, batch - 1)
   |> list.flat_map(fn(i) {
     let p = case list.drop(perm, i) {
       [head, ..] -> head
       [] -> i
     }
-    list.range(0, channels - 1)
+    range_int(0, channels - 1)
     |> list.flat_map(fn(c) {
       let dst_base = i * stride + c * plane
       let src_base = p * stride + c * plane
-      list.range(0, height - 1)
+      range_int(0, height - 1)
       |> list.flat_map(fn(y) {
-        list.range(0, width - 1)
+        range_int(0, width - 1)
         |> list.map(fn(x) {
           let pick_src = y >= y1 && y < y2 && x >= x1 && x < x2
           let offset = y * width + x
@@ -528,7 +528,7 @@ fn uniform_in(lo: Float, hi: Float) -> Float {
 
 fn random_permutation(n: Int) -> List(Int) {
   // Fisher–Yates shuffle on [0 .. n-1].
-  let initial = list.range(0, n - 1)
+  let initial = range_int(0, n - 1)
   fisher_yates(initial, n - 1)
 }
 
@@ -655,4 +655,15 @@ fn int_clamp(value: Int, lo: Int, hi: Int) -> Int {
 
 fn float_to_round(value: Float) -> Int {
   float.round(value)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

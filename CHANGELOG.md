@@ -4,7 +4,28 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-No changes yet.
+## [2.2.103] - 2026-05-20
+
+### Added
+
+- New dependency on `viva_math >= 1.2.100` for scalar activations.
+
+### Changed
+
+- `nn/activations.gelu` now delegates to `viva_math/scalar.gelu` (exact
+  form via Erlang's `:math.erf` BIF). Behaviour-preserving migration.
+- `nn/activations.mish` now delegates to `viva_math/scalar.mish` (smooth,
+  Mish 2019 formulation).
+- `nn/activations.softplus` now delegates to `viva_math/scalar.softplus`
+  (stable `max(x,0) + log1p(exp(-|x|))`).
+- Replaced all uses of the removed `list.range/2` (stdlib 1.0) with a
+  local `range_int/2` helper in `dev/` benchmarks and examples.
+- Bumped `viva_telemetry` floor to `>= 1.0.102` for the same fix.
+
+### Validated
+
+- 791 tests passing against published `viva_math` 1.2.100 and
+  `viva_telemetry` 1.0.102, including NIF MKL/CUDA paths.
 
 ## [2.2.102] - 2026-05-20
 

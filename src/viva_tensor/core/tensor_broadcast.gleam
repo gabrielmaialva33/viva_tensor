@@ -85,7 +85,7 @@ pub fn broadcast_data_values(
   let diff = target_rank - src_rank
   let padded_shape = list.append(list.repeat(1, diff), src_shape)
 
-  list.range(0, target_size - 1)
+  range_int(0, target_size - 1)
   |> list.fold(Ok([]), fn(acc, flat_idx) {
     use values <- result.try(acc)
     let target_indices = layout_math.flat_to_multi(flat_idx, target_shape)
@@ -123,5 +123,16 @@ fn broadcast_shapes_loop(
       use result_shape <- result.try(broadcast_shape(current, next))
       broadcast_shapes_loop(rest, result_shape)
     }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

@@ -51,7 +51,7 @@ pub fn reduce_sum_axis_data(
     }
     False -> {
       let output_size = list.fold(output_shape, 1, fn(acc, dim) { acc * dim })
-      list.range(0, output_size - 1)
+      range_int(0, output_size - 1)
       |> list.fold(Ok([]), fn(acc, out_idx) {
         use values <- result.try(acc)
         use value <- result.try(sum_axis_output(
@@ -81,7 +81,7 @@ pub fn softmax_axis_data(
     True -> Ok([])
     False -> {
       let outer_size = total_size / group_width
-      list.range(0, outer_size - 1)
+      range_int(0, outer_size - 1)
       |> list.fold(Ok([]), fn(acc, outer) {
         use values <- result.try(acc)
         use chunk <- result.try(softmax_axis_outer(
@@ -109,7 +109,7 @@ pub fn axis_transform_data(
     True -> Ok([])
     False -> {
       let outer_size = total_size / group_width
-      list.range(0, outer_size - 1)
+      range_int(0, outer_size - 1)
       |> list.fold(Ok([]), fn(acc, outer) {
         use values <- result.try(acc)
         use chunk <- result.try(axis_transform_outer(
@@ -135,7 +135,7 @@ pub fn reduce_axis_data(
 ) -> Result(List(Float), TensorError) {
   let output_size = list.fold(output_shape, 1, fn(acc, d) { acc * d })
 
-  list.range(0, output_size - 1)
+  range_int(0, output_size - 1)
   |> list.fold(Ok([]), fn(acc, out_idx) {
     use values <- result.try(acc)
     use value <- result.try(reduce_axis_output(
@@ -262,7 +262,7 @@ fn sum_axis_output(
   axis_size: Int,
 ) -> Result(Float, TensorError) {
   let output_coords = layout_math.flat_to_multi(out_idx, output_shape)
-  list.range(0, axis_size - 1)
+  range_int(0, axis_size - 1)
   |> list.fold(Ok(0.0), fn(acc, axis_pos) {
     use total <- result.try(acc)
     let input_coords =
@@ -293,7 +293,7 @@ fn axis_transform_outer(
   transform: fn(List(Float)) -> List(Float),
 ) -> Result(List(Float), TensorError) {
   use groups <- result.try(
-    list.range(0, inner_size - 1)
+    range_int(0, inner_size - 1)
     |> list.fold(Ok([]), fn(acc, inner) {
       use values <- result.try(acc)
       use axis_values <- result.try(axis_values(
@@ -308,7 +308,7 @@ fn axis_transform_outer(
     |> result.map(list.reverse),
   )
 
-  list.range(0, axis_size - 1)
+  range_int(0, axis_size - 1)
   |> list.fold(Ok([]), fn(acc, axis_pos) {
     use values <- result.try(acc)
     use axis_values <- result.try(
@@ -336,7 +336,7 @@ fn axis_values(
   axis_size: Int,
   inner_size: Int,
 ) -> Result(List(Float), TensorError) {
-  list.range(0, axis_size - 1)
+  range_int(0, axis_size - 1)
   |> list.fold(Ok([]), fn(acc, axis_pos) {
     use values <- result.try(acc)
     let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
@@ -361,7 +361,7 @@ fn reduce_axis_output(
   let output_coords = layout_math.flat_to_multi(out_idx, output_shape)
 
   let values_result =
-    list.range(0, axis_size - 1)
+    range_int(0, axis_size - 1)
     |> list.fold(Ok([]), fn(acc, axis_pos) {
       use values <- result.try(acc)
       let input_coords =
@@ -419,7 +419,7 @@ fn softmax_axis_outer(
   inner_size: Int,
 ) -> Result(List(Float), TensorError) {
   use groups <- result.try(
-    list.range(0, inner_size - 1)
+    range_int(0, inner_size - 1)
     |> list.fold(Ok([]), fn(acc, inner) {
       use values <- result.try(acc)
       use normalized <- result.try(softmax_axis_values(
@@ -434,7 +434,7 @@ fn softmax_axis_outer(
     |> result.map(list.reverse),
   )
 
-  list.range(0, axis_size - 1)
+  range_int(0, axis_size - 1)
   |> list.fold(Ok([]), fn(acc, axis_pos) {
     use values <- result.try(acc)
     use axis_values <- result.try(
@@ -463,7 +463,7 @@ fn softmax_axis_values(
   inner_size: Int,
 ) -> Result(List(Float), TensorError) {
   case
-    list.range(0, axis_size - 1)
+    range_int(0, axis_size - 1)
     |> list.fold(Ok([]), fn(acc, axis_pos) {
       use values <- result.try(acc)
       let index = outer * axis_size * inner_size + inner + axis_pos * inner_size
@@ -491,5 +491,16 @@ fn softmax_values(values: List(Float)) -> Result(List(Float), TensorError) {
 
       Ok(list.map(shifted, fn(value) { value /. total }))
     }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

@@ -31,9 +31,9 @@ fn t2d(rows: List(List(Float))) -> tensor.Tensor {
 fn diag_router(embed_dim: Int, num_experts: Int, top_k: Int) -> Router {
   let router = moe.router_init(embed_dim, num_experts, top_k)
   let gate_data =
-    list.range(0, embed_dim - 1)
+    range_int(0, embed_dim - 1)
     |> list.flat_map(fn(r) {
-      list.range(0, num_experts - 1)
+      range_int(0, num_experts - 1)
       |> list.map(fn(c) {
         case r == c {
           True -> 1.0
@@ -236,4 +236,15 @@ pub fn expert_distribution_test() {
 
   // Avoid unused-import warning for `float`.
   let _ = float.absolute_value(1.0)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

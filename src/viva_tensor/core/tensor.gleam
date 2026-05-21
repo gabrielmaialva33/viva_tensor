@@ -132,9 +132,9 @@ pub fn matrix(
 pub fn eye(n: Int) -> Tensor {
   // Sparse would be O(n) space vs O(n²), but adds complexity. YAGNI for now.
   let data =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, n - 1)
+      range_int(0, n - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -184,7 +184,7 @@ pub fn linspace(start: Float, end: Float, num: Int) -> Tensor {
 pub fn random_uniform(shape: List(Int)) -> Tensor {
   let size = compute_size(shape)
   let data =
-    list.range(1, size)
+    range_int(1, size)
     |> list.map(fn(_) { ffi.random_uniform() })
   Dense(data: data, shape: shape)
 }
@@ -199,7 +199,7 @@ pub fn random_normal(
 ) -> Tensor {
   let size = compute_size(shape)
   let data =
-    list.range(1, size)
+    range_int(1, size)
     |> list.map(fn(_) {
       let u1 = float.max(ffi.random_uniform(), 0.0001)
       let u2 = ffi.random_uniform()
@@ -216,7 +216,7 @@ pub fn xavier_init(fan_in fan_in: Int, fan_out fan_out: Int) -> Tensor {
   // Derived from Var(W) = 2/(fan_in + fan_out), uniform bounds = sqrt(3 * Var)
   let limit = ffi.sqrt(6.0 /. int.to_float(fan_in + fan_out))
   let data =
-    list.range(1, fan_in * fan_out)
+    range_int(1, fan_in * fan_out)
     |> list.map(fn(_) {
       let r = ffi.random_uniform()
       r *. 2.0 *. limit -. limit
@@ -258,7 +258,7 @@ pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
     Strided(storage, shp, strides, offset) -> {
       let total_size = compute_size(shp)
       let data =
-        list.range(0, total_size - 1)
+        range_int(0, total_size - 1)
         |> list.map(fn(flat_idx) {
           let indices = flat_to_multi(flat_idx, shp)
           let idx =
@@ -489,7 +489,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
       case col_idx >= 0 && col_idx < num_cols {
         True -> {
           let col_data =
-            list.range(0, num_rows - 1)
+            range_int(0, num_rows - 1)
             |> list.filter_map(fn(row) { get2d(t, row, col_idx) })
           Ok(from_list(col_data))
         }
@@ -734,5 +734,16 @@ pub fn native_from_list(
           ))
       }
     }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

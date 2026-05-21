@@ -134,15 +134,15 @@ fn pool_with_indices_compute(
   padding: Int,
 ) -> #(List(Float), List(Float)) {
   let cells =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.flat_map(fn(b) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ch) {
         let base = b * c * h_in * w_in + ch * h_in * w_in
-        list.range(0, out_h - 1)
+        range_int(0, out_h - 1)
         |> list.flat_map(fn(oh) {
           let h_start = oh * stride - padding
-          list.range(0, out_w - 1)
+          range_int(0, out_w - 1)
           |> list.map(fn(ow) {
             let w_start = ow * stride - padding
             max_in_window(arr, base, h_in, w_in, h_start, w_start, kernel_size)
@@ -350,9 +350,9 @@ fn unpool_fill(
   idxs: List(Float),
 ) -> List(Float) {
   let per_chan = h_out * w_out
-  list.range(0, n - 1)
+  range_int(0, n - 1)
   |> list.flat_map(fn(b) {
-    list.range(0, c - 1)
+    range_int(0, c - 1)
     |> list.flat_map(fn(ch) {
       let start = { b * c + ch } * per_chan
       let chan_vals = list.take(list.drop(values, start), per_chan)
@@ -366,7 +366,7 @@ fn unpool_fill(
             False -> acc
           }
         })
-      list.range(0, plane - 1)
+      range_int(0, plane - 1)
       |> list.map(fn(i) {
         case dict.get(scatter, i) {
           Ok(v) -> v
@@ -600,10 +600,10 @@ fn roi_align_compute(
         let roi_h = float.max(sy2 -. sy1, 1.0)
         let bin_w = roi_w /. int.to_float(out_w)
         let bin_h = roi_h /. int.to_float(out_h)
-        list.flat_map(list.range(0, c - 1), fn(ch) {
+        list.flat_map(range_int(0, c - 1), fn(ch) {
           let base = bi * c * h * w + ch * h * w
-          list.flat_map(list.range(0, out_h - 1), fn(oh) {
-            list.map(list.range(0, out_w - 1), fn(ow) {
+          list.flat_map(range_int(0, out_h - 1), fn(oh) {
+            list.map(range_int(0, out_w - 1), fn(ow) {
               roi_bin_value(
                 feat,
                 base,
@@ -767,7 +767,7 @@ fn bmm_compute(
   ba: Int,
   bb: Int,
 ) -> List(Float) {
-  list.range(0, out_b - 1)
+  range_int(0, out_b - 1)
   |> list.flat_map(fn(batch) {
     let ai = case ba == 1 {
       True -> 0
@@ -779,9 +779,9 @@ fn bmm_compute(
     }
     let a_base = ai * m * k
     let b_base = bi * k * n
-    list.range(0, m - 1)
+    range_int(0, m - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, n - 1)
+      range_int(0, n - 1)
       |> list.map(fn(j) {
         sum_range(0, k - 1, fn(p) {
           let av = ffi.array_get(a_arr, a_base + i * k + p)
@@ -917,9 +917,9 @@ fn batch_norm_2d_apply(
   }
 
   let out =
-    list.range(0, b - 1)
+    range_int(0, b - 1)
     |> list.flat_map(fn(bi) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ci) {
         let mu = list_at(use_mean, ci)
         let var = list_at(use_var, ci)
@@ -927,7 +927,7 @@ fn batch_norm_2d_apply(
         let bias_v = list_at(bias_data, ci)
         let denom = safe_sqrt(var +. layer.eps)
         let base = { bi * c + ci } * plane
-        list.range(0, plane - 1)
+        range_int(0, plane - 1)
         |> list.map(fn(off) {
           let x = ffi.array_get(arr, base + off)
           { x -. mu } /. denom *. s +. bias_v
@@ -958,7 +958,7 @@ fn batch_norm_2d_apply(
 
 fn channel_means(arr: ErlangArray, b: Int, c: Int, plane: Int) -> List(Float) {
   let n = int.to_float(b * plane)
-  list.range(0, c - 1)
+  range_int(0, c - 1)
   |> list.map(fn(ci) {
     let sum =
       sum_range(0, b - 1, fn(bi) {
@@ -1075,5 +1075,16 @@ fn join_with(parts: List(String), sep: String) -> String {
     [] -> ""
     [s] -> s
     [s, ..rest] -> s <> sep <> join_with(rest, sep)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

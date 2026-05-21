@@ -116,7 +116,7 @@ pub fn det(a: Tensor) -> Result(Float, TensorError) {
     Error(LuError(e)) -> Error(e)
     Ok(decomp) -> {
       let diag_product =
-        list.range(0, n - 1)
+        range_int(0, n - 1)
         |> list.fold(1.0, fn(acc, i) {
           let row = unsafe_at(decomp.u, i)
           acc *. unsafe_at(row, i)
@@ -242,9 +242,9 @@ pub fn qr(a: Tensor) -> Result(#(Tensor, Tensor), TensorError) {
 /// ```
 pub fn eye(n: Int) -> Tensor {
   let data =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, n - 1)
+      range_int(0, n - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -441,7 +441,7 @@ fn eliminate_loop(
 
 fn find_pivot(rows: List(List(Float)), k: Int, n: Int) -> Result(Int, Nil) {
   let candidates =
-    list.range(k, n - 1)
+    range_int(k, n - 1)
     |> list.map(fn(i) { #(i, float.absolute_value(value_at(rows, i, k))) })
   case candidates {
     [] -> Error(Nil)
@@ -530,11 +530,11 @@ fn lu_decompose(
   rows: List(List(Float)),
   n: Int,
 ) -> Result(LuDecomp, LuFailure) {
-  let perm = list.range(0, n - 1)
+  let perm = range_int(0, n - 1)
   let l_init =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.map(fn(i) {
-      list.range(0, n - 1)
+      range_int(0, n - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -791,11 +791,11 @@ fn gram_schmidt_loop(
 // =============================================================================
 
 /// Inclusive integer range that returns an empty list when `stop < start`.
-/// Differs from `list.range/2` which always emits at least one element.
+/// Differs from the old stdlib range helper which always emitted at least one element.
 fn int_range(start: Int, stop: Int) -> List(Int) {
   case stop < start {
     True -> []
-    False -> list.range(start, stop)
+    False -> range_int(start, stop)
   }
 }
 
@@ -925,7 +925,7 @@ fn transpose_rows(
   _m: Int,
   n: Int,
 ) -> List(List(Float)) {
-  list.range(0, n - 1)
+  range_int(0, n - 1)
   |> list.map(fn(j) {
     rows
     |> list.map(fn(row) { unsafe_at(row, j) })
@@ -934,3 +934,14 @@ fn transpose_rows(
 
 @external(erlang, "math", "sqrt")
 fn sqrt_float(x: Float) -> Float
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

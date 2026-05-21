@@ -301,10 +301,10 @@ pub fn matmul_vec(mat: Tensor, vec: Tensor) -> Result(Tensor, TensorError) {
       let mat_arr = ffi.list_to_array(tensor.to_list(mat))
       let vec_arr = ffi.list_to_array(tensor.to_list(vec))
       let result_data =
-        list.range(0, m - 1)
+        range_int(0, m - 1)
         |> list.map(fn(row_idx) {
           let start = row_idx * n
-          list.range(0, n - 1)
+          range_int(0, n - 1)
           |> list.fold(0.0, fn(acc, k) {
             acc
             +. ffi.array_get(mat_arr, start + k)
@@ -329,12 +329,12 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
       let a_arr = ffi.list_to_array(tensor.to_list(a))
       let b_arr = ffi.list_to_array(tensor.to_list(b))
       let result_data =
-        list.range(0, m - 1)
+        range_int(0, m - 1)
         |> list.flat_map(fn(i) {
           let row_start = i * n
-          list.range(0, p - 1)
+          range_int(0, p - 1)
           |> list.map(fn(j) {
-            list.range(0, n - 1)
+            range_int(0, n - 1)
             |> list.fold(0.0, fn(acc, k) {
               acc
               +. ffi.array_get(a_arr, row_start + k)
@@ -742,9 +742,9 @@ pub fn transpose(t: Tensor) -> Result(Tensor, TensorError) {
     [m, n] -> {
       let arr = ffi.list_to_array(tensor.to_list(t))
       let result_data =
-        list.range(0, n - 1)
+        range_int(0, n - 1)
         |> list.flat_map(fn(j) {
-          list.range(0, m - 1)
+          range_int(0, m - 1)
           |> list.map(fn(i) { ffi.array_get(arr, i * n + j) })
         })
       tensor.new(result_data, [n, m])
@@ -985,4 +985,15 @@ fn value_at(values: List(Float), index: Int) -> Float {
 
 fn indices(size: Int) -> List(Int) {
   layout_math.indices(size)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

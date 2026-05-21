@@ -83,7 +83,7 @@ fn size_of(shape: List(Int)) -> Int {
 fn build(shape: List(Int), gen: fn() -> Float) -> Tensor {
   let size = size_of(shape)
   let data =
-    list.range(1, size)
+    range_int(1, size)
     |> list.map(fn(_) { gen() })
   Tensor(data: data, shape: shape)
 }
@@ -323,4 +323,15 @@ pub fn linear_gain() -> Float {
 /// derivative at zero already sits at `0.25`, which keeps variance bounded.
 pub fn sigmoid_gain() -> Float {
   1.0
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

@@ -89,7 +89,7 @@ pub fn build_schedule(schedule: NoiseSchedule) -> SchedulerState {
       let f0 = f(0)
       // Normalize so ᾱ_0 (effectively f(0)/f(0)) is well-defined.
       let alpha_bars =
-        list.range(1, num_steps)
+        range_int(1, num_steps)
         |> list.map(fn(t) {
           case f0 <=. 0.0 {
             True -> 1.0
@@ -133,7 +133,7 @@ fn linspace_floats(start: Float, stop: Float, steps: Int) -> List(Float) {
     True -> [start]
     False -> {
       let delta = { stop -. start } /. int.to_float(steps - 1)
-      list.range(0, steps - 1)
+      range_int(0, steps - 1)
       |> list.map(fn(i) { start +. delta *. int.to_float(i) })
     }
   }
@@ -324,7 +324,7 @@ pub fn sample(
         False -> {
           let x_t =
             Tensor(
-              data: list.range(1, total)
+              data: range_int(1, total)
                 |> list.map(fn(_) { standard_normal() }),
               shape: shape,
             )
@@ -411,4 +411,15 @@ fn standard_normal() -> Float {
   let u1 = float.max(ffi.random_uniform(), 1.0e-12)
   let u2 = ffi.random_uniform()
   ffi.sqrt(-2.0 *. ffi.log(u1)) *. ffi.cos(2.0 *. ffi.pi *. u2)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

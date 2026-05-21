@@ -349,10 +349,21 @@ fn numerical_gradient(
   case values == [] {
     True -> []
     False ->
-      list.range(0, list.length(values) - 1)
+      range_int(0, list.length(values) - 1)
       |> list.map(fn(i) { finite_difference(values, shape, i, eps, loss) })
   }
 }
 
 @external(erlang, "math", "exp")
 fn erlang_exp(x: Float) -> Float
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

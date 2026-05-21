@@ -189,9 +189,9 @@ fn crop_2d(
 /// used by `scaled_dot_product_attention(.., is_causal=True)`.
 pub fn causal_mask(seq_len: Int) -> Tensor {
   let data =
-    list.range(0, seq_len - 1)
+    range_int(0, seq_len - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, seq_len - 1)
+      range_int(0, seq_len - 1)
       |> list.map(fn(j) {
         case j <= i {
           True -> 1.0
@@ -423,7 +423,7 @@ fn split_heads(
   // For each head h, gather the slice [h*head_dim .. h*head_dim+head_dim) from
   // every row.
   let heads =
-    list.range(0, num_heads - 1)
+    range_int(0, num_heads - 1)
     |> list.map(fn(h) {
       let head_data =
         rows
@@ -455,7 +455,7 @@ fn concat_heads(
   )
   // For each row index s, concat head_rows[h][s] for h in 0..num_heads.
   let combined =
-    list.range(0, seq - 1)
+    range_int(0, seq - 1)
     |> list.flat_map(fn(s) {
       head_rows
       |> list.flat_map(fn(rows) {
@@ -467,4 +467,15 @@ fn concat_heads(
     })
   let _ = num_heads
   Ok(Tensor(data: combined, shape: [seq, num_heads * head_dim]))
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

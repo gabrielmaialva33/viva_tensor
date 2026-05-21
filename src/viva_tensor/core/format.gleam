@@ -492,15 +492,15 @@ fn expand_indices(
   case summarize && dim_size > 2 * edgeitems {
     True -> {
       let head =
-        list.range(0, edgeitems - 1)
+        range_int(0, edgeitems - 1)
         |> list.map(Idx)
       let tail =
-        list.range(dim_size - edgeitems, dim_size - 1)
+        range_int(dim_size - edgeitems, dim_size - 1)
         |> list.map(Idx)
       list.flatten([head, [Elision], tail])
     }
     False ->
-      list.range(0, dim_size - 1)
+      range_int(0, dim_size - 1)
       |> list.map(Idx)
   }
 }
@@ -757,5 +757,16 @@ fn list_at_float_loop(xs: List(Float), idx: Int) -> Result(Float, Nil) {
     [], _ -> Error(Nil)
     [x, ..], 0 -> Ok(x)
     [_, ..rest], n -> list_at_float_loop(rest, n - 1)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

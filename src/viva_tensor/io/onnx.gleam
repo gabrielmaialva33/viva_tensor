@@ -486,7 +486,7 @@ fn run_transpose(
       let rank = list.length(shape)
       let perm = case dict.get(node.attributes, "perm") {
         Ok(IntsAttr(p)) -> p
-        _ -> list.reverse(list.range(0, rank - 1))
+        _ -> list.reverse(range_int(0, rank - 1))
       }
       transpose_with_perm(x, shape, perm)
       |> result.try(fn(v) { write_output(table, node, v) })
@@ -510,7 +510,7 @@ fn transpose_with_perm(
       })
     // 1D or identity permutation — return as-is.
     _, _, _ -> {
-      let identity = list.range(0, rank - 1)
+      let identity = range_int(0, rank - 1)
       case perm == identity {
         True -> Ok(x)
         False ->
@@ -760,4 +760,15 @@ fn merge_dicts(
   b: Dict(String, Tensor),
 ) -> Dict(String, Tensor) {
   dict.fold(b, a, fn(acc, k, v) { dict.insert(acc, k, v) })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

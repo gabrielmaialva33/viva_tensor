@@ -436,7 +436,7 @@ fn split_heads(
   use data <- result.try(tensor.try_to_list(x))
   let rows = list.sized_chunk(data, num_heads * head_dim)
   let heads =
-    list.range(0, num_heads - 1)
+    range_int(0, num_heads - 1)
     |> list.map(fn(h) {
       let head_data =
         rows
@@ -464,7 +464,7 @@ fn concat_heads(
     }),
   )
   let combined =
-    list.range(0, seq - 1)
+    range_int(0, seq - 1)
     |> list.flat_map(fn(s) {
       head_rows
       |> list.flat_map(fn(rows) {
@@ -587,4 +587,15 @@ pub fn transformer_forward(
 ) -> Result(Tensor, TensorError) {
   use memory <- result.try(transformer_encode(model, src))
   transformer_decode(model, tgt, memory)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

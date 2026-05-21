@@ -54,7 +54,7 @@ pub fn random_shape(rank: Int, min_dim: Int, max_dim: Int) -> List(Int) {
   case rank <= 0 {
     True -> []
     False ->
-      list.range(0, rank - 1)
+      range_int(0, rank - 1)
       |> list.map(fn(_) { int_in_range(min_dim, max_dim) })
   }
 }
@@ -76,7 +76,7 @@ pub fn random_tensor_in_range(
 ) -> Tensor {
   let n = shape_size(shape)
   let data =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.map(fn(_) { float_in_range(low, high) })
   Tensor(data, shape)
 }
@@ -104,5 +104,16 @@ fn loop(remaining: Int, body: fn() -> Bool) -> Bool {
         False -> False
         True -> loop(remaining - 1, body)
       }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

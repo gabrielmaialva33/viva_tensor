@@ -476,7 +476,7 @@ pub fn expert_distribution(
           // Importance: column sums.
           let prob_rows = list.sized_chunk(probs_data, num_experts)
           let importance_data =
-            list.range(0, num_experts - 1)
+            range_int(0, num_experts - 1)
             |> list.map(fn(i) {
               list.fold(prob_rows, 0.0, fn(acc, row) {
                 acc
@@ -519,4 +519,15 @@ fn increment_at(xs: List(Int), idx: Int) -> List(Int) {
       False -> v
     }
   })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

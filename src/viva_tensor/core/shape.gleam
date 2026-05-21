@@ -180,7 +180,7 @@ pub fn slice(
           let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
 
           let result_data =
-            list.range(0, new_size - 1)
+            range_int(0, new_size - 1)
             |> list.fold(Ok([]), fn(acc, flat_idx) {
               use values <- result.try(acc)
               let local_indices = flat_to_multi(flat_idx, lengths)
@@ -286,7 +286,7 @@ pub fn concat_axis(
                     list.fold(new_shape, 1, fn(acc, d) { acc * d })
 
                   let result_data =
-                    list.range(0, total_size - 1)
+                    range_int(0, total_size - 1)
                     |> list.fold(Ok([]), fn(acc, flat_idx) {
                       use values <- result.try(acc)
                       let indices = flat_to_multi(flat_idx, new_shape)
@@ -475,4 +475,15 @@ fn concat_axis_value(
   |> result.map_error(fn(_) {
     error.IndexOutOfBounds(local_flat, list.length(data))
   })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

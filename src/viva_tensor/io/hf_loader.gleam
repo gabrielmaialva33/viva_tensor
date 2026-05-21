@@ -521,11 +521,11 @@ pub fn load_transformer(
     False -> {
       let enc_indices = case num_enc_layers <= 0 {
         True -> []
-        False -> list.range(0, num_enc_layers - 1)
+        False -> range_int(0, num_enc_layers - 1)
       }
       let dec_indices = case num_dec_layers <= 0 {
         True -> []
-        False -> list.range(0, num_dec_layers - 1)
+        False -> range_int(0, num_dec_layers - 1)
       }
       use encoders <- result.try(
         list.try_map(enc_indices, fn(i) {
@@ -652,4 +652,15 @@ fn tensor_error_to_string(err: TensorError) -> String {
 
 fn shape_to_string(shape: List(Int)) -> String {
   "[" <> string.join(list.map(shape, int.to_string), ", ") <> "]"
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

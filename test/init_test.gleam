@@ -158,9 +158,9 @@ pub fn orthogonal_columns_orthonormal_test() {
   let assert Ok(qtq) = t.matmul(qt, q)
 
   let identity =
-    list.range(0, cols - 1)
+    range_int(0, cols - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, cols - 1)
+      range_int(0, cols - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -183,9 +183,9 @@ pub fn orthogonal_rows_orthonormal_test() {
   let assert Ok(qqt) = t.matmul(q, qt)
 
   let identity =
-    list.range(0, rows - 1)
+    range_int(0, rows - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, rows - 1)
+      range_int(0, rows - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -207,9 +207,9 @@ pub fn identity_test() {
   tensor.shape(id) |> should.equal([n, n])
 
   let expected =
-    list.range(0, n - 1)
+    range_int(0, n - 1)
     |> list.flat_map(fn(i) {
-      list.range(0, n - 1)
+      range_int(0, n - 1)
       |> list.map(fn(j) {
         case i == j {
           True -> 1.0
@@ -227,4 +227,15 @@ pub fn identity_test() {
 pub fn relu_gain_test() {
   let assert Ok(expected) = float.square_root(2.0)
   floats_close(init.relu_gain(), expected, 0.0, 1.0e-12) |> should.be_true
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

@@ -222,7 +222,7 @@ fn normalize_hadamard(values: List(Float)) -> List(Float) {
 
 fn nearest_code(value: Float, bits: Int, scale: Float) -> Int {
   let levels = int_pow2(bits)
-  list.range(0, levels - 1)
+  range_int(0, levels - 1)
   |> list.fold(#(0, 1.0e308), fn(best, code) {
     let decoded = decode_code(code, bits, scale)
     let distance = float.absolute_value(value -. decoded)
@@ -338,4 +338,15 @@ fn shape_to_string(shape: List(Int)) -> String {
     })
 
   "[" <> body <> "]"
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

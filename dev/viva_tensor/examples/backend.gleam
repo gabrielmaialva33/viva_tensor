@@ -242,7 +242,7 @@ fn print_backend_row(name: String, time: Float, ok: Bool) {
 }
 
 fn random_floats(n: Int) -> List(Float) {
-  list.range(0, n - 1)
+  range_int(0, n - 1)
   |> list.map(fn(_) { ffi.random_uniform() })
 }
 
@@ -282,3 +282,14 @@ fn repeat_string(s: String, n: Int) -> String {
 
 @external(erlang, "string", "length")
 fn string_length(s: String) -> Int
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

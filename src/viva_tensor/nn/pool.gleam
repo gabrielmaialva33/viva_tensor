@@ -242,12 +242,12 @@ fn pool_1d_forward(
               let arr = ffi.list_to_array(tensor.to_list(input))
               let kf = int.to_float(kernel_size)
               let out =
-                list.range(0, batch - 1)
+                range_int(0, batch - 1)
                 |> list.flat_map(fn(b) {
-                  list.range(0, channels - 1)
+                  range_int(0, channels - 1)
                   |> list.flat_map(fn(c) {
                     let base = b * channels * length + c * length
-                    list.range(0, out_length - 1)
+                    range_int(0, out_length - 1)
                     |> list.map(fn(o) {
                       let start = o * stride - padding
                       pool_1d_window(
@@ -392,15 +392,15 @@ pub fn adaptive_avg_pool_2d_forward(
           let out_h = config.output_h
           let out_w = config.output_w
           let out =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, channels - 1)
+              range_int(0, channels - 1)
               |> list.flat_map(fn(c) {
                 let base = b * channels * h_in * w_in + c * h_in * w_in
-                list.range(0, out_h - 1)
+                range_int(0, out_h - 1)
                 |> list.flat_map(fn(oh) {
                   let #(h_start, h_end) = adaptive_range(oh, h_in, out_h)
-                  list.range(0, out_w - 1)
+                  range_int(0, out_w - 1)
                   |> list.map(fn(ow) {
                     let #(w_start, w_end) = adaptive_range(ow, w_in, out_w)
                     let count = { h_end - h_start } * { w_end - w_start }
@@ -507,12 +507,12 @@ pub fn adaptive_avg_pool_1d_forward(
           let arr = ffi.list_to_array(tensor.to_list(input))
           let out_size = config.output_size
           let out =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, channels - 1)
+              range_int(0, channels - 1)
               |> list.flat_map(fn(c) {
                 let base = b * channels * length + c * length
-                list.range(0, out_size - 1)
+                range_int(0, out_size - 1)
                 |> list.map(fn(o) {
                   let #(start, end) = adaptive_range(o, length, out_size)
                   let count = end - start
@@ -642,15 +642,15 @@ fn upsample_nearest_compute(
   w_out: Int,
   scale: Int,
 ) -> List(Float) {
-  list.range(0, batch - 1)
+  range_int(0, batch - 1)
   |> list.flat_map(fn(b) {
-    list.range(0, channels - 1)
+    range_int(0, channels - 1)
     |> list.flat_map(fn(c) {
       let base = b * channels * h_in * w_in + c * h_in * w_in
-      list.range(0, h_out - 1)
+      range_int(0, h_out - 1)
       |> list.flat_map(fn(oh) {
         let ih = oh / scale
-        list.range(0, w_out - 1)
+        range_int(0, w_out - 1)
         |> list.map(fn(ow) {
           let iw = ow / scale
           ffi.array_get(arr, base + ih * w_in + iw)
@@ -671,17 +671,17 @@ fn upsample_bilinear_compute(
   scale: Int,
 ) -> List(Float) {
   let scale_f = int.to_float(scale)
-  list.range(0, batch - 1)
+  range_int(0, batch - 1)
   |> list.flat_map(fn(b) {
-    list.range(0, channels - 1)
+    range_int(0, channels - 1)
     |> list.flat_map(fn(c) {
       let base = b * channels * h_in * w_in + c * h_in * w_in
-      list.range(0, h_out - 1)
+      range_int(0, h_out - 1)
       |> list.flat_map(fn(oh) {
         // align_corners=False: src = (out + 0.5) / scale - 0.5
         let src_h = { int.to_float(oh) +. 0.5 } /. scale_f -. 0.5
         let #(h0, h1, dh) = interp_neighbors(src_h, h_in)
-        list.range(0, w_out - 1)
+        range_int(0, w_out - 1)
         |> list.map(fn(ow) {
           let src_w = { int.to_float(ow) +. 0.5 } /. scale_f -. 0.5
           let #(w0, w1, dw) = interp_neighbors(src_w, w_in)
@@ -732,5 +732,16 @@ fn join_strings(parts: List(String), sep: String) -> String {
     [] -> ""
     [s] -> s
     [s, ..rest] -> s <> sep <> join_strings(rest, sep)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

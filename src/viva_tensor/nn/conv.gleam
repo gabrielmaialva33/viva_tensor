@@ -200,12 +200,12 @@ fn pad_1d(
     False -> {
       let arr = ffi.list_to_array(data)
       let padded_length = length + 2 * padding
-      list.range(0, batch - 1)
+      range_int(0, batch - 1)
       |> list.flat_map(fn(b) {
-        list.range(0, channels - 1)
+        range_int(0, channels - 1)
         |> list.flat_map(fn(c) {
           let base = b * channels * length + c * length
-          list.range(0, padded_length - 1)
+          range_int(0, padded_length - 1)
           |> list.map(fn(i) {
             let src = i - padding
             case src >= 0 && src < length {
@@ -234,12 +234,12 @@ fn conv1d_compute(
   let in_arr = ffi.list_to_array(in_data)
   let w_arr = ffi.list_to_array(w_data)
   let bias_arr = ffi.list_to_array(bias_data)
-  list.range(0, batch - 1)
+  range_int(0, batch - 1)
   |> list.flat_map(fn(b) {
-    list.range(0, out_c - 1)
+    range_int(0, out_c - 1)
     |> list.flat_map(fn(oc) {
       let bias_v = ffi.array_get(bias_arr, oc)
-      list.range(0, out_length - 1)
+      range_int(0, out_length - 1)
       |> list.map(fn(o) {
         let start = o * stride
         let sum =
@@ -357,16 +357,16 @@ pub fn conv3d_forward(
           let w_arr = ffi.list_to_array(w_data)
           let bias_arr = ffi.list_to_array(bias_data)
           let out =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, config.out_channels - 1)
+              range_int(0, config.out_channels - 1)
               |> list.flat_map(fn(oc) {
                 let bias_v = ffi.array_get(bias_arr, oc)
-                list.range(0, out_d - 1)
+                range_int(0, out_d - 1)
                 |> list.flat_map(fn(od) {
-                  list.range(0, out_h - 1)
+                  range_int(0, out_h - 1)
                   |> list.flat_map(fn(oh) {
-                    list.range(0, out_w - 1)
+                    range_int(0, out_w - 1)
                     |> list.map(fn(ow) {
                       let sd_start = od * sd
                       let sh_start = oh * sh
@@ -459,17 +459,17 @@ fn pad_3d_internal(
       let padded_d = depth + 2 * pd
       let padded_h = height + 2 * ph
       let padded_w = width + 2 * pw
-      list.range(0, batch - 1)
+      range_int(0, batch - 1)
       |> list.flat_map(fn(b) {
-        list.range(0, channels - 1)
+        range_int(0, channels - 1)
         |> list.flat_map(fn(c) {
           let base =
             b * channels * depth * height * width + c * depth * height * width
-          list.range(0, padded_d - 1)
+          range_int(0, padded_d - 1)
           |> list.flat_map(fn(z) {
-            list.range(0, padded_h - 1)
+            range_int(0, padded_h - 1)
             |> list.flat_map(fn(y) {
-              list.range(0, padded_w - 1)
+              range_int(0, padded_w - 1)
               |> list.map(fn(x) {
                 let sz = z - pd
                 let sy = y - ph
@@ -608,14 +608,14 @@ pub fn conv_transpose_2d_forward(
             )
           let acc_arr = ffi.list_to_array(acc)
           let out =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, out_c - 1)
+              range_int(0, out_c - 1)
               |> list.flat_map(fn(oc) {
                 let bias_v = ffi.array_get(bias_arr, oc)
-                list.range(0, h_out - 1)
+                range_int(0, h_out - 1)
                 |> list.flat_map(fn(y) {
-                  list.range(0, w_out - 1)
+                  range_int(0, w_out - 1)
                   |> list.map(fn(x) {
                     let src_y = y + ph
                     let src_x = x + pw
@@ -674,13 +674,13 @@ fn scatter_transpose_2d(
   h_full: Int,
   w_full: Int,
 ) -> List(Float) {
-  list.range(0, batch - 1)
+  range_int(0, batch - 1)
   |> list.flat_map(fn(b) {
-    list.range(0, out_c - 1)
+    range_int(0, out_c - 1)
     |> list.flat_map(fn(oc) {
-      list.range(0, h_full - 1)
+      range_int(0, h_full - 1)
       |> list.flat_map(fn(y) {
-        list.range(0, w_full - 1)
+        range_int(0, w_full - 1)
         |> list.map(fn(x) {
           sum_over_range(0, in_c - 1, fn(ic) {
             // gather contributions from kernel positions
@@ -771,5 +771,16 @@ fn join_strings(parts: List(String), sep: String) -> String {
     [] -> ""
     [s] -> s
     [s, ..rest] -> s <> sep <> join_strings(rest, sep)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

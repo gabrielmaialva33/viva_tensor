@@ -107,7 +107,7 @@ fn run_gleam_only_benchmarks() {
 
     // Benchmark (average of 5)
     let times =
-      list.range(1, 5)
+      range_int(1, 5)
       |> list.map(fn(_) {
         let #(t, _) =
           timer_tc(fn() {
@@ -236,5 +236,16 @@ fn format_number(n: Int) -> String {
         True -> int.to_string(n / 1000) <> "K"
         False -> int.to_string(n)
       }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

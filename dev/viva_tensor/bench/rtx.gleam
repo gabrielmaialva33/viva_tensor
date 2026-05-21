@@ -143,7 +143,7 @@ fn run_matmul_case(label: String, n: Int, iterations: Int, f: fn() -> Nil) {
   f()
 
   let start = ffi.now_microseconds()
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) { f() })
   let stop = ffi.now_microseconds()
 
@@ -198,5 +198,16 @@ fn pad_left(value: String, width: Int) -> String {
   case size >= width {
     True -> value
     False -> string.repeat(" ", width - size) <> value
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

@@ -20,7 +20,7 @@ pub fn matmul_vec_values(
   rows: Int,
   cols: Int,
 ) -> List(Float) {
-  list.range(0, rows - 1)
+  range_int(0, rows - 1)
   |> list.map(fn(row_idx) {
     let start = row_idx * cols
     let row =
@@ -41,11 +41,11 @@ pub fn matmul_values(
   let a_array = ffi.list_to_array(a_data)
   let b_array = ffi.list_to_array(b_data)
 
-  list.range(0, rows - 1)
+  range_int(0, rows - 1)
   |> list.flat_map(fn(i) {
-    list.range(0, cols - 1)
+    range_int(0, cols - 1)
     |> list.map(fn(j) {
-      list.range(0, inner - 1)
+      range_int(0, inner - 1)
       |> list.fold(0.0, fn(acc, k) {
         let a_ik = ffi.array_get(a_array, i * inner + k)
         let b_kj = ffi.array_get(b_array, k * cols + j)
@@ -60,11 +60,11 @@ pub fn transpose_values(
   rows: Int,
   cols: Int,
 ) -> Result(List(Float), TensorError) {
-  list.range(0, cols - 1)
+  range_int(0, cols - 1)
   |> list.fold(Ok([]), fn(acc, col) {
     use values <- result.try(acc)
     use row_values <- result.try(
-      list.range(0, rows - 1)
+      range_int(0, rows - 1)
       |> list.fold(Ok([]), fn(row_acc, row) {
         use row_result <- result.try(row_acc)
         let index = row * cols + col
@@ -84,4 +84,15 @@ pub fn transpose_values(
 
 pub fn outer_values(a_data: List(Float), b_data: List(Float)) -> List(Float) {
   list.flat_map(a_data, fn(ai) { list.map(b_data, fn(bj) { ai *. bj }) })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

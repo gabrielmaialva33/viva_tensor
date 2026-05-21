@@ -481,7 +481,7 @@ pub fn benchmark_rtx4090() {
 
   list.each(batch_sizes, fn(n) {
     let tensors =
-      list.range(1, n)
+      range_int(1, n)
       |> list.map(fn(_) { tensor.random_uniform([512]) })
 
     let config = default_config()
@@ -616,3 +616,14 @@ fn collect_n(n: Int) -> List(#(Int, BlackwellTensor))
 
 @external(erlang, "erlang", "monotonic_time")
 fn erlang_monotonic_time() -> Int
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

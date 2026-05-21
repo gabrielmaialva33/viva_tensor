@@ -45,7 +45,7 @@ pub fn repr_2d_test() {
 
 pub fn repr_3d_test() {
   let data =
-    list.range(0, 23)
+    range_int(0, 23)
     |> list.map(int.to_float)
   let assert Ok(x) = t.reshape(t.from_list(data), [2, 3, 4])
   t.to_string(x)
@@ -61,7 +61,7 @@ pub fn repr_3d_test() {
 pub fn repr_1d_elision_test() {
   // 1500 elements > threshold(1000); shape suffix appears, elision applied.
   let data =
-    list.range(0, 1499)
+    range_int(0, 1499)
     |> list.map(int.to_float)
   let s = t.to_string(t.from_list(data))
   s
@@ -102,4 +102,15 @@ pub fn inspect_matches_to_string_test() {
   let x = t.from_list([1.0, 2.0, 3.0])
   t.inspect(x)
   |> should.equal(t.to_string(x))
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

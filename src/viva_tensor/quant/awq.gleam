@@ -387,7 +387,7 @@ pub fn benchmark_awq() {
 
   // Simulate calibration data: 100 samples x 256 features
   let calibration_data =
-    list.range(1, 100)
+    range_int(1, 100)
     |> list.map(fn(_) {
       tensor.random_uniform([256])
       |> tensor.to_list
@@ -515,3 +515,14 @@ fn float_to_string(f: Float) -> String {
 
 @external(erlang, "timer", "tc")
 fn timer_tc(f: fn() -> a) -> #(Int, a)
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

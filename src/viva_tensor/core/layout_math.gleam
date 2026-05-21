@@ -15,7 +15,7 @@ pub fn size(shape: List(Int)) -> Int {
 pub fn indices(size: Int) -> List(Int) {
   case size <= 0 {
     True -> []
-    False -> list.range(0, size - 1)
+    False -> range_int(0, size - 1)
   }
 }
 
@@ -111,4 +111,15 @@ pub fn broadcast_strides(
       False -> 0
     }
   })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

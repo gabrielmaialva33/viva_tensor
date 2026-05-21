@@ -171,7 +171,7 @@ pub fn try_eye(n: Int) -> Result(Tensor, TensorError) {
     True -> Error(InvalidShape("eye requires n > 0"))
     False -> {
       let data =
-        list.range(0, n * n - 1)
+        range_int(0, n * n - 1)
         |> list.map(fn(index) {
           case index / n == index % n {
             True -> 1.0
@@ -207,7 +207,7 @@ pub fn try_diag(t: Tensor) -> Result(Tensor, TensorError) {
         True -> Error(DimensionError("diag requires a non-empty tensor"))
         False -> {
           use matrix_data <- result.try(
-            list.range(0, n * n - 1)
+            range_int(0, n * n - 1)
             |> list.fold(Ok([]), fn(acc, index) {
               use values <- result.try(acc)
               let row = index / n
@@ -369,7 +369,7 @@ pub fn try_to_list(t: Tensor) -> Result(List(Float), TensorError) {
     StridedTensor(storage, shape, strides, offset) -> {
       let total_size = list.fold(shape, 1, fn(acc, dim) { acc * dim })
       let data =
-        list.range(0, total_size - 1)
+        range_int(0, total_size - 1)
         |> list.map(fn(flat_idx) {
           let indices = flat_to_multi(flat_idx, shape)
           let idx =
@@ -549,7 +549,7 @@ pub fn get_col(t: Tensor, col_idx: Int) -> Result(Tensor, TensorError) {
       case col_idx >= 0 && col_idx < num_cols {
         True -> {
           let col_data =
-            list.range(0, num_rows - 1)
+            range_int(0, num_rows - 1)
             |> list.filter_map(fn(row) { get2d(t, row, col_idx) })
           Ok(from_list(col_data))
         }
@@ -815,7 +815,7 @@ fn linear_relu_dense(
 ) -> Result(Tensor, TensorError) {
   use product <- result.try(matmul(a, b))
   let data =
-    list.range(0, m * n - 1)
+    range_int(0, m * n - 1)
     |> list.map(fn(i) {
       let value =
         get_element_or_zero(product, i) +. get_element_or_zero(bias, i % n)
@@ -885,7 +885,7 @@ fn indexed_elementwise(
   f: fn(Float, Float) -> Float,
 ) -> Result(Tensor, TensorError) {
   let data_result =
-    list.range(0, size(a) - 1)
+    range_int(0, size(a) - 1)
     |> list.fold(Ok([]), fn(acc, i) {
       use values <- result.try(acc)
       use x <- result.try(get_fast(a, i))
@@ -1937,7 +1937,7 @@ pub fn to_list2d(t: Tensor) -> Result(List(List(Float)), TensorError) {
     [num_rows, num_cols] -> {
       use data <- result.try(try_to_list(t))
       let rows_list =
-        list.range(0, num_rows - 1)
+        range_int(0, num_rows - 1)
         |> list.map(fn(i) {
           let start = i * num_cols
           data
@@ -2116,7 +2116,7 @@ pub fn concat_axis(
                   let _new_strides = compute_strides(new_shape)
 
                   let result =
-                    list.range(0, total_size - 1)
+                    range_int(0, total_size - 1)
                     |> list.fold(Ok([]), fn(acc, flat_idx) {
                       use values <- result.try(acc)
                       let indices = flat_to_multi(flat_idx, new_shape)
@@ -2413,12 +2413,12 @@ pub fn take(
           }
           let inner_size = axis_stride
           let out_data =
-            list.range(0, outer_count - 1)
+            range_int(0, outer_count - 1)
             |> list.flat_map(fn(outer) {
               normalized_indices
               |> list.flat_map(fn(idx) {
                 let base = outer * outer_stride + idx * axis_stride
-                list.range(0, inner_size - 1)
+                range_int(0, inner_size - 1)
                 |> list.map(fn(k) {
                   case list_at_float(data, base + k) {
                     Ok(v) -> v
@@ -2592,7 +2592,7 @@ pub fn slice(
               let new_size = list.fold(lengths, 1, fn(acc, d) { acc * d })
 
               let result =
-                list.range(0, new_size - 1)
+                range_int(0, new_size - 1)
                 |> list.fold(Ok([]), fn(acc, flat_idx) {
                   use values <- result.try(acc)
                   let local_indices = flat_to_multi(flat_idx, lengths)
@@ -2893,7 +2893,7 @@ pub fn clip(t: Tensor, min_val: Float, max_val: Float) -> Tensor {
 pub fn random_uniform(shape: List(Int)) -> Tensor {
   let size_val = list.fold(shape, 1, fn(acc, dim) { acc * dim })
   let data =
-    list.range(1, size_val)
+    range_int(1, size_val)
     |> list.map(fn(_) { ffi.random_uniform() })
   Tensor(data: data, shape: shape)
 }
@@ -2907,7 +2907,7 @@ pub fn random_normal(
 ) -> Tensor {
   let size_val = list.fold(shape, 1, fn(acc, dim) { acc * dim })
   let data =
-    list.range(1, size_val)
+    range_int(1, size_val)
     |> list.map(fn(_) {
       let u1 = float.max(ffi.random_uniform(), 0.0001)
       let u2 = ffi.random_uniform()
@@ -2927,7 +2927,7 @@ pub fn random_normal(
 pub fn xavier_init(fan_in: Int, fan_out: Int) -> Tensor {
   let limit = ffi.sqrt(6.0 /. int.to_float(fan_in + fan_out))
   let data =
-    list.range(1, fan_in * fan_out)
+    range_int(1, fan_in * fan_out)
     |> list.map(fn(_) {
       let r = ffi.random_uniform()
       r *. 2.0 *. limit -. limit
@@ -3925,9 +3925,9 @@ pub fn pad2d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
 
       // Build padded data row by row
       let padded =
-        list.range(0, new_h - 1)
+        range_int(0, new_h - 1)
         |> list.flat_map(fn(row) {
-          list.range(0, new_w - 1)
+          range_int(0, new_w - 1)
           |> list.map(fn(col) {
             let src_row = row - pad_h
             let src_col = col - pad_w
@@ -3964,15 +3964,15 @@ pub fn pad4d(t: Tensor, pad_h: Int, pad_w: Int) -> Result(Tensor, TensorError) {
 
       // Process each batch and channel
       let padded =
-        list.range(0, n - 1)
+        range_int(0, n - 1)
         |> list.flat_map(fn(batch) {
-          list.range(0, c - 1)
+          range_int(0, c - 1)
           |> list.flat_map(fn(channel) {
             let base_idx = batch * c * spatial_size + channel * spatial_size
 
-            list.range(0, new_h - 1)
+            range_int(0, new_h - 1)
             |> list.flat_map(fn(row) {
-              list.range(0, new_w - 1)
+              range_int(0, new_w - 1)
               |> list.map(fn(col) {
                 let src_row = row - pad_h
                 let src_col = col - pad_w
@@ -5230,14 +5230,14 @@ pub fn global_avg_pool2d(input: Tensor) -> Result(Tensor, TensorError) {
       let data = get_data(input)
 
       let output =
-        list.range(0, n - 1)
+        range_int(0, n - 1)
         |> list.flat_map(fn(batch) {
-          list.range(0, c - 1)
+          range_int(0, c - 1)
           |> list.map(fn(channel) {
             let base = batch * batch_size + channel * spatial_size
 
             // Average over entire spatial dimension
-            list.range(0, spatial_size - 1)
+            range_int(0, spatial_size - 1)
             |> list.fold(0.0, fn(sum, i) {
               case list_at_float(data, base + i) {
                 Ok(v) -> sum +. v
@@ -5403,7 +5403,7 @@ fn einsum_trace(a: Tensor) -> Result(Tensor, TensorError) {
     [n, m] if n == m -> {
       let data = to_list(a)
       let s =
-        list.range(0, n - 1)
+        range_int(0, n - 1)
         |> list.fold(0.0, fn(acc, i) {
           case einsum_nth(data, i * n + i) {
             Ok(v) -> acc +. v
@@ -5421,9 +5421,9 @@ fn einsum_sum_axis_0(a: Tensor) -> Result(Tensor, TensorError) {
     [rows, cols] -> {
       let data = to_list(a)
       let out =
-        list.range(0, cols - 1)
+        range_int(0, cols - 1)
         |> list.map(fn(j) {
-          list.range(0, rows - 1)
+          range_int(0, rows - 1)
           |> list.fold(0.0, fn(acc, i) {
             case einsum_nth(data, i * cols + j) {
               Ok(v) -> acc +. v
@@ -5442,9 +5442,9 @@ fn einsum_sum_axis_1(a: Tensor) -> Result(Tensor, TensorError) {
     [rows, cols] -> {
       let data = to_list(a)
       let out =
-        list.range(0, rows - 1)
+        range_int(0, rows - 1)
         |> list.map(fn(i) {
-          list.range(0, cols - 1)
+          range_int(0, cols - 1)
           |> list.fold(0.0, fn(acc, j) {
             case einsum_nth(data, i * cols + j) {
               Ok(v) -> acc +. v
@@ -5489,5 +5489,16 @@ fn einsum_nth_loop(items: List(Float), index: Int) -> Result(Float, Nil) {
     [], _ -> Error(Nil)
     [x, ..], 0 -> Ok(x)
     [_, ..rest], n -> einsum_nth_loop(rest, n - 1)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

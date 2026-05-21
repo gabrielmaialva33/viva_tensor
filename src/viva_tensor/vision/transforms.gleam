@@ -147,13 +147,13 @@ pub fn resize(
     False -> {
       let data = tensor.to_list(image)
       let out_data =
-        list.range(0, batch - 1)
+        range_int(0, batch - 1)
         |> list.flat_map(fn(b) {
-          list.range(0, c - 1)
+          range_int(0, c - 1)
           |> list.flat_map(fn(ch) {
-            list.range(0, new_h - 1)
+            range_int(0, new_h - 1)
             |> list.flat_map(fn(oh) {
-              list.range(0, new_w - 1)
+              range_int(0, new_w - 1)
               |> list.map(fn(ow) {
                 case mode {
                   Nearest ->
@@ -315,13 +315,13 @@ fn crop_region(
 ) -> Result(Tensor, TensorError) {
   let data = tensor.to_list(image)
   let out =
-    list.range(0, batch - 1)
+    range_int(0, batch - 1)
     |> list.flat_map(fn(b) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ch) {
-        list.range(0, target_h - 1)
+        range_int(0, target_h - 1)
         |> list.flat_map(fn(oh) {
-          list.range(0, target_w - 1)
+          range_int(0, target_w - 1)
           |> list.map(fn(ow) {
             sample_clamped(data, b, ch, top + oh, left + ow, c, h, w)
           })
@@ -346,13 +346,13 @@ pub fn horizontal_flip(image: Tensor) -> Result(Tensor, TensorError) {
   ))
   let data = tensor.to_list(image)
   let out =
-    list.range(0, batch - 1)
+    range_int(0, batch - 1)
     |> list.flat_map(fn(b) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ch) {
-        list.range(0, h - 1)
+        range_int(0, h - 1)
         |> list.flat_map(fn(row) {
-          list.range(0, w - 1)
+          range_int(0, w - 1)
           |> list.map(fn(col) {
             sample_clamped(data, b, ch, row, w - 1 - col, c, h, w)
           })
@@ -374,13 +374,13 @@ pub fn vertical_flip(image: Tensor) -> Result(Tensor, TensorError) {
   ))
   let data = tensor.to_list(image)
   let out =
-    list.range(0, batch - 1)
+    range_int(0, batch - 1)
     |> list.flat_map(fn(b) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ch) {
-        list.range(0, h - 1)
+        range_int(0, h - 1)
         |> list.flat_map(fn(row) {
-          list.range(0, w - 1)
+          range_int(0, w - 1)
           |> list.map(fn(col) {
             sample_clamped(data, b, ch, h - 1 - row, col, c, h, w)
           })
@@ -449,15 +449,15 @@ pub fn normalize(
         False -> {
           let data = tensor.to_list(image)
           let out =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, c - 1)
+              range_int(0, c - 1)
               |> list.flat_map(fn(ch) {
                 let m = list_get(mean, ch)
                 let s = list_get(std, ch)
-                list.range(0, h - 1)
+                range_int(0, h - 1)
                 |> list.flat_map(fn(row) {
-                  list.range(0, w - 1)
+                  range_int(0, w - 1)
                   |> list.map(fn(col) {
                     let v = sample_clamped(data, b, ch, row, col, c, h, w)
                     { v -. m } /. s
@@ -511,11 +511,11 @@ pub fn to_grayscale(
           let data = tensor.to_list(image)
           // Pre-compute luma per spatial position per image.
           let luma_data =
-            list.range(0, batch - 1)
+            range_int(0, batch - 1)
             |> list.flat_map(fn(b) {
-              list.range(0, h - 1)
+              range_int(0, h - 1)
               |> list.flat_map(fn(row) {
-                list.range(0, w - 1)
+                range_int(0, w - 1)
                 |> list.map(fn(col) {
                   let r = sample_clamped(data, b, 0, row, col, 3, h, w)
                   let g = sample_clamped(data, b, 1, row, col, 3, h, w)
@@ -535,7 +535,7 @@ pub fn to_grayscale(
               // luma plane 3 times before the next image's data.
               let plane_size = h * w
               let out =
-                list.range(0, batch - 1)
+                range_int(0, batch - 1)
                 |> list.flat_map(fn(b) {
                   let plane = slice_list(luma_data, b * plane_size, plane_size)
                   list.flatten([plane, plane, plane])
@@ -594,15 +594,15 @@ pub fn adjust_contrast(
   let n = h * w
   let n_f = int_to_float(n)
   let out =
-    list.range(0, batch - 1)
+    range_int(0, batch - 1)
     |> list.flat_map(fn(b) {
-      list.range(0, c - 1)
+      range_int(0, c - 1)
       |> list.flat_map(fn(ch) {
         // Per-channel, per-image mean.
         let plane =
-          list.range(0, h - 1)
+          range_int(0, h - 1)
           |> list.flat_map(fn(row) {
-            list.range(0, w - 1)
+            range_int(0, w - 1)
             |> list.map(fn(col) {
               sample_clamped(data, b, ch, row, col, c, h, w)
             })
@@ -660,11 +660,11 @@ pub fn to_tensor(
           // CHW index: ch * height * width + row * width + col
           let hwc = list.map(byte_image, int.to_float)
           let chw =
-            list.range(0, channels - 1)
+            range_int(0, channels - 1)
             |> list.flat_map(fn(ch) {
-              list.range(0, height - 1)
+              range_int(0, height - 1)
               |> list.flat_map(fn(row) {
-                list.range(0, width - 1)
+                range_int(0, width - 1)
                 |> list.map(fn(col) {
                   let idx = { row * width + col } * channels + ch
                   list_get(hwc, idx) /. 255.0
@@ -692,11 +692,11 @@ pub fn to_byte_image(image: Tensor) -> Result(List(Int), TensorError) {
     [c, h, w] -> {
       let data = tensor.to_list(image)
       let bytes =
-        list.range(0, h - 1)
+        range_int(0, h - 1)
         |> list.flat_map(fn(row) {
-          list.range(0, w - 1)
+          range_int(0, w - 1)
           |> list.flat_map(fn(col) {
-            list.range(0, c - 1)
+            range_int(0, c - 1)
             |> list.map(fn(ch) {
               let idx = ch * h * w + row * w + col
               let scaled = list_get(data, idx) *. 255.0
@@ -727,4 +727,15 @@ pub fn compose(
   image: Tensor,
 ) -> Result(Tensor, TensorError) {
   list.try_fold(transforms, image, fn(acc, f) { f(acc) })
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

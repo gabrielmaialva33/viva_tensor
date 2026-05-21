@@ -335,7 +335,7 @@ fn benchmark_sum(size: Int) {
 // ============================================================================
 
 fn random_floats(n: Int) -> List(Float) {
-  list.range(0, n - 1)
+  range_int(0, n - 1)
   |> list.map(fn(_) { ffi.random_uniform() })
 }
 
@@ -394,4 +394,15 @@ fn repeat_char(char: String, n: Int) -> String {
 
 fn now_microseconds() -> Int {
   ffi.now_microseconds()
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

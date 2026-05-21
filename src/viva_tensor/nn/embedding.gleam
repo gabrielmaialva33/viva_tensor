@@ -82,7 +82,7 @@ pub fn embedding_init_uniform(
   let data = case size <= 0 {
     True -> []
     False ->
-      list.range(1, size)
+      range_int(1, size)
       |> list.map(fn(_) {
         let r = ffi.random_uniform()
         r *. 2.0 *. limit -. limit
@@ -183,11 +183,11 @@ pub fn sinusoidal_encoding(
               let dim_f = int.to_float(embedding_dim)
               let positions = case max_len <= 0 {
                 True -> []
-                False -> list.range(0, max_len - 1)
+                False -> range_int(0, max_len - 1)
               }
               let pair_indices = case embedding_dim / 2 <= 0 {
                 True -> []
-                False -> list.range(0, embedding_dim / 2 - 1)
+                False -> range_int(0, embedding_dim / 2 - 1)
               }
               let data =
                 positions
@@ -262,7 +262,7 @@ pub fn learned_positional_forward(
           use weight_data <- result.try(tensor.try_to_list(layer.weight))
           let indices = case len {
             0 -> []
-            _ -> list.range(0, len - 1)
+            _ -> range_int(0, len - 1)
           }
           use rows <- result.try(gather_rows(
             weight_data,
@@ -320,7 +320,7 @@ pub fn rope(input: Tensor, base: Float) -> Result(Tensor, TensorError) {
               let dim_f = int.to_float(dim)
               let positions = case seq_len <= 0 {
                 True -> []
-                False -> list.range(0, seq_len - 1)
+                False -> range_int(0, seq_len - 1)
               }
               let rotated =
                 positions
@@ -440,5 +440,16 @@ fn pow_safe(base: Float, exponent: Float) -> Float {
   case float.power(base, exponent) {
     Ok(v) -> v
     Error(_) -> 1.0
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

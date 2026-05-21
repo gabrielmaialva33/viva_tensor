@@ -96,7 +96,7 @@ fn bench_matmul(n: Int, iterations: Int) {
   // Benchmark
   let start = ffi.now_microseconds()
 
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) {
     let assert Ok(_) = ffi.nt_matmul(a, b, n, n, n)
     Nil
@@ -129,7 +129,7 @@ fn bench_lns(size: Int, iterations: Int) {
   // Benchmark LNS mul
   let start = ffi.now_microseconds()
 
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) {
     let assert Ok(_) = ffi.lns_mul(lns_a, lns_b)
     Nil
@@ -157,11 +157,11 @@ fn bench_horde(entity_count: Int, iterations: Int) {
 
   // Set initial positions and velocities
   let positions =
-    list.range(0, entity_count - 1)
+    range_int(0, entity_count - 1)
     |> list.flat_map(fn(i) { [int.to_float(i), int.to_float(i)] })
 
   let velocities =
-    list.range(0, entity_count - 1)
+    range_int(0, entity_count - 1)
     |> list.flat_map(fn(_) { [1.0, 0.5] })
 
   let assert Ok(_) = ffi.horde_set_positions(horde, positions)
@@ -174,7 +174,7 @@ fn bench_horde(entity_count: Int, iterations: Int) {
   // Benchmark: integrate + dampen (one physics step)
   let start = ffi.now_microseconds()
 
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) {
     let assert Ok(_) = ffi.horde_integrate(horde, 0.01667)
     let assert Ok(_) = ffi.horde_dampen(horde, 0.99)
@@ -207,7 +207,7 @@ fn bench_hdc(dim: Int, iterations: Int) {
 
   // Benchmark XOR bind
   let start1 = ffi.now_microseconds()
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) {
     let assert Ok(_) = ffi.hdc_bind(vec_a, vec_b)
     Nil
@@ -217,7 +217,7 @@ fn bench_hdc(dim: Int, iterations: Int) {
 
   // Benchmark similarity
   let start2 = ffi.now_microseconds()
-  list.range(1, iterations)
+  range_int(1, iterations)
   |> list.each(fn(_) {
     let assert Ok(_) = ffi.hdc_similarity(vec_a, vec_b)
     Nil
@@ -282,4 +282,15 @@ fn float_to_string_2(f: Float) -> String {
     False -> int.to_string(frac)
   }
   int.to_string(whole) <> "." <> frac_str
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

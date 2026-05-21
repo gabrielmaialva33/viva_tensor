@@ -718,14 +718,14 @@ fn softmax_backward_data(
 ) -> List(Float) {
   let grad_arr = ffi.list_to_array(grad)
   let out_arr = ffi.list_to_array(out)
-  list.range(0, outer - 1)
+  range_int(0, outer - 1)
   |> list.flat_map(fn(o) {
     let outer_offset = o * axis_size * inner
     // Pre-compute per-(inner) sum_g_y across the axis dim.
     let sums =
-      list.range(0, inner - 1)
+      range_int(0, inner - 1)
       |> list.map(fn(inner_idx) {
-        list.range(0, axis_size - 1)
+        range_int(0, axis_size - 1)
         |> list.fold(0.0, fn(acc, k) {
           let idx = outer_offset + k * inner + inner_idx
           acc +. ffi.array_get(grad_arr, idx) *. ffi.array_get(out_arr, idx)
@@ -733,9 +733,9 @@ fn softmax_backward_data(
       })
     let sums_arr = ffi.list_to_array(sums)
     // Now emit per-position output in flat order [axis, inner].
-    list.range(0, axis_size - 1)
+    range_int(0, axis_size - 1)
     |> list.flat_map(fn(k) {
-      list.range(0, inner - 1)
+      range_int(0, inner - 1)
       |> list.map(fn(inner_idx) {
         let idx = outer_offset + k * inner + inner_idx
         let g = ffi.array_get(grad_arr, idx)
@@ -894,5 +894,16 @@ fn do_chunk_every(
       let rest = list.drop(items, n)
       do_chunk_every(rest, n, [chunk, ..acc])
     }
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

@@ -122,7 +122,7 @@ pub fn roi_align_identity_test() {
   // first half-bin and whose right/bottom edges clamp at the last pixel.
   // Expected values match a hand-traced TorchVision-style reference.
   let data =
-    list.range(0, 15)
+    range_int(0, 15)
     |> list.map(fn(i) { int.to_float(i) })
   let feat = t4(data, [1, 1, 4, 4])
   let assert Ok(rois) =
@@ -279,5 +279,16 @@ fn list_var(xs: List(Float), mean: Float) -> Float {
         acc +. d *. d
       })
       /. int.to_float(n)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

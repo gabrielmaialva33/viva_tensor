@@ -250,7 +250,7 @@ fn split_along_axis(
           #(channel, value)
         })
       let filled =
-        list.range(0, c - 1)
+        range_int(0, c - 1)
         |> list.map(fn(ch) {
           indexed
           |> list.filter(fn(pair) { pair.0 == ch })
@@ -397,7 +397,7 @@ fn broadcast_per_element(
           let scale_arr = scales
           let zp_arr = zps
           let result =
-            list.range(0, total - 1)
+            range_int(0, total - 1)
             |> list.map(fn(idx) {
               let channel = idx / inner % c
               let s = nth(scale_arr, channel, 1.0)
@@ -579,4 +579,15 @@ pub fn qat_linear_calibrate(
 ) -> Result(QatLinear, TensorError) {
   use stats <- result.try(observe(input, layer.input_config))
   Ok(QatLinear(..layer, input_stats: Some(stats)))
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

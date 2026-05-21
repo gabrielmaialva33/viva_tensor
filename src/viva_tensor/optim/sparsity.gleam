@@ -213,7 +213,7 @@ fn prune_group_by_importance(
   importance: List(Float),
 ) -> Sparse24Block {
   let indexed =
-    list.zip(list.range(0, 3), list.zip(weights, importance))
+    list.zip(range_int(0, 3), list.zip(weights, importance))
     |> list.map(fn(x) {
       let #(idx, #(w, i)) = x
       #(idx, w, i)
@@ -249,7 +249,7 @@ pub fn decompress(sparse: Sparse24Tensor) -> Tensor {
       let #(p1, p2) = block.positions
 
       // Reconstruct the 4-element group with zeros in pruned positions
-      list.range(0, 3)
+      range_int(0, 3)
       |> list.map(fn(i) {
         case i == p1 {
           True -> v1
@@ -335,7 +335,7 @@ fn transpose_matrix(m: List(List(Float))) -> List(List(Float)) {
     [] -> []
     [first, ..] -> {
       let n_cols = list.length(first)
-      list.range(0, n_cols - 1)
+      range_int(0, n_cols - 1)
       |> list.map(fn(col_idx) {
         list.filter_map(m, fn(row) {
           case list.drop(row, col_idx) {
@@ -576,3 +576,14 @@ fn get_tensor_shape(t: Tensor) -> List(Int) {
 
 @external(erlang, "timer", "tc")
 fn timer_tc(f: fn() -> a) -> #(Int, a)
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

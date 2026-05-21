@@ -300,7 +300,7 @@ fn general_kernel(
     })
 
   let out_combos =
-    cartesian(list.map(out_shape, fn(d) { list.range(0, d - 1) }))
+    cartesian(list.map(out_shape, fn(d) { range_int(0, d - 1) }))
 
   let sum_dims =
     list.map(summed, fn(label) {
@@ -309,7 +309,7 @@ fn general_kernel(
         Error(_) -> 0
       }
     })
-  let sum_combos = cartesian(list.map(sum_dims, fn(d) { list.range(0, d - 1) }))
+  let sum_combos = cartesian(list.map(sum_dims, fn(d) { range_int(0, d - 1) }))
 
   let lhs_data = list.zip(lhs, operands)
 
@@ -419,5 +419,16 @@ fn nth_loop(items: List(Float), index: Int) -> Result(Float, Nil) {
     [], _ -> Error(Nil)
     [x, ..], 0 -> Ok(x)
     [_, ..rest], n -> nth_loop(rest, n - 1)
+  }
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
   }
 }

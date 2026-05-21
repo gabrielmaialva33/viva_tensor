@@ -72,7 +72,7 @@ fn numerical_gradient(
   case values == [] {
     True -> []
     False ->
-      list.range(0, list.length(values) - 1)
+      range_int(0, list.length(values) - 1)
       |> list.map(fn(index) {
         finite_difference(values, shape, index, epsilon, loss)
       })
@@ -392,4 +392,15 @@ fn broadcast_chain_loss(
 fn matmul_mean_loss(a: tensor.Tensor, b: tensor.Tensor) -> Float {
   let assert Ok(product) = ops.matmul_auto(a, b)
   ops.mean(product)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }

@@ -176,7 +176,7 @@ pub fn benchmark_pool() {
   // Test 1: Parallel Map
   io.println("━━━ TEST 1: Parallel Map (Scale 1000 tensors x 512d) ━━━")
   let tensors =
-    list.range(1, 1000)
+    range_int(1, 1000)
     |> list.map(fn(_) { tensor.random_uniform([512]) })
 
   let #(seq_time, _) =
@@ -193,7 +193,7 @@ pub fn benchmark_pool() {
   io.println("\n━━━ TEST 2: Similarity Search (10K docs x 512d) ━━━")
   let query = tensor.random_uniform([512])
   let docs =
-    list.range(1, 10_000)
+    range_int(1, 10_000)
     |> list.map(fn(_) { tensor.random_uniform([512]) })
 
   let #(search_time, results) =
@@ -305,3 +305,14 @@ fn collect_n_floats(n: Int) -> List(Float)
 
 @external(erlang, "timer", "tc")
 fn timer_tc(f: fn() -> a) -> #(Int, a)
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
+}

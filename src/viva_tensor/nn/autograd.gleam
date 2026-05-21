@@ -988,7 +988,9 @@ pub fn backward(
   // Process nodes in reverse creation order.
   // Since IDs are sequential, this IS topological order.
   // No need for Kahn's algorithm or DFS - the tape gives it to us free.
-  let all_ids = list.range(tape.next_id - 1, 0)
+  let all_ids =
+    range_int(0, tape.next_id - 1)
+    |> list.reverse
 
   use final_grads <- result.try(
     list.fold(all_ids, Ok(initial_grads), fn(grads_result, current_id) {
@@ -1163,7 +1165,7 @@ fn compute_strides(shape: List(Int)) -> List(Int) {
 fn indices(size: Int) -> List(Int) {
   case size <= 0 {
     True -> []
-    False -> list.range(0, size - 1)
+    False -> range_int(0, size - 1)
   }
 }
 
@@ -1172,4 +1174,15 @@ fn value_at(values: List(Float), index: Int) -> Float {
   |> list.drop(index)
   |> list.first
   |> result.unwrap(0.0)
+}
+
+fn range_int(from: Int, to: Int) -> List(Int) {
+  range_loop(from, to, [])
+}
+
+fn range_loop(from: Int, to: Int, acc: List(Int)) -> List(Int) {
+  case from > to {
+    True -> list.reverse(acc)
+    False -> range_loop(from + 1, to, [from, ..acc])
+  }
 }
