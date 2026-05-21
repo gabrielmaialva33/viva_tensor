@@ -13,7 +13,9 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/precision as vm_precision
+import viva_math/statistics as vm_stats
+import viva_math/vecn
 import viva_tensor/core/einsum as einsum_kernel
 import viva_tensor/core/error.{
   AxisOutOfBounds, BroadcastError, DimensionError, IndexOutOfBounds,
@@ -111,10 +113,7 @@ pub fn try_linspace(
     n if n <= 0 -> Error(InvalidShape("linspace requires steps > 0"))
     1 -> Ok(from_list([start]))
     _ -> {
-      case maths.linear_space(start, stop, steps, True) {
-        Ok(data) -> Ok(from_list(data))
-        Error(_) -> Error(InvalidShape("linspace requires steps > 0"))
-      }
+      Ok(from_list(vm_stats.linear_space(start, stop, steps, True)))
     }
   }
 }
@@ -135,11 +134,7 @@ pub fn try_logspace(
   case steps <= 0 || base <=. 0.0 {
     True -> Error(InvalidShape("logspace requires steps > 0 and base > 0"))
     False -> {
-      case maths.logarithmic_space(start, stop, steps, True, base) {
-        Ok(data) -> Ok(from_list(data))
-        Error(_) ->
-          Error(InvalidShape("logspace requires steps > 0 and base > 0"))
-      }
+      Ok(from_list(vm_stats.logarithmic_space(start, stop, steps, True, base)))
     }
   }
 }
@@ -986,7 +981,7 @@ pub fn product(t: Tensor) -> Float {
 /// Cumulative sum over the flattened tensor, preserving the original shape.
 pub fn try_cumsum(t: Tensor) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
-  Ok(Tensor(data: maths.cumulative_sum(data), shape: shape(t)))
+  Ok(Tensor(data: vm_stats.cumulative_sum(data), shape: shape(t)))
 }
 
 /// Cumulative sum over the flattened tensor, preserving the original shape.
@@ -998,7 +993,7 @@ pub fn cumsum(t: Tensor) -> Tensor {
 /// Cumulative product over the flattened tensor, preserving the original shape.
 pub fn try_cumprod(t: Tensor) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
-  Ok(Tensor(data: maths.cumulative_product(data), shape: shape(t)))
+  Ok(Tensor(data: vm_stats.cumulative_product(data), shape: shape(t)))
 }
 
 /// Cumulative product over the flattened tensor, preserving the original shape.
@@ -1012,7 +1007,7 @@ pub fn try_cumsum_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  cumulative_axis("cumsum", t, axis_idx, maths.cumulative_sum)
+  cumulative_axis("cumsum", t, axis_idx, vm_stats.cumulative_sum)
 }
 
 /// Cumulative sum along one axis, preserving the original shape.
@@ -1025,7 +1020,7 @@ pub fn try_cumprod_axis(
   t: Tensor,
   axis_idx: Int,
 ) -> Result(Tensor, TensorError) {
-  cumulative_axis("cumprod", t, axis_idx, maths.cumulative_product)
+  cumulative_axis("cumprod", t, axis_idx, vm_stats.cumulative_product)
 }
 
 /// Cumulative product along one axis, preserving the original shape.
@@ -1052,7 +1047,7 @@ pub fn mean(t: Tensor) -> Float {
 /// Median value, preserving empty-tensor and materialization errors.
 pub fn try_median(t: Tensor) -> Result(Float, TensorError) {
   use data <- result.try(try_to_list(t))
-  case maths.median(data) {
+  case vm_stats.median(data) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("Cannot compute median of an empty tensor"))
@@ -1074,7 +1069,7 @@ pub fn try_percentile(
     True -> Error(InvalidShape("percentile must be between 0 and 100"))
     False -> {
       use data <- result.try(try_to_list(t))
-      case maths.percentile(data, percentile) {
+      case vm_stats.percentile(data, int.to_float(percentile) /. 100.0) {
         Ok(value) -> Ok(value)
         Error(_) ->
           Error(DimensionError("Cannot compute percentile of an empty tensor"))
@@ -1091,7 +1086,7 @@ pub fn percentile(t: Tensor, percentile: Int) -> Float {
 
 fn variance_dense(t: Tensor) -> Result(Float, TensorError) {
   use data <- result.try(try_to_list(t))
-  case maths.variance(data, 0) {
+  case vm_stats.variance(data) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("Cannot compute variance of an empty tensor"))
@@ -2651,7 +2646,7 @@ pub fn normalize(t: Tensor) -> Tensor {
 
 /// Compare two scalars with relative and absolute tolerances.
 pub fn is_close(a: Float, b: Float, rtol: Float, atol: Float) -> Bool {
-  maths.is_close(a, b, rtol, atol)
+  vm_precision.is_close(a, b, rtol, atol)
 }
 
 /// Compare two tensors element-wise and return whether all pairs are close.
@@ -2667,9 +2662,7 @@ pub fn all_close(
       use a_data <- result.try(try_to_list(a))
       use b_data <- result.try(try_to_list(b))
 
-      maths.all_close(list.zip(a_data, b_data), rtol, atol)
-      |> list.all(fn(close) { close })
-      |> Ok
+      Ok(vm_precision.all_close(list.zip(a_data, b_data), rtol, atol))
     }
   }
 }
@@ -2679,8 +2672,8 @@ pub fn try_euclidean_distance(
   a: Tensor,
   b: Tensor,
 ) -> Result(Float, TensorError) {
-  use pairs <- result.try(paired_tensor_data(a, b, "euclidean_distance"))
-  case maths.euclidean_distance(pairs) {
+  use #(xs, ys) <- result.try(paired_unzipped_data(a, b, "euclidean_distance"))
+  case vecn.euclidean_distance(xs, ys) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("euclidean_distance requires non-empty tensors"))
@@ -2698,8 +2691,8 @@ pub fn try_manhattan_distance(
   a: Tensor,
   b: Tensor,
 ) -> Result(Float, TensorError) {
-  use pairs <- result.try(paired_tensor_data(a, b, "manhattan_distance"))
-  case maths.manhattan_distance(pairs) {
+  use #(xs, ys) <- result.try(paired_unzipped_data(a, b, "manhattan_distance"))
+  case vecn.manhattan_distance(xs, ys) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("manhattan_distance requires non-empty tensors"))
@@ -2717,18 +2710,19 @@ pub fn try_cosine_similarity(
   a: Tensor,
   b: Tensor,
 ) -> Result(Float, TensorError) {
-  use pairs <- result.try(paired_tensor_data(a, b, "cosine_similarity"))
+  use #(xs, ys) <- result.try(paired_unzipped_data(a, b, "cosine_similarity"))
   use a_norm <- result.try(try_norm(a))
   use b_norm <- result.try(try_norm(b))
 
   case a_norm <=. 0.0 || b_norm <=. 0.0 {
     True -> Error(DimensionError("cosine_similarity requires non-zero tensors"))
-    False ->
-      case maths.cosine_similarity(pairs) {
+    False -> {
+      case vecn.cosine_similarity(xs, ys) {
         Ok(value) -> Ok(value)
         Error(_) ->
           Error(DimensionError("cosine_similarity requires non-empty tensors"))
       }
+    }
   }
 }
 
@@ -2768,10 +2762,28 @@ fn paired_tensor_data(
   }
 }
 
+fn paired_unzipped_data(
+  a: Tensor,
+  b: Tensor,
+  operation: String,
+) -> Result(#(List(Float), List(Float)), TensorError) {
+  case a.shape == b.shape {
+    False -> Error(ShapeMismatch(a.shape, b.shape))
+    True -> {
+      use a_data <- result.try(try_to_list(a))
+      use b_data <- result.try(try_to_list(b))
+      case a_data {
+        [] -> Error(DimensionError(operation <> " requires non-empty tensors"))
+        _ -> Ok(#(a_data, b_data))
+      }
+    }
+  }
+}
+
 /// Z-score standardization over all elements, preserving shape.
 pub fn try_zscore(t: Tensor) -> Result(Tensor, TensorError) {
   use data <- result.try(try_to_list(t))
-  case maths.zscore(data, 0) {
+  case vm_stats.z_score(data) {
     Ok(values) -> Ok(Tensor(data: values, shape: shape(t)))
     Error(_) ->
       Error(DimensionError("zscore requires non-empty non-constant tensor"))

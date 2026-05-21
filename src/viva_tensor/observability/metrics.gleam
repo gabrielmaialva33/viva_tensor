@@ -11,7 +11,9 @@ import gleam/io
 import gleam/list
 import gleam/result
 import gleam/string
-import gleam_community/maths
+import viva_math/scalar as vm_scalar
+import viva_math/statistics as vm_stats
+import viva_math/vecn
 import viva_tensor/core/error.{DimensionError, InvalidShape, ShapeMismatch}
 import viva_tensor/tensor.{type Tensor, Tensor}
 
@@ -128,7 +130,7 @@ pub fn try_cosine_similarity(
   use pair <- result.try(metric_data(original, quantized))
   let #(orig, quant) = pair
 
-  case maths.cosine_similarity(list.zip(orig, quant)) {
+  case vecn.cosine_similarity(orig, quant) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(DimensionError("Cosine similarity requires non-zero norm tensors"))
@@ -228,7 +230,7 @@ pub fn try_error_percentile(
     list.map2(orig, quant, fn(o, q) { float.absolute_value(o -. q) })
     |> list.sort(float.compare)
 
-  case maths.percentile(errors, float.round(percentile)) {
+  case vm_stats.percentile(errors, percentile /. 100.0) {
     Ok(value) -> Ok(value)
     Error(_) ->
       Error(InvalidShape("Cannot compute percentile for empty tensors"))
@@ -523,7 +525,7 @@ fn metric_data(
 }
 
 fn mean(values: List(Float)) -> Result(Float, tensor.TensorError) {
-  case maths.mean(values) {
+  case vm_stats.mean(values) {
     Ok(value) -> Ok(value)
     Error(_) -> Error(InvalidShape("Cannot compute mean of an empty list"))
   }
@@ -556,7 +558,7 @@ fn get_tensor_shape(t: Tensor) -> List(Int) {
 }
 
 fn log10(x: Float) -> Float {
-  maths.logarithm_10(x)
+  vm_scalar.logarithm_10(x)
   |> result.unwrap(0.0)
 }
 
