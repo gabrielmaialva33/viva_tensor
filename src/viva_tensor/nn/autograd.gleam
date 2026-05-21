@@ -53,7 +53,7 @@ import gleam/int
 import gleam/list
 import gleam/result
 import gleam/string
-import gleam_community/maths
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/ffi
 import viva_tensor/core/ops
@@ -429,7 +429,7 @@ pub fn traced_tanh(
   tape: Tape,
   x: Variable,
 ) -> Result(Traced(Variable), TensorError) {
-  let res_data = ops.map(x.data, maths.tanh)
+  let res_data = ops.map(x.data, vm_scalar.tanh)
   let res_id = tape.next_id
   let saved_y = res_data
 
@@ -846,7 +846,7 @@ fn sigmoid_scalar(x: Float) -> Float {
 /// Exact GELU: `0.5 * x * (1 + erf(x / sqrt(2)))`.
 fn gelu_scalar(x: Float) -> Float {
   let inv_sqrt2 = 0.7071067811865475
-  0.5 *. x *. { 1.0 +. maths.erf(x *. inv_sqrt2) }
+  0.5 *. x *. { 1.0 +. vm_scalar.erf(x *. inv_sqrt2) }
 }
 
 /// d/dx of exact GELU: `0.5 * (1 + erf(x / sqrt(2))) + x * phi(x)` where
@@ -854,7 +854,7 @@ fn gelu_scalar(x: Float) -> Float {
 fn gelu_derivative_scalar(x: Float) -> Float {
   let inv_sqrt2 = 0.7071067811865475
   let inv_sqrt_2pi = 0.3989422804014327
-  let cdf_part = 0.5 *. { 1.0 +. maths.erf(x *. inv_sqrt2) }
+  let cdf_part = 0.5 *. { 1.0 +. vm_scalar.erf(x *. inv_sqrt2) }
   let pdf_part = inv_sqrt_2pi *. float.exponential(0.0 -. x *. x /. 2.0)
   cdf_part +. x *. pdf_part
 }

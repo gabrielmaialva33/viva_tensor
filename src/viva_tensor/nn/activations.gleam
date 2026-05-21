@@ -17,7 +17,6 @@
 import gleam/float
 import gleam/list
 import gleam/result
-import gleam_community/maths
 import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{type TensorError, DimensionError}
 import viva_tensor/core/layout_math
@@ -62,7 +61,7 @@ fn sigmoid_scalar(x: Float) -> Float {
 
 /// Hyperbolic tangent activation: `tanh(x)`.
 ///
-/// Output range: `(-1, 1)`. Delegates to `gleam_community/maths.tanh`,
+/// Output range: `(-1, 1)`. Delegates to `viva_math/scalar.tanh`,
 /// which is numerically stable across the entire float range.
 ///
 /// ## Example
@@ -73,7 +72,7 @@ fn sigmoid_scalar(x: Float) -> Float {
 /// // -> Tensor([0.0], [1])
 /// ```
 pub fn tanh(t: Tensor) -> Tensor {
-  tensor.map(t, maths.tanh)
+  tensor.map(t, vm_scalar.tanh)
 }
 
 /// Rectified Linear Unit: `max(0, x)`.
@@ -217,20 +216,6 @@ pub fn mish(t: Tensor) -> Tensor {
 pub fn softplus(t: Tensor) -> Tensor {
   // Delegate scalar form to viva_math/scalar.softplus.
   tensor.map(t, vm_scalar.softplus)
-}
-
-/// `log(1 + x)` computed in a numerically stable way for small `x`.
-fn log1p(x: Float) -> Float {
-  let one_plus_x = 1.0 +. x
-  case one_plus_x == 1.0 {
-    True -> x
-    False -> {
-      case float.logarithm(one_plus_x) {
-        Ok(l) -> l *. x /. { one_plus_x -. 1.0 }
-        Error(_) -> 0.0
-      }
-    }
-  }
 }
 
 // --- Axis-wise activations --------------------------------------------------

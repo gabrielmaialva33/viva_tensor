@@ -23,7 +23,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{
   type TensorError, DimensionError, InvalidShape, OperandShapeMismatch,
   RankMismatch, ShapeMismatch,
@@ -110,7 +110,7 @@ pub fn gelu_backward(
   ensure_same_shape("gelu_backward", grad_out, input)
   |> result.try(fn(_) {
     elementwise2(grad_out, input, fn(g, x) {
-      let phi_part = 1.0 +. maths.erf(x *. inv_sqrt2)
+      let phi_part = 1.0 +. vm_scalar.erf(x *. inv_sqrt2)
       let pdf_part = x *. sqrt_2_over_pi *. float.exponential(-0.5 *. x *. x)
       g *. 0.5 *. { phi_part +. pdf_part }
     })

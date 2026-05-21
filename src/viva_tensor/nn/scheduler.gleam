@@ -22,7 +22,8 @@
 
 import gleam/float
 import gleam/int
-import gleam_community/maths
+import viva_math/constants as vm_constants
+import viva_math/scalar as vm_scalar
 import viva_tensor/nn/optim
 
 /// Identifies which schedule a `Scheduler` is implementing.
@@ -228,7 +229,7 @@ fn cosine_value(s: Scheduler) -> Float {
     0 -> 0.0
     t -> int.to_float(s.step_count) /. int.to_float(t)
   }
-  let cos_term = maths.cos(maths.pi() *. progress)
+  let cos_term = vm_scalar.cos(vm_constants.pi *. progress)
   s.eta_min +. 0.5 *. { s.base_lr -. s.eta_min } *. { 1.0 +. cos_term }
 }
 
@@ -261,7 +262,7 @@ fn one_cycle_value(s: Scheduler) -> Float {
         True -> { step_f -. warmup_end_f } /. denom
         False -> 1.0
       }
-      let cos_term = maths.cos(maths.pi() *. progress)
+      let cos_term = vm_scalar.cos(vm_constants.pi *. progress)
       s.base_lr +. 0.5 *. { s.max_lr -. s.base_lr } *. { 1.0 +. cos_term }
     }
   }

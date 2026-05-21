@@ -17,7 +17,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{
   type TensorError, DimensionError, IndexOutOfBounds, InvalidShape,
 } as tensor_error
@@ -199,7 +199,7 @@ pub fn sinusoidal_encoding(
                     let exponent = two_i /. dim_f
                     let denom = pow_safe(10_000.0, exponent)
                     let angle = pos_f /. denom
-                    [maths.sin(angle), maths.cos(angle)]
+                    [vm_scalar.sin(angle), vm_scalar.cos(angle)]
                   })
                 })
               Ok(Tensor(data: data, shape: [max_len, embedding_dim]))
@@ -421,8 +421,8 @@ fn rotate_row_loop(
       let two_i = int.to_float(2 * pair_idx)
       let theta = 1.0 /. pow_safe(base, two_i /. dim_f)
       let angle = pos_f *. theta
-      let c = maths.cos(angle)
-      let s = maths.sin(angle)
+      let c = vm_scalar.cos(angle)
+      let s = vm_scalar.sin(angle)
       let x_new = x *. c -. y *. s
       let y_new = x *. s +. y *. c
       rotate_row_loop(rest, pos_f, dim_f, pair_idx + 1, num_pairs, base, [

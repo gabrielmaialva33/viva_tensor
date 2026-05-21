@@ -26,7 +26,8 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/result
-import gleam_community/maths
+import viva_math/constants as vm_constants
+import viva_math/scalar as vm_scalar
 import viva_tensor/core/error.{type TensorError}
 import viva_tensor/core/linalg
 import viva_tensor/tensor.{type Tensor, Tensor}
@@ -63,7 +64,7 @@ fn sample_standard_normal() -> Float {
   let u1 = float.max(sample_unit(), 1.0e-12)
   let u2 = sample_unit()
   let assert Ok(r) = float.square_root(-2.0 *. log_unsafe(u1))
-  r *. maths.cos(2.0 *. maths.pi() *. u2)
+  r *. vm_scalar.cos(2.0 *. vm_constants.pi *. u2)
 }
 
 /// `log` that crashes on non-positive input. Only called from
