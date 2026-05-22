@@ -169,7 +169,7 @@ using Gemm_FP8_F32_out_f32_Default = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 extern "C" {
 
-static cudaStream_t g_fp8_dequant_stream = 0;
+static thread_local cudaStream_t g_fp8_dequant_stream = 0;
 
 void cuda_fp8_dequant_set_stream(void *stream) {
     g_fp8_dequant_stream = (cudaStream_t)stream;

@@ -5,7 +5,7 @@
 
 extern "C" {
 
-static cudaStream_t g_vt_block_stream = 0;
+static thread_local cudaStream_t g_vt_block_stream = 0;
 
 void vt_block_set_stream(void *stream) {
   g_vt_block_stream = (cudaStream_t)stream;
