@@ -146,6 +146,10 @@ pub fn build(b: *std.Build) void {
             .file = b.path("nif_linear_int_sparse.c"),
             .flags = &.{"-std=c11"},
         });
+        lib.root_module.addCSourceFile(.{
+            .file = b.path("viva_marlin_pack.c"),
+            .flags = &.{},
+        });
     }
 
     // Quantization NIFs (INT8 + NF4 fused matmul)
