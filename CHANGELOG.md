@@ -73,7 +73,7 @@ All notable changes to this project will be documented in this file.
   that aborted decodes after only partial token output. The honest 1.5×
   is limited by single-GPU saturation with 16 concurrent streams; true
   4-8× gains require batched-M decode (single CUDA call for M prompts),
-  which is roadmap for v2.3.0.
+  which is roadmap for v2.2.106.
 
 ### Validated
 
