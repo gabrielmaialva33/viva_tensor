@@ -105,43 +105,62 @@ generate(Handle, Prompt0, GenOpts0) when
     end.
 
 generate_batch(Handle, Prompts, GenOpts0) when is_list(Prompts) ->
-    %% Shared-state batched decode: a single BlockState (and thus a single
-    %% cuBLASLt plan cache, scratch arena and CUDA Graph capture) is reused
-    %% across all prompts. Drops per-prompt setup overhead vs the previous
-    %% spawn_monitor-per-prompt model. Prompts execute sequentially on the
-    %% GPU device (already the case in practice — the device serialises
-    %% concurrent forward_decode_step calls under ErlNifMutex), but no
-    %% longer pay the BlockState + graph capture cost N times.
     try
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         GenOpts = generation_options(GenOpts0),
-        with_block_state(fun(BlockState) ->
-            lists:map(
-                fun(Prompt0) ->
-                    try
-                        Prompt = to_binary(Prompt0),
-                        case maps:get(temperature, GenOpts) of
-                            Temp when Temp =< 0.0 ->
-                                generate_argmax_with_state(
-                                    Handle, Prompt, GenOpts, BlockState
-                                );
-                            _ ->
+        case maps:get(temperature, GenOpts) of
+            Temp when Temp =< 0.0 ->
+                generate_batch_native(Handle, Prompts, GenOpts);
+            _ ->
+                with_block_state(fun(BlockState) ->
+                    lists:map(
+                        fun(Prompt0) ->
+                            try
+                                Prompt = to_binary(Prompt0),
                                 generate_sampling_with_state(
                                     Handle, Prompt, GenOpts, BlockState
                                 )
-                        end
-                    catch
-                        Class:Reason:Stack ->
-                            {error, {Class, Reason, Stack}}
-                    end
-                end,
-                Prompts
-            )
-        end)
+                            catch
+                                Class:Reason:Stack ->
+                                    {error, {Class, Reason, Stack}}
+                            end
+                        end,
+                        Prompts
+                    )
+                end)
+        end
     catch
         Class:Reason:Stack ->
             [{error, {Class, Reason, Stack}} || _ <- Prompts]
     end.
+
+generate_batch_native(_Handle, [], _GenOpts) ->
+    [];
+generate_batch_native(Handle, Prompts, GenOpts) ->
+    with_block_state(fun(BlockState) ->
+        Prepared = [
+            prepare_batch_prompt(BlockState, Handle, Prompt0, GenOpts, Idx)
+         || {Idx, Prompt0} <- lists:zip(lists:seq(1, length(Prompts)), Prompts)
+        ],
+        Errors = maps:from_list([
+            {Idx, Error}
+         || {error, Idx, Error} <- Prepared
+        ]),
+        States0 = [State || {ok, State} <- Prepared],
+        TGen = us(),
+        States = batch_decode_loop(BlockState, Handle, GenOpts, States0),
+        ResultMap = maps:from_list([
+            {Idx, batch_state_result(Handle, State, TGen)}
+         || State = #{idx := Idx} <- States
+        ]),
+        [
+            case maps:find(Idx, ResultMap) of
+                {ok, Result} -> Result;
+                error -> maps:get(Idx, Errors)
+            end
+         || Idx <- lists:seq(1, length(Prompts))
+        ]
+    end).
 
 load_for_gleam(Path) ->
     case load(Path, #{}) of
@@ -303,6 +322,182 @@ generate_argmax(Handle, Prompt, Opts) ->
     with_block_state(fun(BlockState) ->
         generate_argmax_with_state(Handle, Prompt, Opts, BlockState)
     end).
+
+prepare_batch_prompt(BlockState, Handle, Prompt0, Opts, Idx) ->
+    try
+        Config = maps:get(config, Handle),
+        Tokenizer = maps:get(tokenizer, Handle),
+        Layers0 = maps:get(layers, Handle),
+        EmbedTable = maps:get(embed_table_ref, Handle),
+        FinalNorm = maps:get(final_norm, Handle),
+        LmHead = maps:get(lm_head, Handle),
+        RopeFreqs = maps:get(rope_freqs, Handle),
+        MaxNew = maps:get(max_new_tokens, Opts),
+        WeightFormat = maps:get(weight_format, Opts),
+        Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
+        Prompt = to_binary(Prompt0),
+        BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
+        PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+        MaxSeq = maps:get(max_seq, Config),
+        case length(PromptTokens) + MaxNew >= MaxSeq of
+            true ->
+                {error, Idx, {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}}};
+            false ->
+                Caches = new_kv_caches(Config),
+                {FirstNext, _} = lists:foldl(
+                    fun({Pos, TokenId}, {_, CL}) ->
+                        Next = forward_decode_step(
+                            BlockState,
+                            TokenId,
+                            EmbedTable,
+                            Layers,
+                            FinalNorm,
+                            LmHead,
+                            CL,
+                            Pos,
+                            RopeFreqs,
+                            WeightFormat
+                        ),
+                        {Next, CL}
+                    end,
+                    {undefined, Caches},
+                    lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
+                ),
+                {ok, #{
+                    idx => Idx,
+                    caches => Caches,
+                    next => FirstNext,
+                    pos => length(PromptTokens),
+                    remaining => MaxNew,
+                    rev_tokens => [],
+                    done => false,
+                    layers => Layers
+                }}
+        end
+    catch
+        Class:Reason:Stack ->
+            {error, Idx, {error, {Class, Reason, Stack}}}
+    end.
+
+batch_decode_loop(_BlockState, _Handle, _Opts, []) ->
+    [];
+batch_decode_loop(BlockState, Handle, Opts, States0) ->
+    case lists:all(fun(#{done := Done}) -> Done end, States0) of
+        true ->
+            States0;
+        false ->
+            Tokenizer = maps:get(tokenizer, Handle),
+            EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+            StopOnEos = maps:get(stop_on_eos, Opts),
+            Active = [
+                State
+             || State <- States0,
+                batch_state_needs_forward(State, EOS, StopOnEos)
+            ],
+            NextByIdx =
+                case Active of
+                    [] ->
+                        #{};
+                    [Only] ->
+                        #{idx := Idx, next := TokenId, caches := Caches, pos := Pos, layers := Layers} =
+                            Only,
+                        Next = forward_decode_step(
+                            BlockState,
+                            TokenId,
+                            maps:get(embed_table_ref, Handle),
+                            Layers,
+                            maps:get(final_norm, Handle),
+                            maps:get(lm_head, Handle),
+                            Caches,
+                            Pos,
+                            maps:get(rope_freqs, Handle),
+                            maps:get(weight_format, Opts)
+                        ),
+                        #{Idx => Next};
+                    _ ->
+                        TokenIds = [maps:get(next, State) || State <- Active],
+                        KvCaches = [maps:get(caches, State) || State <- Active],
+                        Positions = [maps:get(pos, State) || State <- Active],
+                        [#{layers := Layers} | _] = Active,
+                        case viva_tensor_zig:nt_forward_decode_step_batched(
+                            BlockState,
+                            TokenIds,
+                            maps:get(embed_table_ref, Handle),
+                            Layers,
+                            maps:get(final_norm, Handle),
+                            maps:get(lm_head, Handle),
+                            KvCaches,
+                            Positions,
+                            maps:get(rope_freqs, Handle),
+                            maps:get(weight_format, Opts)
+                        ) of
+                            {ok, NextTokens} when is_list(NextTokens) ->
+                                maps:from_list([
+                                    {maps:get(idx, State), Next}
+                                 || {State, Next} <- lists:zip(Active, NextTokens)
+                                ]);
+                            Error ->
+                                error({forward_decode_step_batched_failed, Error})
+                        end
+                end,
+            States = [
+                advance_batch_state(State, NextByIdx, EOS, StopOnEos)
+             || State <- States0
+            ],
+            batch_decode_loop(BlockState, Handle, Opts, States)
+    end.
+
+batch_state_needs_forward(#{
+    done := false, remaining := Remaining, next := Next
+}, EOS, StopOnEos) ->
+    Remaining > 1 andalso not (StopOnEos andalso Next =:= EOS);
+batch_state_needs_forward(_State, _EOS, _StopOnEos) ->
+    false.
+
+advance_batch_state(State = #{done := true}, _NextByIdx, _EOS, _StopOnEos) ->
+    State;
+advance_batch_state(
+    State = #{idx := Idx, next := Next, pos := Pos, remaining := Remaining, rev_tokens := Rev},
+    NextByIdx,
+    EOS,
+    StopOnEos
+) ->
+    case Remaining =< 0 of
+        true ->
+            State#{done => true};
+        false ->
+            Rev1 = [Next | Rev],
+            case Remaining =:= 1 orelse (StopOnEos andalso Next =:= EOS) of
+                true ->
+                    State#{remaining => Remaining - 1, rev_tokens => Rev1, done => true};
+                false ->
+                    Following = maps:get(Idx, NextByIdx),
+                    State#{
+                        next => Following,
+                        pos => Pos + 1,
+                        remaining => Remaining - 1,
+                        rev_tokens => Rev1
+                    }
+            end
+    end.
+
+batch_state_result(Handle, #{rev_tokens := RevTokens}, TGen) ->
+    Tokenizer = maps:get(tokenizer, Handle),
+    GeneratedIds = lists:reverse(RevTokens),
+    TokCount = length(GeneratedIds),
+    GenUs = us() - TGen,
+    MsPerToken =
+        case TokCount of
+            0 -> 0.0;
+            _ -> float(GenUs) / 1000.0 / float(TokCount)
+        end,
+    Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    {ok, #{
+        tokens => GeneratedIds,
+        text => Text,
+        ms_per_token => MsPerToken,
+        total_tokens => TokCount
+    }}.
 
 %% Internal: same as generate_argmax, but skips the with_block_state wrap so
 %% the caller (e.g. generate_batch) can reuse a single BlockState across calls.

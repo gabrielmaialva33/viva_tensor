@@ -143,6 +143,7 @@ typedef struct {
 } BlockGemmPlan;
 
 #define DECODE_MAX_LAYERS 64
+#define DECODE_MAX_BATCH  64
 #define DECODE_GRAPH_MAX  4096
 
 typedef struct {
@@ -595,6 +596,18 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input, in
 
     BlockGemmPlan *plan = NULL;
     int plan_rc = get_block_gemm_plan(w, batch, &plan);
+    if (plan_rc != 0 && w->block_size == 16) {
+        for (int b = 0; b < batch; ++b) {
+            int row_rc = vt_w8a16_mmv_blocked_k16(
+                w->d_weight, (const float *)w->d_scales,
+                d_input + (size_t)b * (size_t)w->in_features,
+                d_out + (size_t)b * (size_t)w->out_features, w->in_features, w->out_features,
+                g_block_stream);
+            if (row_rc != 0)
+                return row_rc;
+        }
+        return 0;
+    }
     if (plan_rc != 0)
         return -7 + plan_rc;
 
@@ -884,6 +897,19 @@ static int argmax_logits_like_erlang(const float *logits, int n) {
         }
     }
     return best_i;
+}
+
+static int argmax_batched(float *logits_batched, int vocab, int batch, int *out_tokens,
+                          cudaStream_t stream) {
+    if (!logits_batched || vocab <= 0 || batch <= 0 || !out_tokens)
+        return -2;
+    for (int b = 0; b < batch; ++b) {
+        int rc = vt_argmax_fp32_as_fp16(logits_batched + (size_t)b * (size_t)vocab, vocab,
+                                        out_tokens + b, stream);
+        if (rc != 0)
+            return rc;
+    }
+    return 0;
 }
 
 static int map_get_binary(ErlNifEnv *env, ERL_NIF_TERM map, const char *key, ErlNifBinary *out) {
@@ -1218,6 +1244,9 @@ typedef struct {
     PackedWeight *q, *k, *v, *o, *gate, *up, *down, *qkv, *gate_up;
     MarlinPackedResource *marlin_qkv, *marlin_o, *marlin_gate, *marlin_up, *marlin_down;
     BlockKvCache *cache;
+    BlockKvCache **batch_caches;
+    int *batch_positions;
+    int batch_size;
     float *norm1;
     float *norm2;
     int hidden_size;
@@ -1407,9 +1436,304 @@ static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedW
     return 0;
 }
 
+static int run_norm_rows(const uint16_t *hidden16, float *hidden32, float *x2,
+                         uint16_t *norm16, const float *gamma, int hidden, float eps,
+                         int batch) {
+    for (int b = 0; b < batch; ++b) {
+        size_t off = (size_t)b * (size_t)hidden;
+        int rc = vt_fp16_to_fp32_cast(hidden16 + off, hidden32 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -100 + rc;
+        rc = vt_rmsnorm_fp32(hidden32 + off, gamma, x2 + off, hidden, eps, g_block_stream);
+        if (rc != 0)
+            return -200 + rc;
+        rc = vt_fp32_to_fp16_cast(x2 + off, norm16 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -300 + rc;
+    }
+    return 0;
+}
+
+static int run_rope_attn_rows(float *q_base, float *k_base, float *v_base, int qkv_stride,
+                              BlockKvCache **caches, const int *positions, float *rope,
+                              int hidden, int kv_dim, int num_heads, int num_kv_heads,
+                              int head_dim, int batch) {
+    size_t kv16_stride = (size_t)kv_dim;
+    size_t hidden_stride = (size_t)hidden;
+    for (int b = 0; b < batch; ++b) {
+        BlockKvCache *cache = caches[b];
+        if (!cache || cache->kv_dim != kv_dim || cache->len < 0 || cache->len >= cache->max_seq)
+            return -13;
+        int past_len = cache->len;
+        int pos = positions[b];
+        float *q = q_base + (size_t)b * (size_t)qkv_stride;
+        float *k = k_base ? k_base + (size_t)b * (size_t)qkv_stride : NULL;
+        float *v = v_base ? v_base + (size_t)b * (size_t)qkv_stride : NULL;
+        if (!k)
+            k = (float *)b_k.ptr + (size_t)b * (size_t)kv_dim;
+        if (!v)
+            v = (float *)b_v.ptr + (size_t)b * (size_t)kv_dim;
+        uint16_t *k_append = (uint16_t *)b_k_append.ptr + (size_t)b * kv16_stride;
+        uint16_t *v_append = (uint16_t *)b_v_append.ptr + (size_t)b * kv16_stride;
+        float *attn = (float *)b_attn.ptr + (size_t)b * hidden_stride;
+        uint16_t *attn16 = (uint16_t *)b_attn16.ptr + (size_t)b * hidden_stride;
+
+        int rc = vt_rope_apply_fp32(q, rope, pos, num_heads, head_dim, g_block_stream);
+        if (rc != 0)
+            return -400 + rc;
+        rc = vt_rope_apply_fp32(k, rope, pos, num_kv_heads, head_dim, g_block_stream);
+        if (rc != 0)
+            return -500 + rc;
+        rc = vt_fp32_to_fp16_cast(k, k_append, kv_dim, g_block_stream);
+        if (rc != 0)
+            return -600 + rc;
+        rc = vt_fp32_to_fp16_cast(v, v_append, kv_dim, g_block_stream);
+        if (rc != 0)
+            return -700 + rc;
+        rc = vt_gqa_attn_single_token(q, k, v, cache->d_k, cache->d_v, attn, past_len,
+                                      num_heads, num_kv_heads, head_dim, g_block_stream);
+        if (rc != 0)
+            return -800 + rc;
+        rc = vt_fp32_to_fp16_cast(attn, attn16, hidden, g_block_stream);
+        if (rc != 0)
+            return -900 + rc;
+
+        size_t offset = (size_t)past_len * kv16_stride * sizeof(uint16_t);
+        size_t kv16_bytes = kv16_stride * sizeof(uint16_t);
+        if (cudaMemcpyAsync((uint8_t *)cache->d_k + offset, k_append, kv16_bytes,
+                            cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess ||
+            cudaMemcpyAsync((uint8_t *)cache->d_v + offset, v_append, kv16_bytes,
+                            cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess)
+            return -30;
+        cache->len = past_len + 1;
+    }
+    return 0;
+}
+
+static int run_post_attn_rows(const float *hidden32, const float *o, float *h1, float *x2,
+                              uint16_t *x2_16, const float *norm2, int hidden, float eps,
+                              int batch) {
+    for (int b = 0; b < batch; ++b) {
+        size_t off = (size_t)b * (size_t)hidden;
+        int rc = vt_residual_add_fp32(hidden32 + off, o + off, h1 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -1000 + rc;
+        rc = vt_rmsnorm_fp32(h1 + off, norm2, x2 + off, hidden, eps, g_block_stream);
+        if (rc != 0)
+            return -1100 + rc;
+        rc = vt_fp32_to_fp16_cast(x2 + off, x2_16 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -1200 + rc;
+    }
+    return 0;
+}
+
+static int run_ffn_rows(const float *gate, const float *up, float *sw, uint16_t *sw16, int ffn,
+                        int batch) {
+    for (int b = 0; b < batch; ++b) {
+        size_t off = (size_t)b * (size_t)ffn;
+        int rc = vt_silu_mul_fp32(gate + off, up + off, sw + off, ffn, g_block_stream);
+        if (rc != 0)
+            return -1300 + rc;
+        rc = vt_fp32_to_fp16_cast(sw + off, sw16 + off, ffn, g_block_stream);
+        if (rc != 0)
+            return -1400 + rc;
+    }
+    return 0;
+}
+
+static int run_out_rows(const float *h1, const float *down, float *x2, uint16_t *hout16,
+                        int hidden, int batch) {
+    for (int b = 0; b < batch; ++b) {
+        size_t off = (size_t)b * (size_t)hidden;
+        int rc = vt_residual_add_fp32(h1 + off, down + off, x2 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -1500 + rc;
+        rc = vt_fp32_to_fp16_cast(x2 + off, hout16 + off, hidden, g_block_stream);
+        if (rc != 0)
+            return -1600 + rc;
+    }
+    return 0;
+}
+
+static int run_decode_block_device_preloaded_batched(DecodeLayerParams *l, float *rope) {
+    int batch = l->batch_size;
+    if (batch <= 1 || batch > DECODE_MAX_BATCH || !l->batch_caches || !l->batch_positions)
+        return -8501;
+    if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) || !validate_fp8_weight(l->v) ||
+        !validate_fp8_weight(l->o) || !validate_fp8_weight(l->gate) ||
+        !validate_fp8_weight(l->up) || !validate_fp8_weight(l->down))
+        return -10;
+
+    int hidden = l->q->in_features;
+    int kv_dim = l->k->out_features;
+    int ffn = l->gate->out_features;
+    int head_dim = l->head_dim > 0 ? l->head_dim : DEFAULT_LLAMA_HEAD_DIM;
+    float eps = l->eps > 0.0f ? l->eps : DEFAULT_LLAMA_EPS;
+    int qkv_stride = hidden + 2 * kv_dim;
+    int gate_up_stride = 2 * ffn;
+    int use_qkv = l->qkv && validate_fp8_weight(l->qkv);
+    int use_gate_up = l->gate_up && validate_fp8_weight(l->gate_up);
+    int num_heads = hidden / head_dim;
+    int num_kv_heads = kv_dim / head_dim;
+    if (hidden <= 0 || kv_dim <= 0 || ffn <= 0 || !valid_decode_head_dim(head_dim) ||
+        hidden % head_dim != 0 || kv_dim % head_dim != 0 || l->q->out_features != hidden ||
+        l->k->in_features != hidden || l->v->in_features != hidden ||
+        l->v->out_features != kv_dim || l->o->in_features != hidden ||
+        l->o->out_features != hidden || l->gate->in_features != hidden ||
+        l->up->in_features != hidden || l->up->out_features != ffn ||
+        l->down->in_features != ffn || l->down->out_features != hidden)
+        return -11;
+    if (use_qkv &&
+        (l->qkv->in_features != hidden || l->qkv->out_features != hidden + kv_dim + kv_dim))
+        use_qkv = 0;
+    if (use_gate_up &&
+        (l->gate_up->in_features != hidden || l->gate_up->out_features != ffn + ffn))
+        use_gate_up = 0;
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN && !use_qkv)
+        DBG_FAIL_RET("marlin_requires_qkv_fused", -9402, 0);
+
+    int rc = ensure_decode_layer_scratch(l->q, l->k, l->gate, l->qkv, l->gate_up);
+    if (rc != 0)
+        return -20 + rc;
+
+    rc = run_norm_rows((uint16_t *)b_hidden16.ptr, (float *)b_hidden32.ptr, (float *)b_x2.ptr,
+                       (uint16_t *)b_norm16.ptr, l->norm1, hidden, eps, batch);
+    if (rc != 0)
+        return -200 + rc;
+
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_qkv)
+            DBG_FAIL_RET("marlin_missing_qkv", -9401, 0);
+        rc = gemm_marlin_w4a16_to_fp32(l->marlin_qkv, (uint16_t *)b_norm16.ptr, batch,
+                                       (uint16_t *)b_weight16.ptr, (float *)b_qkv.ptr,
+                                       g_block_stream);
+        if (rc != 0)
+            return -300 + rc;
+    } else if (use_qkv) {
+        rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, batch, (float *)b_qkv.ptr);
+        if (rc != 0)
+            return -300 + rc;
+    } else {
+        rc = gemm_w8a16_dequant(l->q, (uint16_t *)b_norm16.ptr, batch, (float *)b_q.ptr);
+        if (rc != 0)
+            return -300 + rc;
+        rc = gemm_w8a16_dequant(l->k, (uint16_t *)b_norm16.ptr, batch, (float *)b_k.ptr);
+        if (rc != 0)
+            return -320 + rc;
+        rc = gemm_w8a16_dequant(l->v, (uint16_t *)b_norm16.ptr, batch, (float *)b_v.ptr);
+        if (rc != 0)
+            return -340 + rc;
+    }
+
+    float *q_base = use_qkv || g_weight_format == WEIGHT_FORMAT_MARLIN ? (float *)b_qkv.ptr
+                                                                       : (float *)b_q.ptr;
+    float *k_base = use_qkv || g_weight_format == WEIGHT_FORMAT_MARLIN
+                        ? (float *)b_qkv.ptr + hidden
+                        : NULL;
+    float *v_base = use_qkv || g_weight_format == WEIGHT_FORMAT_MARLIN
+                        ? (float *)b_qkv.ptr + hidden + kv_dim
+                        : NULL;
+    int q_stride = use_qkv || g_weight_format == WEIGHT_FORMAT_MARLIN ? qkv_stride : hidden;
+    rc = run_rope_attn_rows(q_base, k_base, v_base, q_stride, l->batch_caches,
+                            l->batch_positions, rope, hidden, kv_dim, num_heads, num_kv_heads,
+                            head_dim, batch);
+    if (rc != 0)
+        return -400 + rc;
+
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_o)
+            DBG_FAIL_RET("marlin_missing_o", -9401, 0);
+        rc = gemm_marlin_w4a16_to_fp32(l->marlin_o, (uint16_t *)b_attn16.ptr, batch,
+                                       (uint16_t *)b_weight16.ptr, (float *)b_o.ptr,
+                                       g_block_stream);
+    } else {
+        rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, batch, (float *)b_o.ptr);
+    }
+    if (rc != 0)
+        return -500 + rc;
+
+    rc = run_post_attn_rows((float *)b_hidden32.ptr, (float *)b_o.ptr, (float *)b_h1.ptr,
+                            (float *)b_x2.ptr, (uint16_t *)b_x2_16.ptr, l->norm2, hidden, eps,
+                            batch);
+    if (rc != 0)
+        return -600 + rc;
+
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_gate || !l->marlin_up)
+            DBG_FAIL_RET("marlin_missing_gate_up", -9401, 0);
+        rc = gemm_marlin_w4a16_to_fp32(l->marlin_gate, (uint16_t *)b_x2_16.ptr, batch,
+                                       (uint16_t *)b_weight16.ptr, (float *)b_gate.ptr,
+                                       g_block_stream);
+        if (rc != 0)
+            return -700 + rc;
+        rc = gemm_marlin_w4a16_to_fp32(l->marlin_up, (uint16_t *)b_x2_16.ptr, batch,
+                                       (uint16_t *)b_weight16.ptr, (float *)b_up.ptr,
+                                       g_block_stream);
+        if (rc != 0)
+            return -720 + rc;
+    } else if (use_gate_up) {
+        rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, batch,
+                                (float *)b_gate_up.ptr);
+        if (rc != 0)
+            return -700 + rc;
+    } else {
+        rc = gemm_w8a16_dequant(l->gate, (uint16_t *)b_x2_16.ptr, batch, (float *)b_gate.ptr);
+        if (rc != 0)
+            return -700 + rc;
+        rc = gemm_w8a16_dequant(l->up, (uint16_t *)b_x2_16.ptr, batch, (float *)b_up.ptr);
+        if (rc != 0)
+            return -720 + rc;
+    }
+
+    const float *gate_base = use_gate_up && g_weight_format != WEIGHT_FORMAT_MARLIN
+                                 ? (float *)b_gate_up.ptr
+                                 : (float *)b_gate.ptr;
+    const float *up_base = use_gate_up && g_weight_format != WEIGHT_FORMAT_MARLIN
+                               ? (float *)b_gate_up.ptr + ffn
+                               : (float *)b_up.ptr;
+    int gate_stride = use_gate_up && g_weight_format != WEIGHT_FORMAT_MARLIN ? gate_up_stride : ffn;
+    for (int b = 0; b < batch; ++b) {
+        const float *gate_row = gate_base + (size_t)b * (size_t)gate_stride;
+        const float *up_row = up_base + (size_t)b * (size_t)gate_stride;
+        float *sw_row = (float *)b_sw.ptr + (size_t)b * (size_t)ffn;
+        uint16_t *sw16_row = (uint16_t *)b_sw16.ptr + (size_t)b * (size_t)ffn;
+        rc = vt_silu_mul_fp32(gate_row, up_row, sw_row, ffn, g_block_stream);
+        if (rc != 0)
+            return -800 + (-1300 + rc);
+        rc = vt_fp32_to_fp16_cast(sw_row, sw16_row, ffn, g_block_stream);
+        if (rc != 0)
+            return -800 + (-1400 + rc);
+    }
+
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_down)
+            DBG_FAIL_RET("marlin_missing_down", -9401, 0);
+        rc = gemm_marlin_w4a16_to_fp32(l->marlin_down, (uint16_t *)b_sw16.ptr, batch,
+                                       (uint16_t *)b_weight16.ptr, (float *)b_down.ptr,
+                                       g_block_stream);
+    } else {
+        rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, batch, (float *)b_down.ptr);
+    }
+    if (rc != 0)
+        return -900 + rc;
+
+    rc = run_out_rows((float *)b_h1.ptr, (float *)b_down.ptr, (float *)b_x2.ptr,
+                      (uint16_t *)b_hout16.ptr, hidden, batch);
+    if (rc != 0)
+        return -1000 + rc;
+    if (cudaMemcpyAsync(b_hidden16.ptr, b_hout16.ptr,
+                        (size_t)batch * (size_t)hidden * sizeof(uint16_t),
+                        cudaMemcpyDeviceToDevice, g_block_stream) != cudaSuccess)
+        return -31;
+    return 0;
+}
+
 static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, int pos) {
     BlockState *st = block_state_current();
     int batch = st->cur_batch_size ? st->cur_batch_size : 1;
+    if (batch > 1)
+        return run_decode_block_device_preloaded_batched(l, rope);
     // Note: batch=1 preserves single-prompt behavior byte-identical.
     // For batch>1, the gemm path produces row-major [batch, dim] output;
     // downstream kernels (rope, gqa, silu) iterate batch rows on host.
@@ -1641,6 +1965,40 @@ static int run_decode_token_sequence(EmbeddingTable *embed, int token_id, Decode
     if (rc != 0)
         return -14000 + rc;
     (void)token_id;
+    return 0;
+}
+
+static int run_decode_token_sequence_batched(EmbeddingTable *embed, DecodeLayerParams *layers,
+                                             int layer_count, float *final_norm,
+                                             PackedWeight *lm_head, float *rope, int head_dim,
+                                             float eps, int batch) {
+    size_t hidden16_bytes = (size_t)embed->hidden * sizeof(uint16_t);
+    for (int b = 0; b < batch; ++b) {
+        int rc = vt_embedding_lookup_fp16(
+            embed->d_weight, (const int *)b_token_id.ptr + b,
+            (uint8_t *)b_hidden16.ptr + (size_t)b * hidden16_bytes, embed->hidden, embed->vocab,
+            g_block_stream);
+        if (rc != 0)
+            return -10000 + rc;
+    }
+    for (int i = 0; i < layer_count; ++i) {
+        int rc = run_decode_block_device_preloaded(&layers[i], rope, -1);
+        if (rc != 0)
+            return -11000 + rc;
+    }
+    int rc = run_norm_rows((uint16_t *)b_hidden16.ptr, (float *)b_hidden32.ptr,
+                           (float *)b_x2.ptr, (uint16_t *)b_norm16.ptr, final_norm,
+                           embed->hidden, eps, batch);
+    if (rc != 0)
+        return -12000 + rc;
+    rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, batch, (float *)b_logits.ptr);
+    if (rc != 0)
+        return -13000 + rc;
+    rc = argmax_batched((float *)b_logits.ptr, lm_head->out_features, batch, (int *)b_argmax.ptr,
+                        g_block_stream);
+    if (rc != 0)
+        return -14000 + rc;
+    (void)head_dim;
     return 0;
 }
 
@@ -1988,7 +2346,7 @@ ERL_NIF_TERM nt_forward_block_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 }
 
 static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[],
-                                                int return_topk) {
+                                                 int return_topk) {
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
     (void)argc;
     (void)argv;
@@ -2471,6 +2829,262 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         return make_ok(env, enif_make_tuple2(env, indices_term, values_term));
     }
     return make_ok(env, enif_make_int(env, next_token));
+#endif
+}
+
+ERL_NIF_TERM nt_forward_decode_step_batched(ErlNifEnv *env, int argc,
+                                            const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+    (void)argc;
+    (void)argv;
+    return make_error(env, "cuda_not_available");
+#else
+    if (argc != 10)
+        return make_error(env, "bad_arity");
+
+    BlockStateResource *res = NULL;
+    if (!enif_get_resource(env, argv[0], BLOCK_STATE_RES, (void **)&res) || !res || !res->state)
+        return make_error(env, "invalid_block_state");
+
+    unsigned batch_u = 0, pos_count = 0, prompt_cache_count = 0;
+    if (!enif_get_list_length(env, argv[1], &batch_u) || batch_u == 0 ||
+        batch_u > DECODE_MAX_BATCH)
+        return make_error(env, "invalid_token_batch");
+    if (!enif_get_list_length(env, argv[7], &pos_count) || pos_count != batch_u)
+        return make_error(env, "position_count_mismatch");
+    if (!enif_get_list_length(env, argv[6], &prompt_cache_count) || prompt_cache_count != batch_u)
+        return make_error(env, "kv_prompt_count_mismatch");
+    int batch = (int)batch_u;
+
+    int token_ids[DECODE_MAX_BATCH];
+    int positions[DECODE_MAX_BATCH];
+    ERL_NIF_TERM tail = argv[1], head;
+    for (int b = 0; b < batch; ++b) {
+        if (!enif_get_list_cell(env, tail, &head, &tail) ||
+            !enif_get_int(env, head, &token_ids[b]) || token_ids[b] < 0)
+            return make_error(env, "invalid_token");
+    }
+    tail = argv[7];
+    for (int b = 0; b < batch; ++b) {
+        if (!enif_get_list_cell(env, tail, &head, &tail) ||
+            !enif_get_int(env, head, &positions[b]) || positions[b] < 0)
+            return make_error(env, "invalid_pos");
+    }
+
+    EmbeddingTable *embed = get_embedding_table(env, argv[2]);
+    if (!embed || embed->hidden <= 0)
+        return make_error(env, "invalid_embedding");
+    for (int b = 0; b < batch; ++b) {
+        if (token_ids[b] >= embed->vocab)
+            return make_error(env, "invalid_token");
+    }
+    ErlNifBinary final_norm_bin, rope_bin;
+    if (!enif_inspect_binary(env, argv[4], &final_norm_bin))
+        return make_error(env, "invalid_final_norm");
+    PackedWeight *lm_head = get_packed_weight(env, argv[5]);
+    if (!validate_fp8_weight(lm_head))
+        return make_error(env, "invalid_lm_head");
+    if (!enif_inspect_binary(env, argv[8], &rope_bin))
+        return make_error(env, "invalid_rope");
+    WeightFormat weight_format = WEIGHT_FORMAT_FP8;
+    if (!parse_weight_format(env, argv[9], &weight_format))
+        return make_error(env, "invalid_weight_format");
+
+    if (lm_head->in_features != embed->hidden ||
+        final_norm_bin.size != (size_t)embed->hidden * sizeof(float))
+        return make_error(env, "shape_mismatch");
+
+    BlockState *prev = g_current_state;
+    g_current_state = res->state;
+    g_weight_format = weight_format;
+    g_cur_batch_size = batch;
+    if (batch > block_state_current()->max_batch_size)
+        block_state_current()->max_batch_size = batch;
+    if (ensure_block_lt() != 0) {
+        g_current_state = prev;
+        return make_error(env, "cuda_stream_init_failed");
+    }
+    vt_block_set_stream((void *)g_block_stream);
+    cuda_fp8_dequant_set_stream((void *)g_block_stream);
+
+    size_t hidden16_bytes = (size_t)embed->hidden * sizeof(uint16_t);
+    size_t hidden32_bytes = (size_t)embed->hidden * sizeof(float);
+    size_t hidden16_batch_bytes = hidden16_bytes * (size_t)batch;
+    size_t hidden32_batch_bytes = hidden32_bytes * (size_t)batch;
+    size_t vocab_batch_bytes =
+        (size_t)lm_head->out_features * (size_t)batch * sizeof(float);
+    if (ensure_block_buf(&b_hidden16, hidden16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_hidden32, hidden32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_x2, hidden32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_norm16, hidden16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_logits, vocab_batch_bytes) != 0 ||
+        ensure_block_buf(&b_argmax, (size_t)batch * sizeof(int)) != 0 ||
+        ensure_block_buf(&b_token_id, (size_t)batch * sizeof(int)) != 0) {
+        g_current_state = prev;
+        return make_error(env, "cuda_malloc_decode_failed");
+    }
+
+    ERL_NIF_TERM cache_tails[DECODE_MAX_BATCH];
+    tail = argv[6];
+    for (int b = 0; b < batch; ++b) {
+        if (!enif_get_list_cell(env, tail, &cache_tails[b], &tail))
+            return make_error(env, "invalid_kv_caches_per_prompt");
+        if (!enif_is_list(env, cache_tails[b]))
+            return make_error(env, "invalid_kv_caches_per_prompt");
+    }
+
+    DecodeLayerParams decode_layers[DECODE_MAX_LAYERS];
+    BlockKvCache *cache_matrix[DECODE_MAX_LAYERS][DECODE_MAX_BATCH];
+    memset(decode_layers, 0, sizeof(decode_layers));
+    memset(cache_matrix, 0, sizeof(cache_matrix));
+    ErlNifBinary norm1_bins[DECODE_MAX_LAYERS];
+    ErlNifBinary norm2_bins[DECODE_MAX_LAYERS];
+    ERL_NIF_TERM layers_tail = argv[3], layer_term;
+    int layer_count = 0;
+    int model_head_dim = 0;
+    float model_eps = DEFAULT_LLAMA_EPS;
+    while (enif_get_list_cell(env, layers_tail, &layer_term, &layers_tail)) {
+        if (layer_count >= DECODE_MAX_LAYERS)
+            return make_error(env, "too_many_layers");
+        ErlNifBinary norm1_bin, norm2_bin;
+        if (!map_get_binary(env, layer_term, "norm1_bin", &norm1_bin) ||
+            !map_get_binary(env, layer_term, "norm2_bin", &norm2_bin))
+            return make_error(env, "invalid_layer_norm");
+
+        PackedWeight *q = map_get_weight(env, layer_term, "q");
+        PackedWeight *k = map_get_weight(env, layer_term, "k");
+        PackedWeight *v = map_get_weight(env, layer_term, "v");
+        PackedWeight *o = map_get_weight(env, layer_term, "o");
+        PackedWeight *gate = map_get_weight(env, layer_term, "gate");
+        PackedWeight *up = map_get_weight(env, layer_term, "up");
+        PackedWeight *down = map_get_weight(env, layer_term, "down");
+        PackedWeight *qkv = map_get_weight(env, layer_term, "qkv");
+        PackedWeight *gate_up = map_get_weight(env, layer_term, "gate_up");
+        if (!q || !k || !v || !o || !gate || !up || !down)
+            return make_error(env, "invalid_packed_weight");
+
+        MarlinPackedResource *marlin_qkv = NULL, *marlin_o = NULL, *marlin_gate = NULL;
+        MarlinPackedResource *marlin_up = NULL, *marlin_down = NULL;
+        if (weight_format == WEIGHT_FORMAT_MARLIN && !decode_layer_has_marlin_weights(env, layer_term))
+            return make_block_error(env, "marlin_weights_not_loaded", -8001);
+        if (weight_format == WEIGHT_FORMAT_MARLIN) {
+            marlin_qkv = get_layer_marlin(env, layer_term, "qkv");
+            marlin_o = get_layer_marlin(env, layer_term, "o");
+            marlin_gate = get_layer_marlin(env, layer_term, "gate");
+            marlin_up = get_layer_marlin(env, layer_term, "up");
+            marlin_down = get_layer_marlin(env, layer_term, "down");
+            if (!marlin_qkv)
+                return make_block_error(env, "marlin_requires_qkv_fused", -9402);
+            if (!marlin_o || !marlin_gate || !marlin_up || !marlin_down)
+                return make_block_error(env, "marlin_weights_not_loaded", -9401);
+        }
+
+        int head_dim = map_get_int_default(env, layer_term, "head_dim", DEFAULT_LLAMA_HEAD_DIM);
+        float eps = map_get_float_default(env, layer_term, "eps", DEFAULT_LLAMA_EPS);
+        if (!valid_decode_head_dim(head_dim))
+            return make_error(env, "invalid_head_dim");
+        if (eps <= 0.0f)
+            return make_error(env, "invalid_eps");
+        for (int b = 0; b < batch; ++b) {
+            ERL_NIF_TERM cache_term;
+            if (!enif_get_list_cell(env, cache_tails[b], &cache_term, &cache_tails[b]))
+                return make_error(env, "cache_count_mismatch");
+            BlockKvCache *cache = NULL;
+            if (!enif_get_resource(env, cache_term, BLOCK_KV_CACHE_RES, (void **)&cache) ||
+                !cache || cache->len < 0)
+                return make_error(env, "invalid_kv_cache");
+            if (cache->len != positions[b])
+                return make_error(env, "kv_cache_len_position_mismatch");
+            cache_matrix[layer_count][b] = cache;
+        }
+
+        int rc = ensure_decode_const(&g_decode_norm1[layer_count], &norm1_bin);
+        if (rc != 0)
+            return make_block_error(env, "upload_decode_norm1", rc);
+        rc = ensure_decode_const(&g_decode_norm2[layer_count], &norm2_bin);
+        if (rc != 0)
+            return make_block_error(env, "upload_decode_norm2", rc);
+        rc = ensure_decode_layer_scratch(q, k, gate, qkv, gate_up);
+        if (rc != 0)
+            return make_block_error(env, "decode_scratch", rc);
+
+        decode_layers[layer_count].q = q;
+        decode_layers[layer_count].k = k;
+        decode_layers[layer_count].v = v;
+        decode_layers[layer_count].o = o;
+        decode_layers[layer_count].gate = gate;
+        decode_layers[layer_count].up = up;
+        decode_layers[layer_count].down = down;
+        decode_layers[layer_count].qkv = qkv;
+        decode_layers[layer_count].gate_up = gate_up;
+        decode_layers[layer_count].marlin_qkv = marlin_qkv;
+        decode_layers[layer_count].marlin_o = marlin_o;
+        decode_layers[layer_count].marlin_gate = marlin_gate;
+        decode_layers[layer_count].marlin_up = marlin_up;
+        decode_layers[layer_count].marlin_down = marlin_down;
+        decode_layers[layer_count].batch_caches = cache_matrix[layer_count];
+        decode_layers[layer_count].batch_positions = positions;
+        decode_layers[layer_count].batch_size = batch;
+        decode_layers[layer_count].norm1 = (float *)g_decode_norm1[layer_count].buf.ptr;
+        decode_layers[layer_count].norm2 = (float *)g_decode_norm2[layer_count].buf.ptr;
+        decode_layers[layer_count].head_dim = head_dim;
+        decode_layers[layer_count].eps = eps;
+        norm1_bins[layer_count] = norm1_bin;
+        norm2_bins[layer_count] = norm2_bin;
+        (void)norm1_bins[layer_count];
+        (void)norm2_bins[layer_count];
+        if (model_head_dim == 0) {
+            model_head_dim = head_dim;
+            model_eps = eps;
+        } else if (model_head_dim != head_dim || float_bits_u32(model_eps) != float_bits_u32(eps)) {
+            return make_error(env, "layer_config_mismatch");
+        }
+        layer_count++;
+    }
+    if (!enif_is_empty_list(env, layers_tail))
+        return make_error(env, "invalid_layers");
+    if (layer_count <= 0)
+        return make_error(env, "empty_layers");
+    for (int b = 0; b < batch; ++b) {
+        if (!enif_is_empty_list(env, cache_tails[b]))
+            return make_error(env, "cache_count_mismatch");
+    }
+    if (model_head_dim == 0)
+        model_head_dim = DEFAULT_LLAMA_HEAD_DIM;
+    if (rope_bin.size != (size_t)(model_head_dim / 2) * sizeof(float))
+        return make_error(env, "rope_shape_mismatch");
+
+    int const_rc = ensure_decode_const(&g_decode_final_norm, &final_norm_bin);
+    if (const_rc != 0)
+        return make_block_error(env, "upload_final_norm", const_rc);
+    const_rc = ensure_decode_const(&g_decode_rope, &rope_bin);
+    if (const_rc != 0)
+        return make_block_error(env, "upload_decode_rope", const_rc);
+    if (cudaMemcpyAsync(b_token_id.ptr, token_ids, (size_t)batch * sizeof(int),
+                        cudaMemcpyHostToDevice, g_block_stream) != cudaSuccess)
+        return make_error(env, "upload_token_id_failed");
+
+    int rc = run_decode_token_sequence_batched(
+        embed, decode_layers, layer_count, (float *)g_decode_final_norm.buf.ptr, lm_head,
+        (float *)g_decode_rope.buf.ptr, model_head_dim, model_eps, batch);
+    if (rc != 0)
+        return make_block_error(env, "decode_batched", rc);
+
+    int out_tokens[DECODE_MAX_BATCH];
+    if (cudaStreamSynchronize(g_block_stream) != cudaSuccess ||
+        cudaMemcpy(out_tokens, b_argmax.ptr, (size_t)batch * sizeof(int),
+                   cudaMemcpyDeviceToHost) != cudaSuccess) {
+        g_current_state = prev;
+        return make_error(env, "download_argmax_failed");
+    }
+    vt_block_set_stream(NULL);
+    cuda_fp8_dequant_set_stream(NULL);
+    g_current_state = prev;
+
+    ERL_NIF_TERM list = enif_make_list(env, 0);
+    for (int b = batch - 1; b >= 0; --b)
+        list = enif_make_list_cell(env, enif_make_int(env, out_tokens[b]), list);
+    return make_ok(env, list);
 #endif
 }
 

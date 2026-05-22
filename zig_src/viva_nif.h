@@ -790,6 +790,7 @@ NIF_FUNC_DECL(block_state_free);
 NIF_FUNC_DECL(nt_forward_block_w8a16);
 NIF_FUNC_DECL(nt_forward_decode_step);
 NIF_FUNC_DECL(nt_forward_decode_step_topk);
+NIF_FUNC_DECL(nt_forward_decode_step_batched);
 int register_block_kv_cache_resource(ErlNifEnv *env);
 int register_block_state_resource(ErlNifEnv *env);
 NIF_FUNC_DECL(cutlass_int8_sparse_bench_nif);

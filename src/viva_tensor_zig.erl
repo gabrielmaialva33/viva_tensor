@@ -252,6 +252,7 @@
     nt_forward_block_w8a16/14,
     nt_forward_decode_step/10,
     nt_forward_decode_step_topk/11,
+    nt_forward_decode_step_batched/10,
     nt_forward_decode_step/9,
     nt_forward_decode_step_topk/10,
     nt_forward_decode_step/8,
@@ -825,6 +826,19 @@ nt_forward_decode_step(
     _LmHead,
     _KvCaches,
     _Pos,
+    _RopeFreqsFp32,
+    _WeightFormat
+) ->
+    erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step_batched(
+    _BlockState,
+    _TokenIds,
+    _EmbeddingTable,
+    _Layers,
+    _FinalNormFp32,
+    _LmHead,
+    _KvCachesPerPrompt,
+    _Positions,
     _RopeFreqsFp32,
     _WeightFormat
 ) ->

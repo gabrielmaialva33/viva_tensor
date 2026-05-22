@@ -378,6 +378,8 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_forward_block_w8a16", 14, nt_forward_block_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 10, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step_topk", 11, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_forward_decode_step_batched", 10, nt_forward_decode_step_batched,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 9, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step_topk", 10, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 8, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
