@@ -57,22 +57,6 @@ typedef struct {
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
 static ErlNifMutex *g_block_decode_mutex = NULL;
 
-static BlockBuf b_hidden16 = {0}, b_hidden32 = {0}, b_norm16 = {0};
-static BlockBuf b_norm1 = {0}, b_norm2 = {0}, b_rope = {0};
-static BlockBuf b_weight16 = {0}, b_q = {0}, b_k = {0}, b_v = {0};
-static BlockBuf b_attn = {0}, b_attn16 = {0}, b_o = {0}, b_h1 = {0};
-static BlockBuf b_x2 = {0}, b_x2_16 = {0}, b_gate = {0}, b_up = {0};
-static BlockBuf b_sw = {0}, b_sw16 = {0}, b_down = {0}, b_hout16 = {0};
-static BlockBuf b_k_cache = {0}, b_v_cache = {0}, b_k_append = {0}, b_v_append = {0};
-static BlockBuf b_logits = {0}, b_qkv = {0}, b_gate_up = {0}, b_argmax = {0};
-static BlockBuf b_topk_indices = {0}, b_topk_values = {0};
-static BlockBuf b_token_id = {0}, b_pos_id = {0}, b_past_len_id = {0};
-static void *g_attn_k_cache_ptr = NULL;
-static void *g_attn_v_cache_ptr = NULL;
-static float *g_q_ptr = NULL, *g_k_ptr = NULL, *g_v_ptr = NULL;
-static float *g_gate_ptr = NULL, *g_up_ptr = NULL;
-static float *g_norm1_ptr = NULL, *g_norm2_ptr = NULL, *g_rope_ptr = NULL;
-static int *g_dyn_pos_ptr = NULL, *g_dyn_past_len_ptr = NULL;
 static int g_full_decode_capture = 0;
 
 typedef struct {
@@ -203,10 +187,59 @@ typedef struct {
 } BlockState;
 
 static BlockState *g_default_state = NULL;
+static _Thread_local BlockState *g_current_state = NULL;
 
 #define g_block_lt (g_default_state->block_lt)
 #define g_block_workspace (g_default_state->block_workspace)
 #define g_block_stream (g_default_state->block_stream)
+#define block_state_current() (g_current_state ? g_current_state : g_default_state)
+#define b_hidden16 (block_state_current()->hidden16)
+#define b_hidden32 (block_state_current()->hidden32)
+#define b_norm16 (block_state_current()->norm16)
+#define b_norm1 (block_state_current()->norm1)
+#define b_norm2 (block_state_current()->norm2)
+#define b_rope (block_state_current()->rope)
+#define b_weight16 (block_state_current()->weight16)
+#define b_q (block_state_current()->q)
+#define b_k (block_state_current()->k)
+#define b_v (block_state_current()->v)
+#define b_attn (block_state_current()->attn)
+#define b_attn16 (block_state_current()->attn16)
+#define b_o (block_state_current()->o)
+#define b_h1 (block_state_current()->h1)
+#define b_x2 (block_state_current()->x2)
+#define b_x2_16 (block_state_current()->x2_16)
+#define b_gate (block_state_current()->gate)
+#define b_up (block_state_current()->up)
+#define b_sw (block_state_current()->sw)
+#define b_sw16 (block_state_current()->sw16)
+#define b_down (block_state_current()->down)
+#define b_hout16 (block_state_current()->hout16)
+#define b_k_cache (block_state_current()->k_cache)
+#define b_v_cache (block_state_current()->v_cache)
+#define b_k_append (block_state_current()->k_append)
+#define b_v_append (block_state_current()->v_append)
+#define b_logits (block_state_current()->logits)
+#define b_qkv (block_state_current()->qkv)
+#define b_gate_up (block_state_current()->gate_up)
+#define b_argmax (block_state_current()->argmax)
+#define b_topk_indices (block_state_current()->topk_indices)
+#define b_topk_values (block_state_current()->topk_values)
+#define b_token_id (block_state_current()->token_id)
+#define b_pos_id (block_state_current()->pos_id)
+#define b_past_len_id (block_state_current()->past_len_id)
+#define g_attn_k_cache_ptr (block_state_current()->attn_k_cache_ptr)
+#define g_attn_v_cache_ptr (block_state_current()->attn_v_cache_ptr)
+#define g_q_ptr (block_state_current()->q_ptr)
+#define g_k_ptr (block_state_current()->k_ptr)
+#define g_v_ptr (block_state_current()->v_ptr)
+#define g_gate_ptr (block_state_current()->gate_ptr)
+#define g_up_ptr (block_state_current()->up_ptr)
+#define g_norm1_ptr (block_state_current()->norm1_ptr)
+#define g_norm2_ptr (block_state_current()->norm2_ptr)
+#define g_rope_ptr (block_state_current()->rope_ptr)
+#define g_dyn_pos_ptr (block_state_current()->dyn_pos_ptr)
+#define g_dyn_past_len_ptr (block_state_current()->dyn_past_len_ptr)
 
 static BlockState *block_state_create(void) {
   BlockState *st = (BlockState *)calloc(1, sizeof(BlockState));
@@ -215,8 +248,29 @@ static BlockState *block_state_create(void) {
   return st;
 }
 
+static void block_buf_destroy(BlockBuf *buf) {
+  if (!buf || !buf->ptr) return;
+  cudaFree(buf->ptr);
+  buf->ptr = NULL;
+  buf->cap = 0;
+}
+
 static void block_state_destroy(BlockState *st) {
   if (!st) return;
+  BlockBuf *bufs[] = {
+      &st->hidden16, &st->hidden32, &st->norm16,
+      &st->norm1, &st->norm2, &st->rope,
+      &st->weight16, &st->q, &st->k, &st->v,
+      &st->attn, &st->attn16, &st->o, &st->h1,
+      &st->x2, &st->x2_16, &st->gate, &st->up,
+      &st->sw, &st->sw16, &st->down, &st->hout16,
+      &st->k_cache, &st->v_cache, &st->k_append, &st->v_append,
+      &st->logits, &st->qkv, &st->gate_up, &st->argmax,
+      &st->topk_indices, &st->topk_values,
+      &st->token_id, &st->pos_id, &st->past_len_id};
+  for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
+    block_buf_destroy(bufs[i]);
+  }
   if (st->block_stream) cudaStreamDestroy(st->block_stream);
   if (st->block_workspace) cudaFree(st->block_workspace);
   if (st->block_lt) cublasLtDestroy(st->block_lt);
