@@ -1,5 +1,6 @@
 #include "viva_nif.h"
 #include "nif_packed_weight.h"
+#include <erl_nif.h>
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
 #include <cuda_runtime.h>
@@ -57,6 +58,7 @@ static cublasLtHandle_t g_block_lt = NULL;
 static void *g_block_workspace = NULL;
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
 static cudaStream_t g_block_stream = NULL;
+static ErlNifMutex *g_block_decode_mutex = NULL;
 
 static BlockBuf b_hidden16 = {0}, b_hidden32 = {0}, b_norm16 = {0};
 static BlockBuf b_norm1 = {0}, b_norm2 = {0}, b_rope = {0};
@@ -75,6 +77,12 @@ static float *g_gate_ptr = NULL, *g_up_ptr = NULL;
 static float *g_norm1_ptr = NULL, *g_norm2_ptr = NULL, *g_rope_ptr = NULL;
 static int *g_dyn_pos_ptr = NULL, *g_dyn_past_len_ptr = NULL;
 static int g_full_decode_capture = 0;
+
+void block_state_init_mutex(void) {
+  if (g_block_decode_mutex == NULL) {
+    g_block_decode_mutex = enif_mutex_create("vt_block_decode");
+  }
+}
 
 typedef struct {
   void *d_k;
@@ -1683,9 +1691,15 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc,
 }
 
 ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  return nt_forward_decode_step_impl(env, argc, argv, 0);
+  if (g_block_decode_mutex) enif_mutex_lock(g_block_decode_mutex);
+  ERL_NIF_TERM result = nt_forward_decode_step_impl(env, argc, argv, 0);
+  if (g_block_decode_mutex) enif_mutex_unlock(g_block_decode_mutex);
+  return result;
 }
 
 ERL_NIF_TERM nt_forward_decode_step_topk(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  return nt_forward_decode_step_impl(env, argc, argv, 1);
+  if (g_block_decode_mutex) enif_mutex_lock(g_block_decode_mutex);
+  ERL_NIF_TERM result = nt_forward_decode_step_impl(env, argc, argv, 1);
+  if (g_block_decode_mutex) enif_mutex_unlock(g_block_decode_mutex);
+  return result;
 }

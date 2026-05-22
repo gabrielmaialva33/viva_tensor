@@ -17,6 +17,8 @@
 #include "viva_nif.h"
 #include "nif_packed_weight.h"
 
+extern void block_state_init_mutex(void);
+
 /* =========================================================================
  * NIF Init
  * ========================================================================= */
@@ -27,6 +29,7 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
 
   /* Detect CPU topology once at NIF load (MKL-style runtime init) */
   detect_cpu_topology();
+  block_state_init_mutex();
 
 #ifdef _WIN32
   /* Windows: Configure MKL threads for maximum performance */
