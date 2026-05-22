@@ -865,73 +865,64 @@ prepack_layer_linears_marlin(Header, LayerIdx, Config) ->
     Hidden = maps:get(hidden_size, Config),
     KvDim = maps:get(kv_dim, Config),
     Ffn = maps:get(ffn_size, Config),
-    with_marlin_linear(Header, P("self_attn.q_proj.weight"), Hidden, Hidden, fun(Q) ->
-        with_marlin_linear(Header, P("self_attn.k_proj.weight"), KvDim, Hidden, fun(K) ->
-            with_marlin_linear(Header, P("self_attn.v_proj.weight"), KvDim, Hidden, fun(V) ->
-                QKVWeight = concat_fp16_columns(
-                    [
-                        {maps:get(weight, Q), Hidden},
-                        {maps:get(weight, K), KvDim},
-                        {maps:get(weight, V), KvDim}
-                    ],
-                    Hidden
-                ),
-                QKVScales = compute_marlin_scales(
-                    QKVWeight,
-                    Hidden,
-                    Hidden + KvDim + KvDim,
-                    ?MARLIN_GROUPSIZE
-                ),
+    with_raw_marlin_linear(Header, P("self_attn.q_proj.weight"), fun(Q) ->
+        with_raw_marlin_linear(Header, P("self_attn.k_proj.weight"), fun(K) ->
+            with_raw_marlin_linear(Header, P("self_attn.v_proj.weight"), fun(V) ->
+                QKVWeight = iolist_to_binary([Q, K, V]),
                 with_marlin_pack(
                     QKVWeight,
-                    QKVScales,
-                    Hidden,
+                    compute_marlin_scales(QKVWeight, Hidden + KvDim + KvDim, Hidden, ?MARLIN_GROUPSIZE),
                     Hidden + KvDim + KvDim,
+                    Hidden,
                     fun(QKVHandle) ->
-                        with_marlin_pack_from_safetensors(
-                            Header,
-                            P("self_attn.o_proj.weight"),
-                            Hidden,
-                            Hidden,
-                            fun(OHandle) ->
-                                with_marlin_pack_from_safetensors(
-                                    Header,
-                                    P("mlp.gate_proj.weight"),
-                                    Ffn,
-                                    Hidden,
-                                    fun(GateHandle) ->
-                                        with_marlin_pack_from_safetensors(
-                                            Header,
-                                            P("mlp.up_proj.weight"),
-                                            Ffn,
-                                            Hidden,
-                                            fun(UpHandle) ->
-                                                with_marlin_pack_from_safetensors(
-                                                    Header,
-                                                    P("mlp.down_proj.weight"),
-                                                    Hidden,
-                                                    Ffn,
-                                                    fun(DownHandle) ->
-                                                        {ok, #{
-                                                            qkv => QKVHandle,
-                                                            o => OHandle,
-                                                            gate => GateHandle,
-                                                            up => UpHandle,
-                                                            down => DownHandle
-                                                        }}
-                                                    end
-                                                )
-                                            end
-                                        )
-                                    end
-                                )
-                            end
-                        )
+                        with_raw_marlin_pack(Header, P("self_attn.o_proj.weight"), Hidden, Hidden, fun(OHandle) ->
+                            with_raw_marlin_pack(Header, P("mlp.gate_proj.weight"), Ffn, Hidden, fun(GateHandle) ->
+                                with_raw_marlin_pack(Header, P("mlp.up_proj.weight"), Ffn, Hidden, fun(UpHandle) ->
+                                    with_raw_marlin_pack(Header, P("mlp.down_proj.weight"), Hidden, Ffn, fun(DownHandle) ->
+                                        {ok, #{
+                                            qkv => QKVHandle,
+                                            o => OHandle,
+                                            gate => GateHandle,
+                                            up => UpHandle,
+                                            down => DownHandle
+                                        }}
+                                    end)
+                                end)
+                            end)
+                        end)
                     end
                 )
             end)
         end)
     end).
+
+with_raw_marlin_pack(Header, Name, K, N, Fun) ->
+    with_raw_marlin_linear(Header, Name, fun(WeightFp16) ->
+        with_marlin_pack(
+            WeightFp16,
+            compute_marlin_scales(WeightFp16, K, N, ?MARLIN_GROUPSIZE),
+            K,
+            N,
+            Fun
+        )
+    end).
+
+with_raw_marlin_linear(Header, Name, Fun) ->
+    case load_raw_fp16_linear(Header, Name) of
+        {ok, WeightFp16} -> Fun(WeightFp16);
+        {error, _} = Error -> Error
+    end.
+
+load_raw_fp16_linear(Header, Name) ->
+    case viva_tensor_safetensors_ffi:read_tensor_raw(Header, Name) of
+        {ok, <<"F16">>, Bin} -> {ok, Bin};
+        {ok, <<"BF16">>, Bin} -> {ok, Bin};
+        {ok, Dtype, _Bin} -> {error, {unsupported_dtype, Dtype}};
+        Error -> Error
+    end.
+
+bf16_binary_to_fp16_binary(Bin) ->
+    <<<<(fp16_encode(bf16_to_float(U))):16/unsigned-little>> || <<U:16/unsigned-little>> <= Bin>>.
 
 with_marlin_pack_from_safetensors(Header, Name, OutF, InF, Fun) ->
     case load_marlin_linear(Header, Name, OutF, InF) of
