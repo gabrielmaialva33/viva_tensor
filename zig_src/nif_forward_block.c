@@ -132,9 +132,97 @@ typedef struct {
   cublasLtMatmulHeuristicResult_t heur;
 } BlockGemmPlan;
 
+#define DECODE_MAX_LAYERS 64
+#define DECODE_GRAPH_MAX 4096
+
+typedef struct {
+  const uint8_t *host_ptr;
+  size_t size;
+  BlockBuf buf;
+} DecodeConstBuf;
+
+typedef struct {
+  int pos;
+  int past_len;
+  int hidden;
+  int vocab;
+  int layer_count;
+  uintptr_t signature;
+  cudaGraph_t graph;
+  cudaGraphExec_t exec;
+  unsigned launches;
+} DecodeGraphEntry;
+
 #define BLOCK_GEMM_PLAN_MAX 16
 static BlockGemmPlan g_block_gemm_plans[BLOCK_GEMM_PLAN_MAX];
 static int g_block_gemm_plan_count = 0;
+
+typedef struct {
+  cublasLtHandle_t block_lt;
+  void *block_workspace;
+  cudaStream_t block_stream;
+  BlockGemmPlan block_gemm_plans[BLOCK_GEMM_PLAN_MAX];
+  int block_gemm_plan_count;
+
+  BlockBuf hidden16, hidden32, norm16;
+  BlockBuf norm1, norm2, rope;
+  BlockBuf weight16, q, k, v;
+  BlockBuf attn, attn16, o, h1;
+  BlockBuf x2, x2_16, gate, up;
+  BlockBuf sw, sw16, down, hout16;
+  BlockBuf k_cache, v_cache, k_append, v_append;
+  BlockBuf logits, qkv, gate_up, argmax;
+  BlockBuf topk_indices, topk_values;
+  BlockBuf token_id, pos_id, past_len_id;
+
+  void *attn_k_cache_ptr;
+  void *attn_v_cache_ptr;
+  float *q_ptr;
+  float *k_ptr;
+  float *v_ptr;
+  float *gate_ptr;
+  float *up_ptr;
+  float *norm1_ptr;
+  float *norm2_ptr;
+  float *rope_ptr;
+  int *dyn_pos_ptr;
+  int *dyn_past_len_ptr;
+  int full_decode_capture;
+
+  BlockGraphEntry block_graphs[BLOCK_GRAPH_MAX];
+  int block_graph_count;
+  int block_graph_disabled;
+
+  DecodeConstBuf decode_norm1[DECODE_MAX_LAYERS];
+  DecodeConstBuf decode_norm2[DECODE_MAX_LAYERS];
+  DecodeConstBuf decode_rope;
+  DecodeConstBuf decode_final_norm;
+  DecodeGraphEntry decode_graphs[DECODE_GRAPH_MAX];
+  int decode_graph_count;
+  int decode_graph_disabled;
+  unsigned decode_graph_captures;
+  unsigned decode_graph_hits;
+  unsigned decode_graph_updates;
+  unsigned decode_graph_update_failures;
+  unsigned decode_graph_failures;
+  cudaError_t decode_last_capture_error;
+  cudaGraphExec_t decode_rolling_exec;
+  int decode_rolling_hidden;
+  int decode_rolling_vocab;
+  int decode_rolling_layer_count;
+  uintptr_t decode_rolling_signature;
+} BlockState;
+
+static BlockState *block_state_create(void) {
+  BlockState *st = (BlockState *)calloc(1, sizeof(BlockState));
+  if (!st) return NULL;
+  st->decode_last_capture_error = cudaSuccess;
+  return st;
+}
+
+static void block_state_destroy(BlockState *st) {
+  free(st);
+}
 
 static int ensure_block_buf(BlockBuf *buf, size_t needed) {
   if (buf->cap >= needed) return 0;
@@ -702,9 +790,6 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   return 0;
 }
 
-#define DECODE_MAX_LAYERS 64
-#define DECODE_GRAPH_MAX 4096
-
 typedef struct {
   PackedWeight *q, *k, *v, *o, *gate, *up, *down, *qkv, *gate_up;
   BlockKvCache *cache;
@@ -718,24 +803,6 @@ typedef struct {
   int num_kv_heads;
   float eps;
 } DecodeLayerParams;
-
-typedef struct {
-  const uint8_t *host_ptr;
-  size_t size;
-  BlockBuf buf;
-} DecodeConstBuf;
-
-typedef struct {
-  int pos;
-  int past_len;
-  int hidden;
-  int vocab;
-  int layer_count;
-  uintptr_t signature;
-  cudaGraph_t graph;
-  cudaGraphExec_t exec;
-  unsigned launches;
-} DecodeGraphEntry;
 
 static DecodeConstBuf g_decode_norm1[DECODE_MAX_LAYERS];
 static DecodeConstBuf g_decode_norm2[DECODE_MAX_LAYERS];
