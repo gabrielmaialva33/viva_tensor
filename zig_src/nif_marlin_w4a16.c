@@ -345,7 +345,8 @@ extern "C" ERL_NIF_TERM viva_marlin_w4a16_get_b_bytes_nif(ErlNifEnv *env, int ar
     if (!enif_alloc_binary(resource->b_bytes, &bin))
         return marlin_error_code(env, "binary_alloc_failed", -3);
 
-    cudaError_t err = cudaMemcpy(bin.data, resource->d_B, resource->b_bytes, cudaMemcpyDeviceToHost);
+    cudaError_t err =
+        cudaMemcpy(bin.data, resource->d_B, resource->b_bytes, cudaMemcpyDeviceToHost);
     if (err != cudaSuccess) {
         enif_release_binary(&bin);
         return marlin_error_code(env, "cuda_failed", (int)err);
