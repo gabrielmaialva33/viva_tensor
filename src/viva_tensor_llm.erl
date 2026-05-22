@@ -341,7 +341,8 @@ prepare_batch_prompt(BlockState, Handle, Prompt0, Opts, Idx) ->
         MaxSeq = maps:get(max_seq, Config),
         case length(PromptTokens) + MaxNew >= MaxSeq of
             true ->
-                {error, Idx, {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}}};
+                {error, Idx,
+                    {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}}};
             false ->
                 Caches = new_kv_caches(Config),
                 {FirstNext, _} = lists:foldl(
@@ -399,7 +400,13 @@ batch_decode_loop(BlockState, Handle, Opts, States0) ->
                     [] ->
                         #{};
                     [Only] ->
-                        #{idx := Idx, next := TokenId, caches := Caches, pos := Pos, layers := Layers} =
+                        #{
+                            idx := Idx,
+                            next := TokenId,
+                            caches := Caches,
+                            pos := Pos,
+                            layers := Layers
+                        } =
                             Only,
                         Next = forward_decode_step(
                             BlockState,
@@ -419,18 +426,20 @@ batch_decode_loop(BlockState, Handle, Opts, States0) ->
                         KvCaches = [maps:get(caches, State) || State <- Active],
                         Positions = [maps:get(pos, State) || State <- Active],
                         [#{layers := Layers} | _] = Active,
-                        case viva_tensor_zig:nt_forward_decode_step_batched(
-                            BlockState,
-                            TokenIds,
-                            maps:get(embed_table_ref, Handle),
-                            Layers,
-                            maps:get(final_norm, Handle),
-                            maps:get(lm_head, Handle),
-                            KvCaches,
-                            Positions,
-                            maps:get(rope_freqs, Handle),
-                            maps:get(weight_format, Opts)
-                        ) of
+                        case
+                            viva_tensor_zig:nt_forward_decode_step_batched(
+                                BlockState,
+                                TokenIds,
+                                maps:get(embed_table_ref, Handle),
+                                Layers,
+                                maps:get(final_norm, Handle),
+                                maps:get(lm_head, Handle),
+                                KvCaches,
+                                Positions,
+                                maps:get(rope_freqs, Handle),
+                                maps:get(weight_format, Opts)
+                            )
+                        of
                             {ok, NextTokens} when is_list(NextTokens) ->
                                 maps:from_list([
                                     {maps:get(idx, State), Next}
@@ -447,9 +456,13 @@ batch_decode_loop(BlockState, Handle, Opts, States0) ->
             batch_decode_loop(BlockState, Handle, Opts, States)
     end.
 
-batch_state_needs_forward(#{
-    done := false, remaining := Remaining, next := Next
-}, EOS, StopOnEos) ->
+batch_state_needs_forward(
+    #{
+        done := false, remaining := Remaining, next := Next
+    },
+    EOS,
+    StopOnEos
+) ->
     Remaining > 1 andalso not (StopOnEos andalso Next =:= EOS);
 batch_state_needs_forward(_State, _EOS, _StopOnEos) ->
     false.
@@ -522,15 +535,37 @@ generate_argmax_with_state(Handle, Prompt, Opts, BlockState) ->
             {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}};
         false ->
             generate_argmax_decode_with_state(
-                BlockState, Handle, Tokenizer, Layers, EmbedTable, FinalNorm,
-                LmHead, RopeFreqs, MaxNew, StopOnEos, WeightFormat,
-                PromptTokens, EOS
+                BlockState,
+                Handle,
+                Tokenizer,
+                Layers,
+                EmbedTable,
+                FinalNorm,
+                LmHead,
+                RopeFreqs,
+                MaxNew,
+                StopOnEos,
+                WeightFormat,
+                PromptTokens,
+                EOS
             )
     end.
 
-generate_argmax_decode_with_state(BlockState, Handle, Tokenizer, Layers, EmbedTable,
-                                  FinalNorm, LmHead, RopeFreqs, MaxNew, StopOnEos,
-                                  WeightFormat, PromptTokens, EOS) ->
+generate_argmax_decode_with_state(
+    BlockState,
+    Handle,
+    Tokenizer,
+    Layers,
+    EmbedTable,
+    FinalNorm,
+    LmHead,
+    RopeFreqs,
+    MaxNew,
+    StopOnEos,
+    WeightFormat,
+    PromptTokens,
+    EOS
+) ->
     Config = maps:get(config, Handle),
     Caches = new_kv_caches(Config),
     {FirstNext, _} = lists:foldl(
@@ -1112,25 +1147,41 @@ prepack_layer_linears_marlin(Header, LayerIdx, Config) ->
                 QKVWeight = iolist_to_binary([Q, K, V]),
                 with_marlin_pack(
                     QKVWeight,
-                    compute_marlin_scales(QKVWeight, Hidden + KvDim + KvDim, Hidden, ?MARLIN_GROUPSIZE),
+                    compute_marlin_scales(
+                        QKVWeight, Hidden + KvDim + KvDim, Hidden, ?MARLIN_GROUPSIZE
+                    ),
                     Hidden + KvDim + KvDim,
                     Hidden,
                     fun(QKVHandle) ->
-                        with_raw_marlin_pack(Header, P("self_attn.o_proj.weight"), Hidden, Hidden, fun(OHandle) ->
-                            with_raw_marlin_pack(Header, P("mlp.gate_proj.weight"), Ffn, Hidden, fun(GateHandle) ->
-                                with_raw_marlin_pack(Header, P("mlp.up_proj.weight"), Ffn, Hidden, fun(UpHandle) ->
-                                    with_raw_marlin_pack(Header, P("mlp.down_proj.weight"), Hidden, Ffn, fun(DownHandle) ->
-                                        {ok, #{
-                                            qkv => QKVHandle,
-                                            o => OHandle,
-                                            gate => GateHandle,
-                                            up => UpHandle,
-                                            down => DownHandle
-                                        }}
-                                    end)
-                                end)
-                            end)
-                        end)
+                        with_raw_marlin_pack(
+                            Header, P("self_attn.o_proj.weight"), Hidden, Hidden, fun(OHandle) ->
+                                with_raw_marlin_pack(
+                                    Header, P("mlp.gate_proj.weight"), Ffn, Hidden, fun(GateHandle) ->
+                                        with_raw_marlin_pack(
+                                            Header, P("mlp.up_proj.weight"), Ffn, Hidden, fun(
+                                                UpHandle
+                                            ) ->
+                                                with_raw_marlin_pack(
+                                                    Header,
+                                                    P("mlp.down_proj.weight"),
+                                                    Hidden,
+                                                    Ffn,
+                                                    fun(DownHandle) ->
+                                                        {ok, #{
+                                                            qkv => QKVHandle,
+                                                            o => OHandle,
+                                                            gate => GateHandle,
+                                                            up => UpHandle,
+                                                            down => DownHandle
+                                                        }}
+                                                    end
+                                                )
+                                            end
+                                        )
+                                    end
+                                )
+                            end
+                        )
                     end
                 )
             end)
@@ -1245,7 +1296,11 @@ transpose_raw_to_fp16(Dtype, Bin, OutF, InF) when is_binary(Bin) ->
     ExpectedBytes = OutF * InF * 2,
     case byte_size(Bin) of
         ExpectedBytes ->
-            {ok, iolist_to_binary([transpose_fp16_row(Dtype, Bin, K, OutF, InF) || K <- lists:seq(0, InF - 1)])};
+            {ok,
+                iolist_to_binary([
+                    transpose_fp16_row(Dtype, Bin, K, OutF, InF)
+                 || K <- lists:seq(0, InF - 1)
+                ])};
         _ ->
             {error, {size_mismatch, Dtype, byte_size(Bin), ExpectedBytes}}
     end.
@@ -1283,7 +1338,9 @@ compute_marlin_scales_exact(WeightFp16, K, N, Groupsize) ->
     Groups = K div Groupsize,
     iolist_to_binary([
         [
-            <<(fp16_encode(marlin_scale_for_column(WeightFp16, G, Col, N, Groupsize))):16/unsigned-little>>
+            <<
+                (fp16_encode(marlin_scale_for_column(WeightFp16, G, Col, N, Groupsize))):16/unsigned-little
+            >>
          || Col <- lists:seq(0, N - 1)
         ]
      || G <- lists:seq(0, Groups - 1)
