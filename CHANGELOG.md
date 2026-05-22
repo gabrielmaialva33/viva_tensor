@@ -4,6 +4,95 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.106] - 2026-05-22
+
+### Added — Phase B: Marlin W4A16 opt-in
+
+- **`viva_tensor.load_model_with_format(path, WeightFormat)`** — public
+  Gleam API to load a model in either `FP8W8A16` (default, current
+  behaviour) or `MarlinW4A16` (opt-in lossy 4-bit). Backed by
+  `viva_tensor_llm:load_marlin_for_gleam/1` which loads the FP8 model
+  first, then eagerly quantizes each of N×5 linears (QKV/O/gate/up/down)
+  to Marlin W4 with on-the-fly synthetic max-abs/7 scales and uploads
+  to the GPU as opaque `MarlinPackedResource` handles.
+- **`viva_tensor.prepack_marlin_w4a16(weight, scales, groupsize)`** —
+  public low-level Gleam wrapper returning an opaque `MarlinPacked`
+  resource. Internal `viva_marlin_pack()` (C) is byte-identical to the
+  Python reference `marlin.Layer.pack()` across 3 validation scenarios.
+- **`GenerateOpts.weight_format: WeightFormat`** propagated through the
+  Gleam → Erlang → NIF boundary. Decode dispatch picks the Marlin
+  kernel (`marlin_cuda`) when `weight_format == MarlinW4A16`, with the
+  workspace zeroed via `cudaMemsetAsync` before each call (Marlin's
+  workspace is a lock array, not scratch — gotcha called out by paper
+  audit).
+
+### Added — Phase C: batched-M decode
+
+- **`generate_batch/3` now does true batched-M decode** when
+  `temperature ≤ 0.0` (argmax). Per-prompt prefill stays sequential
+  (each prompt has its own KV cache); the decode loop issues ONE
+  batched NIF call per step that processes all N prompts simultaneously
+  through the full transformer block.
+- **Row-aware decode helpers** (`run_norm_rows`, `run_rope_attn_rows`,
+  `run_post_attn_rows`, `run_ffn_rows`, `run_out_rows`) and
+  `run_decode_block_device_preloaded_batched` in
+  `zig_src/nif_forward_block.c`. Fused linears (QKV, O, gate_up, down)
+  run with `M=batch_size` through cuBLASLt / Marlin; per-row helpers
+  (RMSNorm, RoPE, GQA attn, SiLU) loop over batch rows on the host.
+- **New NIF entry** `nt_forward_decode_step_batched/10` accepting lists
+  of TokenIds, KvCaches and Positions of length `batch_size`, returning
+  N next tokens. Registered alongside the existing single-prompt entry.
+
+### Changed
+
+- **`BlockState` extended** with `max_batch_size`, `cur_batch_size`;
+  every `ensure_block_buf` call sizes scratch buffers by `batch_size`.
+  `DecodeGraphEntry` cache key now includes `batch_size` so single-
+  prompt graphs are never reused for batched decode.
+- **QKV / gate_up dispatch is now stride-aware**. Fused GEMM calls
+  receive `M=batch_size`. `g_q_ptr / g_k_ptr / g_v_ptr / g_gate_ptr /
+  g_up_ptr` are computed from explicit `qkv_stride` and `gate_up_stride`
+  locals.
+- **`generate_batch` (Erlang)** no longer spawns one process per prompt.
+  Argmax flow goes through `generate_batch_native` (single BlockState
+  reused, batched decode step). Sampling flow keeps per-prompt
+  sequential loop (cleanup-only, no speedup).
+
+### Performance (RTX 4090, TinyLlama-1.1B, 32 tokens, argmax)
+
+| Batch | FP8 tok/s | Marlin tok/s | Marlin vs FP8 |
+| ----: | --------: | -----------: | ------------: |
+|     1 |   **415** |          322 |        0.78×  |
+|     4 |       431 |      **602** |    **1.45×**  |
+|    16 |       469 |      **755** |    **1.82×**  |
+
+- Marlin overtakes FP8 starting at **batch=4** — sweet spot M=8-32 from
+  the IST-DASLab paper confirmed on Ada SM89.
+- Marlin **2.34× speedup at batch=16** vs Marlin batch=1.
+- FP8 batched gains are modest (+13% at batch=16) — expected, FP8 was
+  already near-peak at M=1.
+
+### Validated
+
+- **FP8 batch=1 byte-identical paridade preserved** across all
+  refactors. Prompt "Hello" → tokens
+  `[29892, 306, 626, 8852, 304, 3143, 3502, 445, 4982, 363, 518,
+    14518, 29914, 16472, 1024, 1402]` — same as 2.2.105 baseline.
+- batch=2 same prompt produces same tokens twice (consistency check
+  for batched-M).
+- `gleam check` clean, `gleam test` EXIT 0 across the full suite.
+
+### Honest caveats
+
+- Marlin weights are quantized on-the-fly with synthetic max-abs/7
+  scales (not GPTQ-calibrated). Output is lossy — TinyLlama Marlin
+  decode currently produces `<unk>` tokens for the validation prompt.
+  Calibrated weights (GPTQ pre-quantized models) will recover
+  perplexity; this is roadmap for v2.3.0.
+- Per-row helpers (RoPE, GQA, SiLU) still iterate batch rows on the
+  host; only the GEMMs are truly batched. Helper kernels going fully
+  batched is roadmap (additional 1.5-2× headroom expected).
+
 ## [2.2.105] - 2026-05-21
 
 ### Added

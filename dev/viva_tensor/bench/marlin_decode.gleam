@@ -8,6 +8,7 @@ import gleam/io
 import viva_tensor as vt
 
 const model_path = "tmp/tinyllama/model.safetensors"
+
 const max_new_tokens = 32
 
 pub fn main() {
@@ -112,7 +113,9 @@ fn bench_batch(
   }
 }
 
-fn total_tokens(results: List(Result(vt.GenerateResult, String))) -> Result(Int, String) {
+fn total_tokens(
+  results: List(Result(vt.GenerateResult, String)),
+) -> Result(Int, String) {
   case results {
     [] -> Ok(0)
     [Ok(result), ..rest] -> {
