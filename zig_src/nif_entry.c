@@ -155,6 +155,12 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
         return -1;
     if (register_block_state_resource(env) != 0)
         return -1;
+
+    marlin_packed_resource_type =
+        enif_open_resource_type(env, NULL, "MarlinPacked", marlin_packed_resource_dtor,
+                                ERL_NIF_RT_CREATE | ERL_NIF_RT_TAKEOVER, NULL);
+    if (!marlin_packed_resource_type)
+        return -1;
 #endif
 
     return 0;
@@ -378,6 +384,9 @@ static ErlNifFunc nif_funcs[] = {
      ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"marlin_w4a16_bench", 5, viva_marlin_w4a16_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"marlin_w4a16_prepack", 5, viva_marlin_w4a16_prepack_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"marlin_w4a16_get_b_bytes", 1, viva_marlin_w4a16_get_b_bytes_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif,
      ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_fused_gelu_tn_bench", 7, ct16_matmul_fused_gelu_tn_bench_nif,
