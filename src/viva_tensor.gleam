@@ -292,6 +292,12 @@ pub type Generation {
   )
 }
 
+pub type GenerateResult =
+  Generation
+
+pub type GenerateError =
+  String
+
 /// Result storage selected by the RTX-first planner.
 pub type AcceleratedTensor =
   cuda.AcceleratedTensor
@@ -5634,6 +5640,41 @@ pub fn generate(
   }
 }
 
+/// Generate text for multiple prompts concurrently with one BEAM process per prompt.
+pub fn generate_batch(
+  model: ModelHandle,
+  prompts: List(String),
+  opts: GenerateOpts,
+) -> List(Result(GenerateResult, GenerateError)) {
+  let top_k = case opts.top_k {
+    TopKInfinity -> -1
+    TopK(k) -> k
+  }
+
+  generate_batch_ffi(
+    model,
+    prompts,
+    opts.max_new_tokens,
+    opts.temperature,
+    top_k,
+    opts.top_p,
+    opts.seed,
+    opts.stop_on_eos,
+  )
+  |> list.map(fn(result) {
+    case result {
+      Ok(#(tokens, text, ms_per_token, total_tokens)) ->
+        Ok(Generation(
+          tokens: tokens,
+          text: text,
+          ms_per_token: ms_per_token,
+          total_tokens: total_tokens,
+        ))
+      Error(reason) -> Error(reason)
+    }
+  })
+}
+
 /// Default deterministic argmax generation options.
 pub fn default_generate_opts() -> GenerateOpts {
   GenerateOpts(
@@ -5747,3 +5788,15 @@ fn generate_ffi(
   seed: Int,
   stop_on_eos: Bool,
 ) -> Result(#(List(Int), String, Float, Int), String)
+
+@external(erlang, "viva_tensor_llm", "generate_batch_for_gleam")
+fn generate_batch_ffi(
+  handle: ModelHandle,
+  prompts: List(String),
+  max_new_tokens: Int,
+  temperature: Float,
+  top_k: Int,
+  top_p: Float,
+  seed: Int,
+  stop_on_eos: Bool,
+) -> List(Result(#(List(Int), String, Float, Int), String))

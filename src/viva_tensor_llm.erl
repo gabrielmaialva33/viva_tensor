@@ -8,8 +8,10 @@
 -export([
     load/2,
     generate/3,
+    generate_batch/3,
     load_for_gleam/1,
     generate_for_gleam/8,
+    generate_batch_for_gleam/8,
     path_exists/1
 ]).
 
@@ -85,6 +87,20 @@ generate(Handle, Prompt0, GenOpts0)
             {error, {Class, Reason, Stack}}
     end.
 
+generate_batch(Handle, Prompts, GenOpts0) when is_list(Prompts) ->
+    Timeout = generate_batch_timeout(GenOpts0),
+    Jobs = lists:map(
+        fun(Prompt) ->
+            Parent = self(),
+            {Pid, Ref} = erlang:spawn_monitor(
+                fun() -> Parent ! {self(), generate(Handle, Prompt, GenOpts0)} end
+            ),
+            {Pid, Ref}
+        end,
+        Prompts
+    ),
+    lists:map(fun(Job) -> collect_generate_result(Job, Timeout) end, Jobs).
+
 load_for_gleam(Path) ->
     case load(Path, #{}) of
         {ok, Handle} -> {ok, Handle};
@@ -107,9 +123,52 @@ generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, 
             {error, reason_to_binary(Reason)}
     end.
 
+generate_batch_for_gleam(Handle, Prompts, MaxNewTokens, Temperature, TopK, TopP, Seed, StopOnEos) ->
+    Opts = #{
+        max_new_tokens => MaxNewTokens,
+        temperature => Temperature,
+        top_k => case TopK of -1 -> infinity; _ -> TopK end,
+        top_p => TopP,
+        seed => Seed,
+        stop_on_eos => StopOnEos
+    },
+    [generate_result_for_gleam(Result) || Result <- generate_batch(Handle, Prompts, Opts)].
+
 path_exists(Path) ->
     PathList = binary_to_list(to_binary(Path)),
     filelib:is_file(PathList) orelse filelib:is_dir(PathList).
+
+collect_generate_result({Pid, Ref}, Timeout) ->
+    receive
+        {Pid, Result} ->
+            receive
+                {'DOWN', Ref, process, Pid, _Reason} -> ok
+            after 0 ->
+                ok
+            end,
+            Result;
+        {'DOWN', Ref, process, Pid, normal} ->
+            receive
+                {Pid, Result} -> Result
+            after 0 ->
+                {error, {process_crashed, normal}}
+            end;
+        {'DOWN', Ref, process, Pid, Reason} ->
+            {error, {process_crashed, Reason}}
+    after Timeout ->
+        exit(Pid, kill),
+        receive
+            {'DOWN', Ref, process, Pid, _Reason} -> ok
+        after 0 ->
+            ok
+        end,
+        {error, {process_timeout, Timeout}}
+    end.
+
+generate_result_for_gleam({ok, #{tokens := Tokens, text := Text, ms_per_token := Ms, total_tokens := Total}}) ->
+    {ok, {Tokens, Text, Ms, Total}};
+generate_result_for_gleam({error, Reason}) ->
+    {error, reason_to_binary(Reason)}.
 
 generate_argmax(Handle, Prompt, Opts) ->
     Config = maps:get(config, Handle),
@@ -496,6 +555,11 @@ generation_options(Opts) ->
         seed => opt(Opts, seed, 42),
         stop_on_eos => opt(Opts, stop_on_eos, true)
     }.
+
+generate_batch_timeout(Opts) when is_map(Opts) ->
+    opt(Opts, timeout, 60000);
+generate_batch_timeout(_Opts) ->
+    60000.
 
 tokenizer_path(SafetensorsPath, Opts) ->
     case opt(Opts, tokenizer_path, undefined) of
