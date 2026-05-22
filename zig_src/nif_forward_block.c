@@ -1003,6 +1003,9 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
                                      int pos, int head_dim, float eps) {
     BlockState *st = block_state_current();
     int batch = st->cur_batch_size ? st->cur_batch_size : 1;
+    // Note: batch=1 preserves single-prompt behavior byte-identical.
+    // For batch>1, the gemm path produces row-major [batch, dim] output;
+    // downstream kernels (rope, gqa, silu) iterate batch rows on host.
     if (!validate_fp8_weight(q) || !validate_fp8_weight(k) || !validate_fp8_weight(v) ||
         !validate_fp8_weight(o) || !validate_fp8_weight(gate) || !validate_fp8_weight(up) ||
         !validate_fp8_weight(down)) {
@@ -1012,6 +1015,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     int hidden = q->in_features;
     int kv_dim = k->out_features;
     int ffn = gate->out_features;
+    int qkv_stride = hidden + 2 * kv_dim;
+    int gate_up_stride = 2 * ffn;
     int use_qkv = qkv && validate_fp8_weight(qkv);
     int use_gate_up = gate_up && validate_fp8_weight(gate_up);
     int num_heads = hidden / head_dim;
@@ -1044,8 +1049,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     size_t kv32_batch_bytes = kv32_bytes * (size_t)batch;
     size_t ffn16_batch_bytes = ffn16_bytes * (size_t)batch;
     size_t ffn32_batch_bytes = ffn32_bytes * (size_t)batch;
-    size_t qkv_total_bytes = (size_t)(hidden + kv_dim + kv_dim) * sizeof(float);
-    size_t gate_up_total_bytes = (size_t)(ffn + ffn) * sizeof(float);
+    size_t qkv_total_bytes = (size_t)qkv_stride * sizeof(float);
+    size_t gate_up_total_bytes = (size_t)gate_up_stride * sizeof(float);
     if (norm1_bin->size != hidden32_bytes || norm2_bin->size != hidden32_bytes ||
         rope_bin->size != (size_t)(head_dim / 2) * sizeof(float)) {
         return -12;
@@ -1115,17 +1120,18 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
         if (!marlin_qkv)
             DBG_FAIL_RET("marlin_missing_qkv", -9401, 0);
-        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_qkv, (uint16_t *)b_norm16.ptr, 1,
-                                            (uint16_t *)b_weight16.ptr,
-                                            (float *)b_qkv.ptr, g_block_stream)) != 0)
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_qkv, (uint16_t *)b_norm16.ptr, batch,
+                                             (uint16_t *)b_weight16.ptr,
+                                             (float *)b_qkv.ptr, g_block_stream)) != 0)
             return -300 + rc;
-        g_q_ptr = (float *)b_qkv.ptr;
+        g_q_ptr = (float *)b_qkv.ptr + 0 * qkv_stride;
         g_k_ptr = g_q_ptr + hidden;
         g_v_ptr = g_k_ptr + kv_dim;
     } else if (use_qkv) {
-        if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
+        if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, batch,
+                                     (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
-        g_q_ptr = (float *)b_qkv.ptr;
+        g_q_ptr = (float *)b_qkv.ptr + 0 * qkv_stride;
         g_k_ptr = g_q_ptr + hidden;
         g_v_ptr = g_k_ptr + kv_dim;
     } else {
@@ -1136,6 +1142,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
         if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
             return -340 + rc;
     }
+    // For now: only batch_row 0 actually runs through the helper graphs.
+    // C5 will extend this to loop over batch_row when batch > 1.
     if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
                                   num_heads, num_kv_heads, head_dim, eps)) != 0)
         return -400 + rc;
@@ -1163,10 +1171,10 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
                                             (float *)b_up.ptr, g_block_stream)) != 0)
             return -720 + rc;
     } else if (use_gate_up) {
-        if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1,
+        if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, batch,
                                      (float *)b_gate_up.ptr)) != 0)
             return -700 + rc;
-        g_gate_ptr = (float *)b_gate_up.ptr;
+        g_gate_ptr = (float *)b_gate_up.ptr + 0 * gate_up_stride;
         g_up_ptr = g_gate_ptr + ffn;
     } else {
         if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
@@ -1402,6 +1410,9 @@ static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedW
 static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, int pos) {
     BlockState *st = block_state_current();
     int batch = st->cur_batch_size ? st->cur_batch_size : 1;
+    // Note: batch=1 preserves single-prompt behavior byte-identical.
+    // For batch>1, the gemm path produces row-major [batch, dim] output;
+    // downstream kernels (rope, gqa, silu) iterate batch rows on host.
     if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) || !validate_fp8_weight(l->v) ||
         !validate_fp8_weight(l->o) || !validate_fp8_weight(l->gate) ||
         !validate_fp8_weight(l->up) || !validate_fp8_weight(l->down)) {
@@ -1413,6 +1424,8 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     int ffn = l->gate->out_features;
     int head_dim = l->head_dim > 0 ? l->head_dim : DEFAULT_LLAMA_HEAD_DIM;
     float eps = l->eps > 0.0f ? l->eps : DEFAULT_LLAMA_EPS;
+    int qkv_stride = hidden + 2 * kv_dim;
+    int gate_up_stride = 2 * ffn;
     int use_qkv = l->qkv && validate_fp8_weight(l->qkv);
     int use_gate_up = l->gate_up && validate_fp8_weight(l->gate_up);
     int num_heads = hidden / head_dim;
@@ -1452,8 +1465,8 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     size_t kv32_batch_bytes = kv32_bytes * (size_t)batch;
     size_t ffn16_batch_bytes = ffn16_bytes * (size_t)batch;
     size_t ffn32_batch_bytes = ffn32_bytes * (size_t)batch;
-    size_t qkv_total_bytes = (size_t)(hidden + kv_dim + kv_dim) * sizeof(float);
-    size_t gate_up_total_bytes = (size_t)(ffn + ffn) * sizeof(float);
+    size_t qkv_total_bytes = (size_t)qkv_stride * sizeof(float);
+    size_t gate_up_total_bytes = (size_t)gate_up_stride * sizeof(float);
 
     BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q,      &b_o,    &b_h1,    &b_x2,
                         &b_x2_16,    &b_attn,   &b_attn16, &b_down, &b_hout16};
@@ -1502,17 +1515,18 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
         if (!l->marlin_qkv)
             DBG_FAIL_RET("marlin_missing_qkv", -9401, 0);
-        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_qkv, (uint16_t *)b_norm16.ptr, 1,
-                                            (uint16_t *)b_weight16.ptr,
-                                            (float *)b_qkv.ptr, g_block_stream)) != 0)
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_qkv, (uint16_t *)b_norm16.ptr, batch,
+                                             (uint16_t *)b_weight16.ptr,
+                                             (float *)b_qkv.ptr, g_block_stream)) != 0)
             return -300 + rc;
-        g_q_ptr = (float *)b_qkv.ptr;
+        g_q_ptr = (float *)b_qkv.ptr + 0 * qkv_stride;
         g_k_ptr = g_q_ptr + hidden;
         g_v_ptr = g_k_ptr + kv_dim;
     } else if (use_qkv) {
-        if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
+        if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, batch,
+                                     (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
-        g_q_ptr = (float *)b_qkv.ptr;
+        g_q_ptr = (float *)b_qkv.ptr + 0 * qkv_stride;
         g_k_ptr = g_q_ptr + hidden;
         g_v_ptr = g_k_ptr + kv_dim;
     } else {
@@ -1523,6 +1537,8 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
         if ((rc = gemm_w8a16_dequant(l->v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
             return -340 + rc;
     }
+    // For now: only batch_row 0 actually runs through the helper graphs.
+    // C5 will extend this to loop over batch_row when batch > 1.
     if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
                                   num_heads, num_kv_heads, head_dim, eps)) != 0)
         return -400 + rc;
@@ -1550,10 +1566,10 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
                                             (float *)b_up.ptr, g_block_stream)) != 0)
             return -720 + rc;
     } else if (use_gate_up) {
-        if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
+        if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, batch,
                                      (float *)b_gate_up.ptr)) != 0)
             return -700 + rc;
-        g_gate_ptr = (float *)b_gate_up.ptr;
+        g_gate_ptr = (float *)b_gate_up.ptr + 0 * gate_up_stride;
         g_up_ptr = g_gate_ptr + ffn;
     } else {
         if ((rc = gemm_w8a16_dequant(l->gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) !=
