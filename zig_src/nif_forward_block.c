@@ -1138,49 +1138,49 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
 
   int rc = 0;
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_norm1_graph", -200 + rc, rc);
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_qkv.ptr)) != 0) return -300 + rc;
+                                 (float *)b_qkv.ptr)) != 0) DBG_FAIL_RET("preloaded_qkv_gemm", -300 + rc, rc);
     g_q_ptr = (float *)b_qkv.ptr;
     g_k_ptr = g_q_ptr + hidden;
     g_v_ptr = g_k_ptr + kv_dim;
   } else {
     if ((rc = gemm_w8a16_dequant(l->q, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_q.ptr)) != 0) return -300 + rc;
+                                 (float *)b_q.ptr)) != 0) DBG_FAIL_RET("preloaded_q_gemm", -300 + rc, rc);
     if ((rc = gemm_w8a16_dequant(l->k, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_k.ptr)) != 0) return -320 + rc;
+                                 (float *)b_k.ptr)) != 0) DBG_FAIL_RET("preloaded_k_gemm", -320 + rc, rc);
     if ((rc = gemm_w8a16_dequant(l->v, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_v.ptr)) != 0) return -340 + rc;
+                                 (float *)b_v.ptr)) != 0) DBG_FAIL_RET("preloaded_v_gemm", -340 + rc, rc);
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
-                                past_len, num_heads, num_kv_heads, head_dim, eps)) != 0) return -400 + rc;
+                                past_len, num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_rope_attn_sequence", -400 + rc, rc);
   if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1,
-                               (float *)b_o.ptr)) != 0) return -500 + rc;
+                               (float *)b_o.ptr)) != 0) DBG_FAIL_RET("preloaded_o_gemm", -500 + rc, rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_post_attn_graph", -600 + rc, rc);
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_gate_up.ptr)) != 0) return -700 + rc;
+                                 (float *)b_gate_up.ptr)) != 0) DBG_FAIL_RET("preloaded_gate_up_gemm", -700 + rc, rc);
     g_gate_ptr = (float *)b_gate_up.ptr;
     g_up_ptr = g_gate_ptr + ffn;
   } else {
     if ((rc = gemm_w8a16_dequant(l->gate, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_gate.ptr)) != 0) return -700 + rc;
+                                 (float *)b_gate.ptr)) != 0) DBG_FAIL_RET("preloaded_gate_gemm", -700 + rc, rc);
     if ((rc = gemm_w8a16_dequant(l->up, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_up.ptr)) != 0) return -720 + rc;
+                                 (float *)b_up.ptr)) != 0) DBG_FAIL_RET("preloaded_up_gemm", -720 + rc, rc);
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_ffn_graph", -800 + rc, rc);
   if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1,
-                               (float *)b_down.ptr)) != 0) return -900 + rc;
+                               (float *)b_down.ptr)) != 0) DBG_FAIL_RET("preloaded_down_gemm", -900 + rc, rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_out_graph", -1000 + rc, rc);
 
   if (g_dyn_past_len_ptr) {
     rc = vt_kv_cache_append_fp16_dyn(l->cache->d_k, l->cache->d_v, b_k_append.ptr,
                                      b_v_append.ptr, g_dyn_past_len_ptr, kv_dim);
-    if (rc != 0) return -30 + rc;
+    if (rc != 0) DBG_FAIL_RET("preloaded_kv_append_dyn", -30 + rc, rc);
   } else {
     size_t offset = (size_t)past_len * kv16_bytes;
     if (cudaMemcpyAsync((uint8_t *)l->cache->d_k + offset, b_k_append.ptr, kv16_bytes,
@@ -1200,23 +1200,23 @@ static int run_decode_token_sequence(EmbeddingTable *embed, int token_id,
                                       float *rope, int pos, int head_dim, float eps) {
   int rc = vt_embedding_lookup_fp16(embed->d_weight, (const int *)b_token_id.ptr,
                                     b_hidden16.ptr, embed->hidden, embed->vocab);
-  if (rc != 0) return -10000 + rc;
+  if (rc != 0) DBG_FAIL_RET("token_embedding", -10000 + rc, rc);
   for (int i = 0; i < layer_count; ++i) {
     rc = run_decode_block_device_preloaded(&layers[i], rope, pos);
-    if (rc != 0) return -11000 + rc;
+    if (rc != 0) DBG_FAIL_RET("token_layer", -11000 + rc, rc);
   }
   g_norm1_ptr = final_norm;
   g_norm2_ptr = NULL;
   g_rope_ptr = rope;
   rc = run_helper_graph(BLOCK_GRAPH_NORM1, embed->hidden, 0, 0, -1, -1, 0, 0,
                         head_dim, eps);
-  if (rc != 0) return -12000 + rc;
+  if (rc != 0) DBG_FAIL_RET("token_final_norm", -12000 + rc, rc);
   rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
                           (float *)b_logits.ptr);
-  if (rc != 0) return -13000 + rc;
+  if (rc != 0) DBG_FAIL_RET("token_lm_head", -13000 + rc, rc);
   rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
                               (int *)b_argmax.ptr);
-  if (rc != 0) return -14000 + rc;
+  if (rc != 0) DBG_FAIL_RET("token_argmax", -14000 + rc, rc);
   (void)token_id;
   return 0;
 }
