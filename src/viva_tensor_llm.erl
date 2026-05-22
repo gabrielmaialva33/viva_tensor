@@ -2,7 +2,7 @@
 %%%
 %%% This module packages the TinyLlama/Llama decode-step path used by
 %%% dev/llama_forward.erl behind an opaque model handle. The hot generation
-%%% loop still calls viva_tensor_zig:nt_forward_decode_step/8.
+%%% loop still calls viva_tensor_zig:nt_forward_decode_step/10.
 -module(viva_tensor_llm).
 
 -export([
@@ -10,7 +10,11 @@
     generate/3,
     generate_batch/3,
     load_for_gleam/1,
+    fp8_w8a16_atom/0,
+    marlin_w4a16_atom/0,
+    generate_for_gleam/9,
     generate_for_gleam/8,
+    generate_batch_for_gleam/9,
     generate_batch_for_gleam/8,
     path_exists/1
 ]).
@@ -115,7 +119,34 @@ load_for_gleam(Path) ->
         {error, Reason} -> {error, reason_to_binary(Reason)}
     end.
 
+fp8_w8a16_atom() -> fp8_w8a16.
+
+marlin_w4a16_atom() -> marlin_w4a16.
+
 generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, StopOnEos) ->
+    generate_for_gleam(
+        Handle,
+        Prompt,
+        MaxNewTokens,
+        Temperature,
+        TopK,
+        TopP,
+        Seed,
+        StopOnEos,
+        fp8_w8a16
+    ).
+
+generate_for_gleam(
+    Handle,
+    Prompt,
+    MaxNewTokens,
+    Temperature,
+    TopK,
+    TopP,
+    Seed,
+    StopOnEos,
+    WeightFormat
+) ->
     Opts = #{
         max_new_tokens => MaxNewTokens,
         temperature => Temperature,
@@ -126,7 +157,8 @@ generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, 
             end,
         top_p => TopP,
         seed => Seed,
-        stop_on_eos => StopOnEos
+        stop_on_eos => StopOnEos,
+        weight_format => weight_format_atom(WeightFormat)
     },
     case generate(Handle, Prompt, Opts) of
         {ok, #{tokens := Tokens, text := Text, ms_per_token := Ms, total_tokens := Total}} ->
@@ -136,6 +168,29 @@ generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, 
     end.
 
 generate_batch_for_gleam(Handle, Prompts, MaxNewTokens, Temperature, TopK, TopP, Seed, StopOnEos) ->
+    generate_batch_for_gleam(
+        Handle,
+        Prompts,
+        MaxNewTokens,
+        Temperature,
+        TopK,
+        TopP,
+        Seed,
+        StopOnEos,
+        fp8_w8a16
+    ).
+
+generate_batch_for_gleam(
+    Handle,
+    Prompts,
+    MaxNewTokens,
+    Temperature,
+    TopK,
+    TopP,
+    Seed,
+    StopOnEos,
+    WeightFormat
+) ->
     Opts = #{
         max_new_tokens => MaxNewTokens,
         temperature => Temperature,
@@ -146,7 +201,8 @@ generate_batch_for_gleam(Handle, Prompts, MaxNewTokens, Temperature, TopK, TopP,
             end,
         top_p => TopP,
         seed => Seed,
-        stop_on_eos => StopOnEos
+        stop_on_eos => StopOnEos,
+        weight_format => weight_format_atom(WeightFormat)
     },
     [generate_result_for_gleam(Result) || Result <- generate_batch(Handle, Prompts, Opts)].
 
@@ -210,6 +266,7 @@ generate_argmax(Handle, Prompt, Opts) ->
     RopeFreqs = maps:get(rope_freqs, Handle),
     MaxNew = maps:get(max_new_tokens, Opts),
     StopOnEos = maps:get(stop_on_eos, Opts),
+    WeightFormat = maps:get(weight_format, Opts),
     BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
     EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
     PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
@@ -231,7 +288,8 @@ generate_argmax(Handle, Prompt, Opts) ->
                             LmHead,
                             CL,
                             Pos,
-                            RopeFreqs
+                            RopeFreqs,
+                            WeightFormat
                         ),
                         {Next, CL}
                     end,
@@ -252,6 +310,7 @@ generate_argmax(Handle, Prompt, Opts) ->
                     MaxNew,
                     EOS,
                     StopOnEos,
+                    WeightFormat,
                     []
                 ),
                 GenUs = us() - TGen,
@@ -284,6 +343,7 @@ decode_loop_decode_fused(
     0,
     _EOS,
     _StopOnEos,
+    _WeightFormat,
     Acc
 ) ->
     lists:reverse(Acc);
@@ -300,6 +360,7 @@ decode_loop_decode_fused(
     Remaining,
     EOS,
     StopOnEos,
+    WeightFormat,
     Acc
 ) ->
     case StopOnEos andalso NextTok =:= EOS of
@@ -315,7 +376,8 @@ decode_loop_decode_fused(
                 LmHead,
                 Caches,
                 Pos,
-                RopeFreqs
+                RopeFreqs,
+                WeightFormat
             ),
             decode_loop_decode_fused(
                 BlockState,
@@ -330,6 +392,7 @@ decode_loop_decode_fused(
                 Remaining - 1,
                 EOS,
                 StopOnEos,
+                WeightFormat,
                 [NextTok | Acc]
             )
     end.
@@ -443,7 +506,8 @@ prefill_sampling(
                             LmHead,
                             CL,
                             Pos,
-                            RopeFreqs
+                            RopeFreqs,
+                            maps:get(weight_format, Opts)
                         )
                 end,
             {Sampled, CL}
@@ -533,7 +597,8 @@ forward_decode_step(
     LmHead,
     Caches,
     Pos,
-    RopeFreqs
+    RopeFreqs,
+    WeightFormat
 ) ->
     case
         viva_tensor_zig:nt_forward_decode_step(
@@ -545,7 +610,8 @@ forward_decode_step(
             LmHead,
             Caches,
             Pos,
-            RopeFreqs
+            RopeFreqs,
+            WeightFormat
         )
     of
         {ok, NextToken} when is_integer(NextToken) ->
@@ -578,7 +644,8 @@ forward_decode_step_sample(
             Caches,
             Pos,
             RopeFreqs,
-            TopK
+            TopK,
+            maps:get(weight_format, Opts)
         )
     of
         {ok, {IndicesBin, ValuesBin}} when is_binary(IndicesBin), is_binary(ValuesBin) ->
@@ -828,8 +895,17 @@ generation_options(Opts) ->
         top_k => opt(Opts, top_k, infinity),
         top_p => float_opt(Opts, top_p, 1.0),
         seed => opt(Opts, seed, 42),
-        stop_on_eos => opt(Opts, stop_on_eos, true)
+        stop_on_eos => opt(Opts, stop_on_eos, true),
+        weight_format => weight_format_atom(opt(Opts, weight_format, fp8_w8a16))
     }.
+
+weight_format_atom(fp8_w8a16) -> fp8_w8a16;
+weight_format_atom(marlin_w4a16) -> marlin_w4a16;
+weight_format_atom(<<"fp8_w8a16">>) -> fp8_w8a16;
+weight_format_atom(<<"marlin_w4a16">>) -> marlin_w4a16;
+weight_format_atom("fp8_w8a16") -> fp8_w8a16;
+weight_format_atom("marlin_w4a16") -> marlin_w4a16;
+weight_format_atom(_) -> invalid_weight_format.
 
 generate_batch_timeout(Opts) when is_map(Opts) ->
     opt(Opts, timeout, 60000);

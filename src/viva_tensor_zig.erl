@@ -250,6 +250,8 @@
     block_state_new/0,
     block_state_free/1,
     nt_forward_block_w8a16/14,
+    nt_forward_decode_step/10,
+    nt_forward_decode_step_topk/11,
     nt_forward_decode_step/9,
     nt_forward_decode_step_topk/10,
     nt_forward_decode_step/8,
@@ -815,6 +817,19 @@ nt_forward_decode_step(
 ) ->
     erlang:nif_error(nif_not_loaded).
 nt_forward_decode_step(
+    _BlockState,
+    _TokenId,
+    _EmbeddingTable,
+    _Layers,
+    _FinalNormFp32,
+    _LmHead,
+    _KvCaches,
+    _Pos,
+    _RopeFreqsFp32,
+    _WeightFormat
+) ->
+    erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step(
     _TokenId,
     _EmbeddingTable,
     _Layers,
@@ -836,6 +851,20 @@ nt_forward_decode_step_topk(
     _Pos,
     _RopeFreqsFp32,
     _K
+) ->
+    erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step_topk(
+    _BlockState,
+    _TokenId,
+    _EmbeddingTable,
+    _Layers,
+    _FinalNormFp32,
+    _LmHead,
+    _KvCaches,
+    _Pos,
+    _RopeFreqsFp32,
+    _K,
+    _WeightFormat
 ) ->
     erlang:nif_error(nif_not_loaded).
 nt_forward_decode_step_topk(

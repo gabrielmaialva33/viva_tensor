@@ -280,6 +280,14 @@ pub type GenerateTopK {
   TopK(Int)
 }
 
+/// Quantized weight format for decode linears.
+pub type WeightFormat {
+  FP8W8A16
+  MarlinW4A16
+}
+
+type WeightFormatAtom
+
 /// Text generation options for `generate`.
 pub type GenerateOpts {
   GenerateOpts(
@@ -289,6 +297,7 @@ pub type GenerateOpts {
     top_p: Float,
     seed: Int,
     stop_on_eos: Bool,
+    weight_format: WeightFormat,
   )
 }
 
@@ -5626,6 +5635,7 @@ pub fn generate(
     TopKInfinity -> -1
     TopK(k) -> k
   }
+  let weight_format = weight_format_to_atom(opts.weight_format)
 
   case
     generate_ffi(
@@ -5637,6 +5647,7 @@ pub fn generate(
       opts.top_p,
       opts.seed,
       opts.stop_on_eos,
+      weight_format,
     )
   {
     Ok(#(tokens, text, ms_per_token, total_tokens)) ->
@@ -5660,6 +5671,7 @@ pub fn generate_batch(
     TopKInfinity -> -1
     TopK(k) -> k
   }
+  let weight_format = weight_format_to_atom(opts.weight_format)
 
   generate_batch_ffi(
     model,
@@ -5670,6 +5682,7 @@ pub fn generate_batch(
     opts.top_p,
     opts.seed,
     opts.stop_on_eos,
+    weight_format,
   )
   |> list.map(fn(result) {
     case result {
@@ -5694,7 +5707,15 @@ pub fn default_generate_opts() -> GenerateOpts {
     top_p: 1.0,
     seed: 42,
     stop_on_eos: True,
+    weight_format: FP8W8A16,
   )
+}
+
+fn weight_format_to_atom(format: WeightFormat) -> WeightFormatAtom {
+  case format {
+    FP8W8A16 -> fp8_w8a16_atom()
+    MarlinW4A16 -> marlin_w4a16_atom()
+  }
 }
 
 // --- Inference API (re-export) ----------------------------------------------
@@ -5837,6 +5858,7 @@ fn generate_ffi(
   top_p: Float,
   seed: Int,
   stop_on_eos: Bool,
+  weight_format: WeightFormatAtom,
 ) -> Result(#(List(Int), String, Float, Int), String)
 
 @external(erlang, "viva_tensor_llm", "generate_batch_for_gleam")
@@ -5849,7 +5871,14 @@ fn generate_batch_ffi(
   top_p: Float,
   seed: Int,
   stop_on_eos: Bool,
+  weight_format: WeightFormatAtom,
 ) -> List(Result(#(List(Int), String, Float, Int), String))
+
+@external(erlang, "viva_tensor_llm", "fp8_w8a16_atom")
+fn fp8_w8a16_atom() -> WeightFormatAtom
+
+@external(erlang, "viva_tensor_llm", "marlin_w4a16_atom")
+fn marlin_w4a16_atom() -> WeightFormatAtom
 
 fn validate_marlin_w4a16_shape(
   weight_shape: List(Int),
