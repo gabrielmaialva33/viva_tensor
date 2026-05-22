@@ -10,6 +10,7 @@
     generate/3,
     generate_batch/3,
     load_for_gleam/1,
+    load_marlin_for_gleam/1,
     fp8_w8a16_atom/0,
     marlin_w4a16_atom/0,
     generate_for_gleam/9,
@@ -24,6 +25,8 @@
 -define(DEFAULT_HEAD_DIM, 64).
 -define(DEFAULT_EPS, 1.0e-5).
 -define(DEFAULT_ROPE_THETA, 10000.0).
+-define(MARLIN_GROUPSIZE, 128).
+-define(MARLIN_MIN_SCALE, 1.0e-4).
 
 load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
     try
@@ -117,6 +120,19 @@ load_for_gleam(Path) ->
     case load(Path, #{}) of
         {ok, Handle} -> {ok, Handle};
         {error, Reason} -> {error, reason_to_binary(Reason)}
+    end.
+
+load_marlin_for_gleam(Path) ->
+    case load(Path, #{}) of
+        {ok, Handle0} ->
+            case prepack_all_linears_marlin(Handle0) of
+                {ok, MarlinHandles} ->
+                    {ok, Handle0#{marlin_handles => MarlinHandles, weight_format => marlin_w4a16}};
+                {error, R} ->
+                    {error, reason_to_binary(R)}
+            end;
+        {error, Reason} ->
+            {error, reason_to_binary(Reason)}
     end.
 
 fp8_w8a16_atom() -> fp8_w8a16.
@@ -816,6 +832,318 @@ build_layer_blocked(Header, LayerIdx, Config) ->
         gate_up => prepack_blocked(GateUpProj, Hidden, Ffn + Ffn, BlockSize),
         down => prepack_blocked(DownProj, Ffn, Hidden, BlockSize)
     }.
+
+prepack_all_linears_marlin(Handle) ->
+    try
+        SafetensorsPath = maps:get(safetensors_path, Handle),
+        Config = maps:get(config, Handle),
+        {ok, Header} = viva_tensor_safetensors_ffi:open(SafetensorsPath),
+        LayerIds = lists:seq(0, maps:get(num_layers, Config) - 1),
+        lists:foldl(
+            fun
+                (LayerIdx, {ok, Acc}) ->
+                    case prepack_layer_linears_marlin(Header, LayerIdx, Config) of
+                        {ok, LayerHandles} -> {ok, maps:put(LayerIdx, LayerHandles, Acc)};
+                        {error, _} = Error -> Error
+                    end;
+                (_LayerIdx, Error) ->
+                    Error
+            end,
+            {ok, #{}},
+            LayerIds
+        )
+    catch
+        Class:Reason:Stack ->
+            {error, {Class, Reason, Stack}}
+    end.
+
+prepack_layer_linears_marlin(Header, LayerIdx, Config) ->
+    Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
+    P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
+    Hidden = maps:get(hidden_size, Config),
+    KvDim = maps:get(kv_dim, Config),
+    Ffn = maps:get(ffn_size, Config),
+    with_marlin_linear(Header, P("self_attn.q_proj.weight"), Hidden, Hidden, fun(Q) ->
+        with_marlin_linear(Header, P("self_attn.k_proj.weight"), KvDim, Hidden, fun(K) ->
+            with_marlin_linear(Header, P("self_attn.v_proj.weight"), KvDim, Hidden, fun(V) ->
+                QKVWeight = concat_fp16_columns(
+                    [
+                        {maps:get(weight, Q), Hidden},
+                        {maps:get(weight, K), KvDim},
+                        {maps:get(weight, V), KvDim}
+                    ],
+                    Hidden
+                ),
+                QKVScales = compute_marlin_scales(
+                    QKVWeight,
+                    Hidden,
+                    Hidden + KvDim + KvDim,
+                    ?MARLIN_GROUPSIZE
+                ),
+                with_marlin_pack(
+                    QKVWeight,
+                    QKVScales,
+                    Hidden,
+                    Hidden + KvDim + KvDim,
+                    fun(QKVHandle) ->
+                        with_marlin_pack_from_safetensors(
+                            Header,
+                            P("self_attn.o_proj.weight"),
+                            Hidden,
+                            Hidden,
+                            fun(OHandle) ->
+                                with_marlin_pack_from_safetensors(
+                                    Header,
+                                    P("mlp.gate_proj.weight"),
+                                    Ffn,
+                                    Hidden,
+                                    fun(GateHandle) ->
+                                        with_marlin_pack_from_safetensors(
+                                            Header,
+                                            P("mlp.up_proj.weight"),
+                                            Ffn,
+                                            Hidden,
+                                            fun(UpHandle) ->
+                                                with_marlin_pack_from_safetensors(
+                                                    Header,
+                                                    P("mlp.down_proj.weight"),
+                                                    Hidden,
+                                                    Ffn,
+                                                    fun(DownHandle) ->
+                                                        {ok, #{
+                                                            qkv => QKVHandle,
+                                                            o => OHandle,
+                                                            gate => GateHandle,
+                                                            up => UpHandle,
+                                                            down => DownHandle
+                                                        }}
+                                                    end
+                                                )
+                                            end
+                                        )
+                                    end
+                                )
+                            end
+                        )
+                    end
+                )
+            end)
+        end)
+    end).
+
+with_marlin_pack_from_safetensors(Header, Name, OutF, InF, Fun) ->
+    case load_marlin_linear(Header, Name, OutF, InF) of
+        {ok, Linear} ->
+            with_marlin_pack(
+                maps:get(weight, Linear),
+                maps:get(scales, Linear),
+                InF,
+                OutF,
+                Fun
+            );
+        {error, _} = Error ->
+            Error
+    end.
+
+with_marlin_linear(Header, Name, OutF, InF, Fun) ->
+    case load_marlin_linear(Header, Name, OutF, InF) of
+        {ok, Linear} -> Fun(Linear);
+        {error, _} = Error -> Error
+    end.
+
+load_marlin_linear(Header, Name, OutF, InF) ->
+    case load_linear_fp16_transposed(Header, Name, OutF, InF) of
+        {ok, WeightFp16} ->
+            {ok, #{
+                weight => WeightFp16,
+                scales => compute_marlin_scales(WeightFp16, InF, OutF, ?MARLIN_GROUPSIZE)
+            }};
+        {error, _} = Error ->
+            Error
+    end.
+
+with_marlin_pack(WeightFp16, ScalesFp16, K, N, Fun) ->
+    case quantize_and_pack(WeightFp16, ScalesFp16, K, N) of
+        {ok, Handle} -> Fun(Handle);
+        {error, _} = Error -> Error
+    end.
+
+quantize_and_pack(WeightFp16, ScalesFp16, K, N) ->
+    case K rem ?MARLIN_GROUPSIZE =:= 0 andalso N rem 256 =:= 0 of
+        true ->
+            try
+                normalize_marlin_pack_result(
+                    viva_tensor_zig:marlin_w4a16_prepack(
+                        WeightFp16,
+                        ScalesFp16,
+                        K,
+                        N,
+                        ?MARLIN_GROUPSIZE
+                    )
+                )
+            catch
+                Class:Reason:Stack -> {error, {marlin_prepack_failed, Class, Reason, Stack}}
+            end;
+        false ->
+            {error, {invalid_marlin_shape, K, N, ?MARLIN_GROUPSIZE}}
+    end.
+
+normalize_marlin_pack_result({ok, Resource}) when is_reference(Resource) ->
+    {ok, Resource};
+normalize_marlin_pack_result({error, Reason, Code}) when is_integer(Code) ->
+    {error, {Reason, Code}};
+normalize_marlin_pack_result({error, Reason}) ->
+    {error, Reason};
+normalize_marlin_pack_result(Resource) when is_reference(Resource) ->
+    {ok, Resource};
+normalize_marlin_pack_result(Other) ->
+    {error, {unexpected_marlin_prepack_result, Other}}.
+
+load_linear_fp16_transposed(Header, Name, OutF, InF) ->
+    case viva_tensor_safetensors_ffi:read_tensor_raw(Header, Name) of
+        {ok, Dtype, Bin} ->
+            transpose_raw_to_fp16(Dtype, Bin, OutF, InF);
+        Error ->
+            Error
+    end.
+
+transpose_raw_to_fp16(Dtype, Bin, OutF, InF) when is_binary(Bin) ->
+    ExpectedBytes = OutF * InF * 2,
+    case byte_size(Bin) of
+        ExpectedBytes ->
+            {ok, iolist_to_binary([transpose_fp16_row(Dtype, Bin, K, OutF, InF) || K <- lists:seq(0, InF - 1)])};
+        _ ->
+            {error, {size_mismatch, Dtype, byte_size(Bin), ExpectedBytes}}
+    end.
+
+transpose_fp16_row(<<"F16">>, Bin, K, OutF, InF) ->
+    [binary_part(Bin, (N * InF + K) * 2, 2) || N <- lists:seq(0, OutF - 1)];
+transpose_fp16_row(<<"BF16">>, Bin, K, OutF, InF) ->
+    [
+        begin
+            <<U:16/unsigned-little>> = binary_part(Bin, (N * InF + K) * 2, 2),
+            <<(fp16_encode(bf16_to_float(U))):16/unsigned-little>>
+        end
+     || N <- lists:seq(0, OutF - 1)
+    ];
+transpose_fp16_row(Dtype, _Bin, _K, _OutF, _InF) ->
+    error({unsupported_dtype, Dtype}).
+
+concat_fp16_columns(Parts, Rows) ->
+    BytesPerHalf = 2,
+    iolist_to_binary([
+        [
+            binary_part(Bin, Row * Cols * BytesPerHalf, Cols * BytesPerHalf)
+         || {Bin, Cols} <- Parts
+        ]
+     || Row <- lists:seq(0, Rows - 1)
+    ]).
+
+compute_marlin_scales(WeightFp16, K, N, Groupsize) ->
+    Groups = K div Groupsize,
+    iolist_to_binary([
+        [
+            <<(fp16_encode(marlin_scale_for_column(WeightFp16, G, Col, N, Groupsize))):16/unsigned-little>>
+         || Col <- lists:seq(0, N - 1)
+        ]
+     || G <- lists:seq(0, Groups - 1)
+    ]).
+
+marlin_scale_for_column(WeightFp16, Group, Col, N, Groupsize) ->
+    MaxAbs = marlin_group_col_max_abs(WeightFp16, Group * Groupsize, Groupsize, Col, N, 0.0),
+    Scale0 = MaxAbs / 7.0,
+    case Scale0 < ?MARLIN_MIN_SCALE of
+        true -> ?MARLIN_MIN_SCALE;
+        false -> Scale0
+    end.
+
+marlin_group_col_max_abs(_WeightFp16, _Row, 0, _Col, _N, Acc) ->
+    Acc;
+marlin_group_col_max_abs(WeightFp16, Row, Remaining, Col, N, Acc) ->
+    <<H:16/unsigned-little>> = binary_part(WeightFp16, (Row * N + Col) * 2, 2),
+    V = abs_float(fp16_to_float(H)),
+    marlin_group_col_max_abs(WeightFp16, Row + 1, Remaining - 1, Col, N, max(Acc, V)).
+
+bf16_to_float(U) ->
+    <<F:32/float-little>> = <<0:16/unsigned-little, U:16/unsigned-little>>,
+    F.
+
+fp16_to_float(H) ->
+    Sign = (H bsr 15) band 1,
+    Exp = (H bsr 10) band 16#1F,
+    Frac = H band 16#3FF,
+    V =
+        case Exp of
+            0 when Frac =:= 0 -> 0.0;
+            0 -> (Frac / 1024.0) * math:pow(2.0, -14.0);
+            16#1F when Frac =:= 0 -> 1.7976931348623157e308;
+            16#1F -> 0.0;
+            _ -> (1.0 + Frac / 1024.0) * math:pow(2.0, float(Exp - 15))
+        end,
+    case Sign of
+        0 -> V;
+        1 -> -V
+    end.
+
+fp16_encode(F) when is_float(F) ->
+    <<S:1, E:8, M:23>> = <<F:32/float-big>>,
+    case E of
+        0 ->
+            S bsl 15;
+        255 ->
+            (S bsl 15) bor (16#1F bsl 10) bor
+                (case M of
+                    0 -> 0;
+                    _ -> 1
+                end);
+        _ ->
+            UnbiasedE = E - 127,
+            case UnbiasedE of
+                X when X < -24 ->
+                    S bsl 15;
+                X when X < -14 ->
+                    MantFull = M bor 16#800000,
+                    Shift = -1 - X,
+                    (S bsl 15) bor (MantFull bsr Shift);
+                X when X > 15 ->
+                    (S bsl 15) bor (16#1F bsl 10);
+                X ->
+                    Eh = X + 15,
+                    Mh = M bsr 13,
+                    Round = (M bsr 12) band 1,
+                    Sticky =
+                        case M band 16#FFF of
+                            0 -> 0;
+                            _ -> 1
+                        end,
+                    {Mh2, Eh2} =
+                        case Round of
+                            0 ->
+                                {Mh, Eh};
+                            1 when Sticky =:= 1 ->
+                                fp16_round_mantissa(Mh, Eh);
+                            1 when (Mh band 1) =:= 1 ->
+                                fp16_round_mantissa(Mh, Eh);
+                            1 ->
+                                {Mh, Eh}
+                        end,
+                    (S bsl 15) bor (Eh2 bsl 10) bor Mh2
+            end
+    end;
+fp16_encode(0) ->
+    0;
+fp16_encode(F) when is_integer(F) ->
+    fp16_encode(float(F)).
+
+fp16_round_mantissa(Mh, Eh) ->
+    Mh1 = Mh + 1,
+    case Mh1 of
+        1024 -> {0, Eh + 1};
+        _ -> {Mh1, Eh}
+    end.
+
+abs_float(V) when V < 0.0 -> -V;
+abs_float(V) -> V.
 
 require_tensors(Header, Names, LayerIdx) ->
     lists:foreach(
