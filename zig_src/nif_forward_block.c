@@ -57,8 +57,6 @@ typedef struct {
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
 static ErlNifMutex *g_block_decode_mutex = NULL;
 
-static int g_full_decode_capture = 0;
-
 typedef struct {
   void *d_k;
   void *d_v;
@@ -240,6 +238,25 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_block_graphs (block_state_current()->block_graphs)
 #define g_block_graph_count (block_state_current()->block_graph_count)
 #define g_block_graph_disabled (block_state_current()->block_graph_disabled)
+#define g_full_decode_capture (block_state_current()->full_decode_capture)
+#define g_decode_norm1 (block_state_current()->decode_norm1)
+#define g_decode_norm2 (block_state_current()->decode_norm2)
+#define g_decode_rope (block_state_current()->decode_rope)
+#define g_decode_final_norm (block_state_current()->decode_final_norm)
+#define g_decode_graphs (block_state_current()->decode_graphs)
+#define g_decode_graph_count (block_state_current()->decode_graph_count)
+#define g_decode_graph_disabled (block_state_current()->decode_graph_disabled)
+#define g_decode_graph_captures (block_state_current()->decode_graph_captures)
+#define g_decode_graph_hits (block_state_current()->decode_graph_hits)
+#define g_decode_graph_updates (block_state_current()->decode_graph_updates)
+#define g_decode_graph_update_failures (block_state_current()->decode_graph_update_failures)
+#define g_decode_graph_failures (block_state_current()->decode_graph_failures)
+#define g_decode_last_capture_error (block_state_current()->decode_last_capture_error)
+#define g_decode_rolling_exec (block_state_current()->decode_rolling_exec)
+#define g_decode_rolling_hidden (block_state_current()->decode_rolling_hidden)
+#define g_decode_rolling_vocab (block_state_current()->decode_rolling_vocab)
+#define g_decode_rolling_layer_count (block_state_current()->decode_rolling_layer_count)
+#define g_decode_rolling_signature (block_state_current()->decode_rolling_signature)
 
 static BlockState *block_state_create(void) {
   BlockState *st = (BlockState *)calloc(1, sizeof(BlockState));
@@ -261,6 +278,17 @@ static void block_state_destroy(BlockState *st) {
     if (st->block_graphs[i].exec) cudaGraphExecDestroy(st->block_graphs[i].exec);
     if (st->block_graphs[i].graph) cudaGraphDestroy(st->block_graphs[i].graph);
   }
+  int rolling_owned_by_entry = 0;
+  for (int i = 0; i < st->decode_graph_count; ++i) {
+    if (st->decode_graphs[i].exec) {
+      if (st->decode_graphs[i].exec == st->decode_rolling_exec) rolling_owned_by_entry = 1;
+      cudaGraphExecDestroy(st->decode_graphs[i].exec);
+    }
+    if (st->decode_graphs[i].graph) cudaGraphDestroy(st->decode_graphs[i].graph);
+  }
+  if (st->decode_rolling_exec && !rolling_owned_by_entry) {
+    cudaGraphExecDestroy(st->decode_rolling_exec);
+  }
   BlockBuf *bufs[] = {
       &st->hidden16, &st->hidden32, &st->norm16,
       &st->norm1, &st->norm2, &st->rope,
@@ -271,9 +299,14 @@ static void block_state_destroy(BlockState *st) {
       &st->k_cache, &st->v_cache, &st->k_append, &st->v_append,
       &st->logits, &st->qkv, &st->gate_up, &st->argmax,
       &st->topk_indices, &st->topk_values,
-      &st->token_id, &st->pos_id, &st->past_len_id};
+      &st->token_id, &st->pos_id, &st->past_len_id,
+      &st->decode_rope.buf, &st->decode_final_norm.buf};
   for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
     block_buf_destroy(bufs[i]);
+  }
+  for (int i = 0; i < DECODE_MAX_LAYERS; ++i) {
+    block_buf_destroy(&st->decode_norm1[i].buf);
+    block_buf_destroy(&st->decode_norm2[i].buf);
   }
   if (st->block_stream) cudaStreamDestroy(st->block_stream);
   if (st->block_workspace) cudaFree(st->block_workspace);
@@ -877,25 +910,6 @@ typedef struct {
   int num_kv_heads;
   float eps;
 } DecodeLayerParams;
-
-static DecodeConstBuf g_decode_norm1[DECODE_MAX_LAYERS];
-static DecodeConstBuf g_decode_norm2[DECODE_MAX_LAYERS];
-static DecodeConstBuf g_decode_rope = {0};
-static DecodeConstBuf g_decode_final_norm = {0};
-static DecodeGraphEntry g_decode_graphs[DECODE_GRAPH_MAX];
-static int g_decode_graph_count = 0;
-static int g_decode_graph_disabled = 0;
-static unsigned g_decode_graph_captures = 0;
-static unsigned g_decode_graph_hits = 0;
-static unsigned g_decode_graph_updates = 0;
-static unsigned g_decode_graph_update_failures = 0;
-static unsigned g_decode_graph_failures = 0;
-static cudaError_t g_decode_last_capture_error = cudaSuccess;
-static cudaGraphExec_t g_decode_rolling_exec = NULL;
-static int g_decode_rolling_hidden = 0;
-static int g_decode_rolling_vocab = 0;
-static int g_decode_rolling_layer_count = 0;
-static uintptr_t g_decode_rolling_signature = 0;
 
 static int decode_graph_debug_enabled(void) {
   const char *v = getenv("VIVA_DECODE_GRAPH_DEBUG");
