@@ -27,6 +27,7 @@ pub fn main() -> Nil {
               top_p: 1.0,
               seed: 42,
               stop_on_eos: True,
+              weight_format: t.FP8W8A16,
             )
           let prompts = list.repeat(prompt, 16)
           let #(seq_us, seq_tokens) = run_sequential(model, prompts, opts)

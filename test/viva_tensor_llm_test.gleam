@@ -39,6 +39,7 @@ pub fn tinyllama_model_handle_generate_hello_test() {
               top_p: 1.0,
               seed: 42,
               stop_on_eos: True,
+              weight_format: t.FP8W8A16,
             )
           let assert Ok(result) = t.generate(model, "Hello", opts)
 
@@ -74,6 +75,7 @@ pub fn deterministic_sampling_with_seed_test() {
               top_p: 0.95,
               seed: 42,
               stop_on_eos: True,
+              weight_format: t.FP8W8A16,
             )
           let opts_43 =
             t.GenerateOpts(
@@ -83,6 +85,7 @@ pub fn deterministic_sampling_with_seed_test() {
               top_p: 0.95,
               seed: 43,
               stop_on_eos: True,
+              weight_format: t.FP8W8A16,
             )
 
           let assert Ok(first) = t.generate(model, "Hello", opts_42)
@@ -186,6 +189,7 @@ fn opts_argmax(max_new_tokens: Int) -> t.GenerateOpts {
     top_p: 1.0,
     seed: 42,
     stop_on_eos: True,
+    weight_format: t.FP8W8A16,
   )
 }
 
