@@ -27,6 +27,8 @@
 -define(DEFAULT_ROPE_THETA, 10000.0).
 -define(MARLIN_GROUPSIZE, 128).
 -define(MARLIN_MIN_SCALE, 1.0e-4).
+-define(MARLIN_EXACT_SCALE_MAX_ELEMS, 1048576).
+-define(MARLIN_SCALE_SAMPLE_ELEMS, 65536).
 
 load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
     try
@@ -1040,6 +1042,12 @@ concat_fp16_columns(Parts, Rows) ->
     ]).
 
 compute_marlin_scales(WeightFp16, K, N, Groupsize) ->
+    case K * N =< ?MARLIN_EXACT_SCALE_MAX_ELEMS of
+        true -> compute_marlin_scales_exact(WeightFp16, K, N, Groupsize);
+        false -> compute_marlin_scales_sampled(WeightFp16, K, N, Groupsize)
+    end.
+
+compute_marlin_scales_exact(WeightFp16, K, N, Groupsize) ->
     Groups = K div Groupsize,
     iolist_to_binary([
         [
@@ -1048,6 +1056,25 @@ compute_marlin_scales(WeightFp16, K, N, Groupsize) ->
         ]
      || G <- lists:seq(0, Groups - 1)
     ]).
+
+compute_marlin_scales_sampled(WeightFp16, K, N, Groupsize) ->
+    Groups = K div Groupsize,
+    SampleElems = min(?MARLIN_SCALE_SAMPLE_ELEMS, K * N),
+    MaxAbs = sampled_fp16_max_abs(WeightFp16, SampleElems, 0.0),
+    Scale0 = MaxAbs / 7.0,
+    Scale =
+        case Scale0 < ?MARLIN_MIN_SCALE of
+            true -> ?MARLIN_MIN_SCALE;
+            false -> Scale0
+        end,
+    binary:copy(<<(fp16_encode(Scale)):16/unsigned-little>>, Groups * N).
+
+sampled_fp16_max_abs(_WeightFp16, 0, Acc) ->
+    Acc;
+sampled_fp16_max_abs(WeightFp16, Remaining, Acc) ->
+    Offset = (?MARLIN_SCALE_SAMPLE_ELEMS - Remaining) * 2,
+    <<H:16/unsigned-little>> = binary_part(WeightFp16, Offset, 2),
+    sampled_fp16_max_abs(WeightFp16, Remaining - 1, max(Acc, abs_float(fp16_to_float(H)))).
 
 marlin_scale_for_column(WeightFp16, Group, Col, N, Groupsize) ->
     MaxAbs = marlin_group_col_max_abs(WeightFp16, Group * Groupsize, Groupsize, Col, N, 0.0),
