@@ -91,6 +91,8 @@ typedef enum {
     BLOCK_GRAPH_OUT = 5
 } BlockGraphKind;
 
+typedef enum { WEIGHT_FORMAT_FP8 = 0, WEIGHT_FORMAT_MARLIN = 1 } WeightFormat;
+
 typedef struct {
     int kind;
     int hidden;
@@ -133,6 +135,7 @@ typedef struct {
     int hidden;
     int vocab;
     int layer_count;
+    int weight_format;
     uintptr_t signature;
     cudaGraph_t graph;
     cudaGraphExec_t exec;
@@ -172,6 +175,7 @@ typedef struct {
     int *dyn_pos_ptr;
     int *dyn_past_len_ptr;
     int full_decode_capture;
+    WeightFormat weight_format;
 
     BlockGraphEntry block_graphs[BLOCK_GRAPH_MAX];
     int block_graph_count;
@@ -194,6 +198,7 @@ typedef struct {
     int decode_rolling_hidden;
     int decode_rolling_vocab;
     int decode_rolling_layer_count;
+    int decode_rolling_weight_format;
     uintptr_t decode_rolling_signature;
 } BlockState;
 
@@ -255,6 +260,7 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_rope_ptr                     (block_state_current()->rope_ptr)
 #define g_dyn_pos_ptr                  (block_state_current()->dyn_pos_ptr)
 #define g_dyn_past_len_ptr             (block_state_current()->dyn_past_len_ptr)
+#define g_weight_format                (block_state_current()->weight_format)
 #define g_block_graphs                 (block_state_current()->block_graphs)
 #define g_block_graph_count            (block_state_current()->block_graph_count)
 #define g_block_graph_disabled         (block_state_current()->block_graph_disabled)
@@ -276,6 +282,7 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_decode_rolling_hidden        (block_state_current()->decode_rolling_hidden)
 #define g_decode_rolling_vocab         (block_state_current()->decode_rolling_vocab)
 #define g_decode_rolling_layer_count   (block_state_current()->decode_rolling_layer_count)
+#define g_decode_rolling_weight_format (block_state_current()->decode_rolling_weight_format)
 #define g_decode_rolling_signature     (block_state_current()->decode_rolling_signature)
 
 static BlockState *block_state_create(void) {
@@ -851,6 +858,29 @@ static PackedWeight *map_get_weight(ErlNifEnv *env, ERL_NIF_TERM map, const char
     return get_packed_weight(env, val);
 }
 
+static int map_has_key(ErlNifEnv *env, ERL_NIF_TERM map, const char *key) {
+    ERL_NIF_TERM val;
+    return enif_get_map_value(env, map, enif_make_atom(env, key), &val);
+}
+
+static int decode_layer_has_marlin_weights(ErlNifEnv *env, ERL_NIF_TERM layer) {
+    return map_has_key(env, layer, "marlin_packed_resources") ||
+           map_has_key(env, layer, "marlin_q") || map_has_key(env, layer, "marlin_qkv") ||
+           map_has_key(env, layer, "marlin_gate_up");
+}
+
+static int parse_weight_format(ErlNifEnv *env, ERL_NIF_TERM term, WeightFormat *out) {
+    if (enif_is_identical(term, enif_make_atom(env, "fp8_w8a16"))) {
+        *out = WEIGHT_FORMAT_FP8;
+        return 1;
+    }
+    if (enif_is_identical(term, enif_make_atom(env, "marlin_w4a16"))) {
+        *out = WEIGHT_FORMAT_MARLIN;
+        return 1;
+    }
+    return 0;
+}
+
 static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeight *v,
                                    PackedWeight *o, PackedWeight *gate, PackedWeight *up,
                                    PackedWeight *down, PackedWeight *qkv, PackedWeight *gate_up,
@@ -948,6 +978,7 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -200 + rc;
+    /* TODO B4-dispatch: branch on weight_format here */
     if (use_qkv) {
         if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
@@ -1055,11 +1086,13 @@ static int ensure_decode_const(DecodeConstBuf *dst, const ErlNifBinary *src) {
 }
 
 static DecodeGraphEntry *find_decode_graph(int pos, int past_len, int hidden, int vocab,
-                                           int layer_count, uintptr_t signature) {
+                                           int layer_count, int weight_format,
+                                           uintptr_t signature) {
     for (int i = 0; i < g_decode_graph_count; ++i) {
         DecodeGraphEntry *e = &g_decode_graphs[i];
         if (e->pos == pos && e->past_len == past_len && e->hidden == hidden && e->vocab == vocab &&
-            e->layer_count == layer_count && e->signature == signature) {
+            e->layer_count == layer_count && e->weight_format == weight_format &&
+            e->signature == signature) {
             return e;
         }
     }
@@ -1067,7 +1100,8 @@ static DecodeGraphEntry *find_decode_graph(int pos, int past_len, int hidden, in
 }
 
 static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, int vocab,
-                                            int layer_count, uintptr_t signature) {
+                                            int layer_count, int weight_format,
+                                            uintptr_t signature) {
     if (g_decode_graph_count >= DECODE_GRAPH_MAX)
         return NULL;
     DecodeGraphEntry *e = &g_decode_graphs[g_decode_graph_count++];
@@ -1077,14 +1111,16 @@ static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, i
     e->hidden = hidden;
     e->vocab = vocab;
     e->layer_count = layer_count;
+    e->weight_format = weight_format;
     e->signature = signature;
     return e;
 }
 
 static int rolling_decode_graph_compatible(int hidden, int vocab, int layer_count,
-                                           uintptr_t signature) {
+                                           int weight_format, uintptr_t signature) {
     return g_decode_rolling_exec && g_decode_rolling_hidden == hidden &&
            g_decode_rolling_vocab == vocab && g_decode_rolling_layer_count == layer_count &&
+           g_decode_rolling_weight_format == weight_format &&
            g_decode_rolling_signature == signature;
 }
 
@@ -1101,7 +1137,7 @@ static cudaError_t update_decode_rolling_exec(cudaGraph_t graph) {
 }
 
 static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab, int layer_count,
-                                    uintptr_t signature) {
+                                    int weight_format, uintptr_t signature) {
     if (g_decode_rolling_exec && g_decode_rolling_exec != exec) {
         cudaGraphExecDestroy(g_decode_rolling_exec);
     }
@@ -1109,6 +1145,7 @@ static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab,
     g_decode_rolling_hidden = hidden;
     g_decode_rolling_vocab = vocab;
     g_decode_rolling_layer_count = layer_count;
+    g_decode_rolling_weight_format = weight_format;
     g_decode_rolling_signature = signature;
 }
 
@@ -1244,6 +1281,7 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -200 + rc;
+    /* TODO B4-dispatch: branch on weight_format here */
     if (use_qkv) {
         if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
@@ -1689,8 +1727,14 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
     (void)return_topk;
     return make_error(env, "cuda_not_available");
 #else
-    if (argc != (return_topk ? 9 : 8))
+    int base_arity = return_topk ? 9 : 8;
+    if (argc != base_arity && argc != base_arity + 1)
         return make_error(env, "bad_arity");
+
+    WeightFormat weight_format = WEIGHT_FORMAT_FP8;
+    if (argc == base_arity + 1 && !parse_weight_format(env, argv[base_arity], &weight_format))
+        return make_error(env, "invalid_weight_format");
+    g_weight_format = weight_format;
 
     int token_id = 0, pos = 0, topk = 0;
     if (!enif_get_int(env, argv[0], &token_id) || token_id < 0)
@@ -1754,6 +1798,7 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
     ErlNifBinary norm1_bins[DECODE_MAX_LAYERS];
     ErlNifBinary norm2_bins[DECODE_MAX_LAYERS];
     memset(decode_layers, 0, sizeof(decode_layers));
+    signature = mix_ptr(signature, (const void *)(uintptr_t)weight_format);
     while (enif_get_list_cell(env, layers_tail, &layer_term, &layers_tail)) {
         if (layer_count >= DECODE_MAX_LAYERS)
             return make_error(env, "too_many_layers");
@@ -1775,6 +1820,10 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         PackedWeight *down = map_get_weight(env, layer_term, "down");
         PackedWeight *qkv = map_get_weight(env, layer_term, "qkv");
         PackedWeight *gate_up = map_get_weight(env, layer_term, "gate_up");
+        if (weight_format == WEIGHT_FORMAT_MARLIN &&
+            !decode_layer_has_marlin_weights(env, layer_term)) {
+            return make_block_error(env, "marlin_weights_not_loaded", -8001);
+        }
         int head_dim = map_get_int_default(env, layer_term, "head_dim", DEFAULT_LLAMA_HEAD_DIM);
         float eps = map_get_float_default(env, layer_term, "eps", DEFAULT_LLAMA_EPS);
         BlockKvCache *cache = NULL;
@@ -1890,8 +1939,9 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
     if (graph_ok) {
         int graph_pos_key = -1;
         int graph_past_key = -1;
-        DecodeGraphEntry *entry = find_decode_graph(graph_pos_key, graph_past_key, hidden,
-                                                    embed->vocab, layer_count, signature);
+        DecodeGraphEntry *entry =
+            find_decode_graph(graph_pos_key, graph_past_key, hidden, embed->vocab, layer_count,
+                              (int)g_weight_format, signature);
         if (entry && entry->exec) {
             cudaError_t launch_err = cudaGraphLaunch(entry->exec, g_block_stream);
             if (launch_err != cudaSuccess) {
@@ -1936,7 +1986,7 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                 } else {
                     g_decode_graph_captures++;
                     if (rolling_decode_graph_compatible(hidden, embed->vocab, layer_count,
-                                                        signature)) {
+                                                        (int)g_weight_format, signature)) {
                         err = update_decode_rolling_exec(graph);
                         if (err == cudaSuccess) {
                             g_decode_graph_updates++;
@@ -1965,7 +2015,7 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                                 graph_ok = 0;
                             } else {
                                 set_decode_rolling_exec(exec, hidden, embed->vocab, layer_count,
-                                                        signature);
+                                                        (int)g_weight_format, signature);
                                 err = cudaGraphLaunch(exec, g_block_stream);
                                 cudaGraphDestroy(graph);
                                 if (err != cudaSuccess) {
@@ -1992,10 +2042,12 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                             cudaError_t roll_err = cudaGraphInstantiate(&rolling_exec, graph, 0);
                             if (roll_err == cudaSuccess && rolling_exec) {
                                 set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
-                                                        layer_count, signature);
+                                                        layer_count, (int)g_weight_format,
+                                                        signature);
                             }
                             entry = alloc_decode_graph(graph_pos_key, graph_past_key, hidden,
-                                                       embed->vocab, layer_count, signature);
+                                                       embed->vocab, layer_count,
+                                                       (int)g_weight_format, signature);
                             if (entry) {
                                 entry->graph = graph;
                                 entry->exec = exec;
@@ -2109,18 +2161,23 @@ static ERL_NIF_TERM nt_forward_decode_step_with_state(ErlNifEnv *env, int argc,
     return nt_forward_decode_step_impl(env, argc, argv, return_topk);
 #else
     int base_arity = return_topk ? 9 : 8;
+    int max_arity = base_arity + 1;
     BlockState *state = NULL;
     const ERL_NIF_TERM *impl_argv = argv;
     int impl_argc = argc;
-    if (argc == base_arity + 1) {
+    if (argc == base_arity + 1 || argc == max_arity + 1) {
         BlockStateResource *res = NULL;
-        if (!enif_get_resource(env, argv[0], BLOCK_STATE_RES, (void **)&res) || !res ||
-            !res->state) {
+        if (enif_get_resource(env, argv[0], BLOCK_STATE_RES, (void **)&res) && res && res->state) {
+            state = res->state;
+            impl_argv = argv + 1;
+            impl_argc = argc - 1;
+        } else if (argc == base_arity + 1) {
+            if (block_state_init_default() != 0)
+                return make_error(env, "block_state_alloc_failed");
+            state = g_default_state;
+        } else {
             return make_error(env, "invalid_block_state");
         }
-        state = res->state;
-        impl_argv = argv + 1;
-        impl_argc = base_arity;
     } else if (argc == base_arity) {
         if (block_state_init_default() != 0)
             return make_error(env, "block_state_alloc_failed");

@@ -479,7 +479,7 @@ ERL_NIF_TERM nt_matmul_blas(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     if (!c)
         return make_error(env, "out_of_memory");
 
-    /* C = alpha * A @ B + beta * C
+        /* C = alpha * A @ B + beta * C
    * cblas_dgemm(order, transA, transB, m, n, k, alpha, A, lda, B, ldb, beta, C, ldc)
    * Row-major: lda=k, ldb=n, ldc=n
    */
@@ -1510,7 +1510,7 @@ static ERL_NIF_TERM fused_linear_relu_into_checked(ErlNifEnv *env, NativeTensor 
     if (a->size != m * k || b->size != k * n || bias->size != n || out->size != m * n)
         return make_error(env, "shape_mismatch");
 
-    /* Step 1: out = A @ B via BLAS */
+        /* Step 1: out = A @ B via BLAS */
 #if defined(_WIN32) || defined(USE_MKL_DIRECT)
     cblas_dgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, m, n, k, 1.0, a->data + a->offset, k,
                 b->data + b->offset, n, 0.0, out->data + out->offset, n);
