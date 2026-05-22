@@ -22,10 +22,12 @@
 //// ```
 
 import gleam/dict.{type Dict}
+import gleam/dynamic.{type Dynamic}
 import gleam/int
 import gleam/list
 import gleam/option.{type Option}
 import gleam/result
+import gleam/string
 import viva_tensor/backend/capability as backend_capability
 import viva_tensor/backend/dispatch as backend_dispatch
 import viva_tensor/core/error.{DimensionError}
@@ -137,6 +139,14 @@ pub type TensorSpec {
 /// Error returned by fallible tensor constructors and operations.
 pub type TensorError =
   tensor.TensorError
+
+type ErlangResource =
+  Dynamic
+
+/// Marlin W4A16 prepacked weight handle.
+pub opaque type MarlinPacked {
+  MarlinPacked(handle: ErlangResource, k: Int, n: Int, groupsize: Int)
+}
 
 /// Backend device class used by runtime capability discovery.
 pub type BackendDevice {
@@ -5728,6 +5738,46 @@ pub fn prepack_int4_sparse_24_weight(
   native_inference.prepack_int4_sparse_24_weight(weight)
 }
 
+/// Pack a `[K, N]` weight tensor and `[groups, N]` scales tensor for Marlin W4A16.
+pub fn prepack_marlin_w4a16(
+  weight: Tensor,
+  scales: Tensor,
+  groupsize: Int,
+) -> Result(MarlinPacked, TensorError) {
+  let weight_shape = shape(weight)
+  let scales_shape = shape(scales)
+
+  use #(k, n) <- result.try(validate_marlin_w4a16_shape(
+    weight_shape,
+    scales_shape,
+    groupsize,
+  ))
+  use weight_values <- result.try(try_to_list(weight))
+  use scale_values <- result.try(try_to_list(scales))
+
+  let prepack_result =
+    marlin_w4a16_prepack(
+      fp64_to_fp16_binary(weight_values),
+      fp64_to_fp16_binary(scale_values),
+      k,
+      n,
+      groupsize,
+    )
+
+  case normalize_marlin_prepack_result(prepack_result) {
+    Ok(handle) ->
+      Ok(MarlinPacked(handle: handle, k: k, n: n, groupsize: groupsize))
+    Error(#(reason, code)) ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16 failed: "
+        <> reason
+        <> " (code "
+        <> int.to_string(code)
+        <> ")",
+      ))
+  }
+}
+
 /// FP8 linear: `input @ weight + bias?`.
 pub fn linear_fp8(
   input: Tensor,
@@ -5800,3 +5850,84 @@ fn generate_batch_ffi(
   seed: Int,
   stop_on_eos: Bool,
 ) -> List(Result(#(List(Int), String, Float, Int), String))
+
+fn validate_marlin_w4a16_shape(
+  weight_shape: List(Int),
+  scales_shape: List(Int),
+  groupsize: Int,
+) -> Result(#(Int, Int), TensorError) {
+  case weight_shape {
+    [k, n] -> validate_marlin_w4a16_dims(k, n, scales_shape, groupsize)
+    other ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16: expected 2-D weight [K, N], got "
+        <> shape_string(other),
+      ))
+  }
+}
+
+fn validate_marlin_w4a16_dims(
+  k: Int,
+  n: Int,
+  scales_shape: List(Int),
+  groupsize: Int,
+) -> Result(#(Int, Int), TensorError) {
+  case groupsize {
+    -1 -> validate_marlin_w4a16_scales(k, n, scales_shape, 1)
+    128 -> validate_marlin_w4a16_scales(k, n, scales_shape, k / 128)
+    _ ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16: groupsize must be -1 or 128, got "
+        <> int.to_string(groupsize),
+      ))
+  }
+}
+
+fn validate_marlin_w4a16_scales(
+  k: Int,
+  n: Int,
+  scales_shape: List(Int),
+  groups: Int,
+) -> Result(#(Int, Int), TensorError) {
+  case k % 128 == 0, n % 256 == 0, scales_shape == [groups, n] {
+    False, _, _ ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16: K must be divisible by 128, got "
+        <> int.to_string(k),
+      ))
+    _, False, _ ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16: N must be divisible by 256, got "
+        <> int.to_string(n),
+      ))
+    _, _, False ->
+      Error(DimensionError(
+        "prepack_marlin_w4a16: expected scales shape "
+        <> shape_string([groups, n])
+        <> ", got "
+        <> shape_string(scales_shape),
+      ))
+    True, True, True -> Ok(#(k, n))
+  }
+}
+
+fn shape_string(shape: List(Int)) -> String {
+  "[" <> string.join(list.map(shape, int.to_string), ", ") <> "]"
+}
+
+@external(erlang, "viva_tensor_inference_ffi", "floats_to_fp16_binary")
+fn fp64_to_fp16_binary(values: List(Float)) -> BitArray
+
+@external(erlang, "viva_tensor_zig", "marlin_w4a16_prepack")
+fn marlin_w4a16_prepack(
+  weight_fp16: BitArray,
+  scales_fp16: BitArray,
+  k: Int,
+  n: Int,
+  groupsize: Int,
+) -> Dynamic
+
+@external(erlang, "viva_tensor_zig", "marlin_w4a16_normalize_prepack_result")
+fn normalize_marlin_prepack_result(
+  result: Dynamic,
+) -> Result(ErlangResource, #(String, Int))
