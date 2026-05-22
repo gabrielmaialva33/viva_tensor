@@ -55,7 +55,6 @@ typedef struct {
 } BlockBuf;
 
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
-static ErlNifMutex *g_block_decode_mutex = NULL;
 
 typedef struct {
   void *d_k;
@@ -66,6 +65,7 @@ typedef struct {
 } BlockKvCache;
 
 static ErlNifResourceType *BLOCK_KV_CACHE_RES = NULL;
+static ErlNifResourceType *BLOCK_STATE_RES = NULL;
 
 typedef enum {
   BLOCK_GRAPH_NORM1 = 1,
@@ -181,13 +181,17 @@ typedef struct {
   uintptr_t decode_rolling_signature;
 } BlockState;
 
+typedef struct {
+  BlockState *state;
+} BlockStateResource;
+
 static BlockState *g_default_state = NULL;
 static _Thread_local BlockState *g_current_state = NULL;
 
-#define g_block_lt (g_default_state->block_lt)
-#define g_block_workspace (g_default_state->block_workspace)
-#define g_block_stream (g_default_state->block_stream)
 #define block_state_current() (g_current_state ? g_current_state : g_default_state)
+#define g_block_lt (block_state_current()->block_lt)
+#define g_block_workspace (block_state_current()->block_workspace)
+#define g_block_stream (block_state_current()->block_stream)
 #define b_hidden16 (block_state_current()->hidden16)
 #define b_hidden32 (block_state_current()->hidden32)
 #define b_norm16 (block_state_current()->norm16)
@@ -314,13 +318,12 @@ static void block_state_destroy(BlockState *st) {
   free(st);
 }
 
-void block_state_init_mutex(void) {
-  if (g_block_decode_mutex == NULL) {
-    g_block_decode_mutex = enif_mutex_create("vt_block_decode");
-  }
+static int block_state_init_default(void) {
   if (g_default_state == NULL) {
     g_default_state = block_state_create();
+    if (!g_default_state) return -1;
   }
+  return 0;
 }
 
 static int ensure_block_buf(BlockBuf *buf, size_t needed) {
@@ -335,7 +338,7 @@ static int ensure_block_buf(BlockBuf *buf, size_t needed) {
 }
 
 static int ensure_block_lt(void) {
-  BlockState *st = g_default_state;
+  BlockState *st = block_state_current();
   if (!st) {
     st = block_state_create();
     if (!st) return -4;
@@ -1234,6 +1237,71 @@ int register_block_kv_cache_resource(ErlNifEnv *env) {
   return BLOCK_KV_CACHE_RES != NULL ? 0 : -1;
 }
 
+void block_state_resource_destructor(ErlNifEnv *env, void *obj) {
+  (void)env;
+#if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
+  BlockStateResource *res = (BlockStateResource *)obj;
+  if (!res) return;
+  block_state_destroy(res->state);
+  res->state = NULL;
+#else
+  (void)obj;
+#endif
+}
+
+int register_block_state_resource(ErlNifEnv *env) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)env;
+  return 0;
+#else
+  if (block_state_init_default() != 0) return -1;
+  BLOCK_STATE_RES = enif_open_resource_type(
+      env, NULL, "BlockState", block_state_resource_destructor,
+      ERL_NIF_RT_CREATE, NULL);
+  return BLOCK_STATE_RES != NULL ? 0 : -1;
+#endif
+}
+
+ERL_NIF_TERM block_state_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  (void)argv;
+  if (argc != 0) return make_error(env, "bad_arity");
+  BlockStateResource *res =
+      (BlockStateResource *)enif_alloc_resource(BLOCK_STATE_RES, sizeof(BlockStateResource));
+  if (!res) return make_error(env, "resource_alloc_failed");
+  res->state = block_state_create();
+  if (!res->state) {
+    enif_release_resource(res);
+    return make_error(env, "block_state_alloc_failed");
+  }
+  ERL_NIF_TERM term = enif_make_resource(env, res);
+  enif_release_resource(res);
+  return make_ok(env, term);
+#endif
+}
+
+ERL_NIF_TERM block_state_free(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  (void)argc;
+  (void)argv;
+  return make_error(env, "cuda_not_available");
+#else
+  if (argc != 1) return make_error(env, "bad_arity");
+  BlockStateResource *res = NULL;
+  if (!enif_get_resource(env, argv[0], BLOCK_STATE_RES, (void **)&res) || !res) {
+    return make_error(env, "invalid_block_state");
+  }
+  if (g_current_state == res->state) g_current_state = NULL;
+  block_state_destroy(res->state);
+  res->state = NULL;
+  return enif_make_atom(env, "ok");
+#endif
+}
+
 ERL_NIF_TERM nt_kv_cache_new(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
   (void)argc;
@@ -1845,16 +1913,43 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc,
 #endif
 }
 
-ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  if (g_block_decode_mutex) enif_mutex_lock(g_block_decode_mutex);
-  ERL_NIF_TERM result = nt_forward_decode_step_impl(env, argc, argv, 0);
-  if (g_block_decode_mutex) enif_mutex_unlock(g_block_decode_mutex);
+static ERL_NIF_TERM nt_forward_decode_step_with_state(ErlNifEnv *env, int argc,
+                                                      const ERL_NIF_TERM argv[],
+                                                      int return_topk) {
+#if defined(_WIN32) || defined(VIVA_NO_CUDA)
+  return nt_forward_decode_step_impl(env, argc, argv, return_topk);
+#else
+  int base_arity = return_topk ? 9 : 8;
+  BlockState *state = NULL;
+  const ERL_NIF_TERM *impl_argv = argv;
+  int impl_argc = argc;
+  if (argc == base_arity + 1) {
+    BlockStateResource *res = NULL;
+    if (!enif_get_resource(env, argv[0], BLOCK_STATE_RES, (void **)&res) ||
+        !res || !res->state) {
+      return make_error(env, "invalid_block_state");
+    }
+    state = res->state;
+    impl_argv = argv + 1;
+    impl_argc = base_arity;
+  } else if (argc == base_arity) {
+    if (block_state_init_default() != 0) return make_error(env, "block_state_alloc_failed");
+    state = g_default_state;
+  } else {
+    return make_error(env, "bad_arity");
+  }
+  BlockState *prev = g_current_state;
+  g_current_state = state;
+  ERL_NIF_TERM result = nt_forward_decode_step_impl(env, impl_argc, impl_argv, return_topk);
+  g_current_state = prev;
   return result;
+#endif
+}
+
+ERL_NIF_TERM nt_forward_decode_step(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+  return nt_forward_decode_step_with_state(env, argc, argv, 0);
 }
 
 ERL_NIF_TERM nt_forward_decode_step_topk(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  if (g_block_decode_mutex) enif_mutex_lock(g_block_decode_mutex);
-  ERL_NIF_TERM result = nt_forward_decode_step_impl(env, argc, argv, 1);
-  if (g_block_decode_mutex) enif_mutex_unlock(g_block_decode_mutex);
-  return result;
+  return nt_forward_decode_step_with_state(env, argc, argv, 1);
 }

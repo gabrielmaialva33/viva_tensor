@@ -143,7 +143,11 @@
     nt_linear_int4_sparse/3,
     nt_linear_swiglu_fp8/5,
     nt_kv_cache_new/2,
+    block_state_new/0,
+    block_state_free/1,
     nt_forward_block_w8a16/14,
+    nt_forward_decode_step/9,
+    nt_forward_decode_step_topk/10,
     nt_forward_decode_step/8,
     nt_forward_decode_step_topk/9,
     cutlass_int8_sparse_bench/5,       %% CUTLASS INT8 2:4 sparse bench (M,N,K,Iters,Config) -> 1320 TOPS!
@@ -619,11 +623,20 @@ nt_linear_int8_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded
 nt_linear_int4_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_swiglu_fp8(_InputData, _InputShape, _GateW, _UpW, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_kv_cache_new(_MaxSeq, _KvDim) -> erlang:nif_error(nif_not_loaded).
+block_state_new() -> erlang:nif_error(nif_not_loaded).
+block_state_free(_BlockState) -> erlang:nif_error(nif_not_loaded).
 nt_forward_block_w8a16(_HiddenFp16, _Q, _K, _V, _O, _Gate, _Up, _Down,
                        _Norm1Fp32, _Norm2Fp32, _Pos, _RopeFreqsFp32,
                        _KCacheFp16, _VCacheFp16) -> erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step(_BlockState, _TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
+                       _LmHead, _KvCaches, _Pos, _RopeFreqsFp32) ->
+    erlang:nif_error(nif_not_loaded).
 nt_forward_decode_step(_TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
                        _LmHead, _KvCaches, _Pos, _RopeFreqsFp32) ->
+    erlang:nif_error(nif_not_loaded).
+nt_forward_decode_step_topk(_BlockState, _TokenId, _EmbeddingTable, _Layers,
+                            _FinalNormFp32, _LmHead, _KvCaches, _Pos,
+                            _RopeFreqsFp32, _K) ->
     erlang:nif_error(nif_not_loaded).
 nt_forward_decode_step_topk(_TokenId, _EmbeddingTable, _Layers, _FinalNormFp32,
                             _LmHead, _KvCaches, _Pos, _RopeFreqsFp32, _K) ->

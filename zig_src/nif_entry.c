@@ -17,8 +17,6 @@
 #include "viva_nif.h"
 #include "nif_packed_weight.h"
 
-extern void block_state_init_mutex(void);
-
 /* =========================================================================
  * NIF Init
  * ========================================================================= */
@@ -29,7 +27,6 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
 
   /* Detect CPU topology once at NIF load (MKL-style runtime init) */
   detect_cpu_topology();
-  block_state_init_mutex();
 
 #ifdef _WIN32
   /* Windows: Configure MKL threads for maximum performance */
@@ -149,6 +146,8 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
   if (register_embedding_table_resource(env) != 0)
     return -1;
   if (register_block_kv_cache_resource(env) != 0)
+    return -1;
+  if (register_block_state_resource(env) != 0)
     return -1;
 #endif
 
@@ -360,7 +359,11 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_linear_int4_sparse", 3, nt_linear_int4_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_kv_cache_new", 2, nt_kv_cache_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"block_state_new", 0, block_state_new, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"block_state_free", 1, block_state_free, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_block_w8a16", 14, nt_forward_block_w8a16, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_forward_decode_step", 9, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"nt_forward_decode_step_topk", 10, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 8, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step_topk", 9, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
