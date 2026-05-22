@@ -15,6 +15,15 @@
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
 
+#define DBG_FAIL_RET(path, ret_code, inner_rc) do { \
+  int _dbg_ret = (ret_code); \
+  int _dbg_inner = (inner_rc); \
+  fprintf(stderr, "decode_block fail func=%s line=%d path=%s rc_inner=%d ret=%d\n", \
+          __func__, __LINE__, (path), _dbg_inner, _dbg_ret); \
+  fflush(stderr); \
+  return _dbg_ret; \
+} while (0)
+
 #define DEFAULT_LLAMA_HEAD_DIM 64
 #define DEFAULT_LLAMA_EPS 1.0e-5f
 
@@ -481,7 +490,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
 
   BlockGemmPlan *plan = NULL;
   int plan_rc = get_block_gemm_plan(w, batch, &plan);
-  if (plan_rc != 0) return -7 + plan_rc;
+  if (plan_rc != 0) DBG_FAIL_RET("gemm_plan", -7 + plan_rc, plan_rc);
 
   float alpha = 1.0f, beta = 0.0f;
   cublasStatus_t st = cublasLtMatmul(g_block_lt, plan->desc, &alpha,
@@ -492,7 +501,8 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
                       &plan->heur.algo, g_block_workspace, g_block_workspace_size,
                       g_block_stream);
 
-  return st == CUBLAS_STATUS_SUCCESS ? 0 : (-1000 - (int)st);
+  if (st != CUBLAS_STATUS_SUCCESS) DBG_FAIL_RET("gemm_cublasLtMatmul", -1000 - (int)st, (int)st);
+  return 0;
 }
 
 static int validate_fp8_weight(const PackedWeight *w) {
@@ -554,32 +564,32 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
   int rc;
   switch (kind) {
     case BLOCK_GRAPH_NORM1:
-      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) return -100 + rc;
+      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) DBG_FAIL_RET("seq_norm1_cast_in", -100 + rc, rc);
       if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr,
                                  g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
-                                  (float *)b_x2.ptr, hidden, eps)) != 0) return -200 + rc;
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) return -300 + rc;
+                                   (float *)b_x2.ptr, hidden, eps)) != 0) DBG_FAIL_RET("seq_norm1_rmsnorm", -200 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_norm1_cast_out", -300 + rc, rc);
       return 0;
     case BLOCK_GRAPH_ROPE_ATTN:
       if (g_dyn_pos_ptr) {
         if ((rc = vt_rope_apply_fp32_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
                                           g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
                                           g_dyn_pos_ptr, num_heads, head_dim)) != 0)
-          return -400 + rc;
+          DBG_FAIL_RET("seq_rope_attn_q_rope_dyn", -400 + rc, rc);
         if ((rc = vt_rope_apply_fp32_dyn(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
                                           g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
                                           g_dyn_pos_ptr, num_kv_heads, head_dim)) != 0)
-          return -500 + rc;
+          DBG_FAIL_RET("seq_rope_attn_k_rope_dyn", -500 + rc, rc);
       } else {
         if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
                                       g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                      num_heads, head_dim)) != 0) return -400 + rc;
+                                       num_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_q_rope", -400 + rc, rc);
         if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
                                       g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                      num_kv_heads, head_dim)) != 0) return -500 + rc;
+                                       num_kv_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_k_rope", -500 + rc, rc);
       }
-      if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) return -600 + rc;
-      if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) return -700 + rc;
+      if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_k_cast", -600 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_v_cast", -700 + rc, rc);
       if (g_dyn_past_len_ptr) {
         if ((rc = vt_gqa_attn_single_token_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
                                                g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
@@ -587,33 +597,33 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
                                                g_attn_k_cache_ptr, g_attn_v_cache_ptr,
                                                 (float *)b_attn.ptr, g_dyn_past_len_ptr,
                                                 num_heads, num_kv_heads, head_dim)) != 0)
-          return -800 + rc;
+          DBG_FAIL_RET("seq_rope_attn_gqa_dyn", -800 + rc, rc);
       } else if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
                                                 g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
                                                 g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
                                                 g_attn_k_cache_ptr, g_attn_v_cache_ptr,
                                                  (float *)b_attn.ptr, past_len, num_heads,
-                                                 num_kv_heads, head_dim)) != 0) return -800 + rc;
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) return -900 + rc;
+                                                  num_kv_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_gqa", -800 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_rope_attn_out_cast", -900 + rc, rc);
       return 0;
     case BLOCK_GRAPH_POST_ATTN:
       if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
-                                      (float *)b_h1.ptr, hidden)) != 0) return -1000 + rc;
+                                       (float *)b_h1.ptr, hidden)) != 0) DBG_FAIL_RET("seq_post_attn_residual", -1000 + rc, rc);
       if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr,
                                  g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
-                                  (float *)b_x2.ptr, hidden, eps)) != 0) return -1100 + rc;
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) return -1200 + rc;
+                                   (float *)b_x2.ptr, hidden, eps)) != 0) DBG_FAIL_RET("seq_post_attn_rmsnorm", -1100 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_post_attn_cast", -1200 + rc, rc);
       return 0;
     case BLOCK_GRAPH_FFN:
       if ((rc = vt_silu_mul_fp32(g_gate_ptr ? g_gate_ptr : (float *)b_gate.ptr,
                                  g_up_ptr ? g_up_ptr : (float *)b_up.ptr,
-                                 (float *)b_sw.ptr, ffn)) != 0) return -1300 + rc;
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn)) != 0) return -1400 + rc;
+                                  (float *)b_sw.ptr, ffn)) != 0) DBG_FAIL_RET("seq_ffn_silu_mul", -1300 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn)) != 0) DBG_FAIL_RET("seq_ffn_cast", -1400 + rc, rc);
       return 0;
     case BLOCK_GRAPH_OUT:
       if ((rc = vt_residual_add_fp32((float *)b_h1.ptr, (float *)b_down.ptr,
-                                     (float *)b_x2.ptr, hidden)) != 0) return -1500 + rc;
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0) return -1600 + rc;
+                                      (float *)b_x2.ptr, hidden)) != 0) DBG_FAIL_RET("seq_out_residual", -1500 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_out_cast", -1600 + rc, rc);
       return 0;
     default:
       return -9999;
@@ -636,7 +646,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
       e->launches++;
       return 0;
     }
-    return -2000 - (int)err;
+    DBG_FAIL_RET("graph_launch_cached", -2000 - (int)err, (int)err);
   }
 
   e = alloc_block_graph(kind, hidden, kv_dim, ffn, pos, past_len, head_dim, eps);
@@ -660,7 +670,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   if (rc != 0 || err != cudaSuccess || !graph) {
     if (graph) cudaGraphDestroy(graph);
     g_block_graph_disabled = 1;
-    return rc != 0 ? rc : (-2100 - (int)err);
+    DBG_FAIL_RET(rc != 0 ? "graph_capture_sequence" : "graph_end_capture", rc != 0 ? rc : (-2100 - (int)err), rc != 0 ? rc : (int)err);
   }
 
   cudaGraphExec_t exec = NULL;
@@ -676,7 +686,8 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   e->exec = exec;
   e->launches = 1;
   err = cudaGraphLaunch(exec, g_block_stream);
-  return err == cudaSuccess ? 0 : (-2200 - (int)err);
+  if (err != cudaSuccess) DBG_FAIL_RET("graph_launch_new", -2200 - (int)err, (int)err);
+  return 0;
 }
 
 static float half_to_float(uint16_t h) {
@@ -802,9 +813,9 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   int past_len = kv_cache_res->len;
 
   int rc = 0;
-  if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) return -100 + rc;
-  if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) return -120 + rc;
-  if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) return -140 + rc;
+  if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) DBG_FAIL_RET("decode_upload_norm1", -100 + rc, rc);
+  if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) DBG_FAIL_RET("decode_upload_norm2", -120 + rc, rc);
+  if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) DBG_FAIL_RET("decode_upload_rope", -140 + rc, rc);
   g_norm1_ptr = (float *)b_norm1.ptr;
   g_norm2_ptr = (float *)b_norm2.ptr;
   g_rope_ptr = (float *)b_rope.ptr;
@@ -844,45 +855,45 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_up_ptr = NULL;
 
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
+                              num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_norm1_graph", -200 + rc, rc);
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
-      return -300 + rc;
+      DBG_FAIL_RET("decode_qkv_gemm", -300 + rc, rc);
     g_q_ptr = (float *)b_qkv.ptr;
     g_k_ptr = g_q_ptr + hidden;
     g_v_ptr = g_k_ptr + kv_dim;
   } else {
     if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
-      return -300 + rc;
+      DBG_FAIL_RET("decode_q_gemm", -300 + rc, rc);
     if ((rc = gemm_w8a16_dequant(k, (uint16_t *)b_norm16.ptr, 1, (float *)b_k.ptr)) != 0)
-      return -320 + rc;
+      DBG_FAIL_RET("decode_k_gemm", -320 + rc, rc);
     if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
-      return -340 + rc;
+      DBG_FAIL_RET("decode_v_gemm", -340 + rc, rc);
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
                                   past_len, num_heads, num_kv_heads, head_dim, eps)) != 0)
-    return -400 + rc;
+    DBG_FAIL_RET("decode_rope_attn_sequence", -400 + rc, rc);
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
-    return -500 + rc;
+    DBG_FAIL_RET("decode_o_gemm", -500 + rc, rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_post_attn_graph", -600 + rc, rc);
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate_up.ptr)) != 0)
-      return -700 + rc;
+      DBG_FAIL_RET("decode_gate_up_gemm", -700 + rc, rc);
     g_gate_ptr = (float *)b_gate_up.ptr;
     g_up_ptr = g_gate_ptr + ffn;
   } else {
     if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
-      return -700 + rc;
+      DBG_FAIL_RET("decode_gate_gemm", -700 + rc, rc);
     if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
-      return -720 + rc;
+      DBG_FAIL_RET("decode_up_gemm", -720 + rc, rc);
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
+                              num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_ffn_graph", -800 + rc, rc);
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
-    return -900 + rc;
+    DBG_FAIL_RET("decode_down_gemm", -900 + rc, rc);
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_out_graph", -1000 + rc, rc);
 
   size_t offset = (size_t)past_len * kv16_bytes;
   if (cudaMemcpyAsync((uint8_t *)kv_cache_res->d_k + offset, b_k_append.ptr, kv16_bytes,
