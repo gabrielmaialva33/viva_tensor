@@ -4,6 +4,93 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.2.105] - 2026-05-21
+
+### Added
+
+- **`viva_tensor.generate_batch(model, prompts, opts)`**: public Gleam API
+  to run N decodes concurrently across BEAM processes, returning
+  `List(Result(GenerateResult, GenerateError))` preserving prompt order.
+  Backed by `viva_tensor_llm:generate_batch/3` (Erlang) that spawn_monitors
+  one process per prompt, isolates failures, and collects results with a
+  60s default timeout.
+- **Marlin W4A16 kernel (Apache 2.0, from IST-DASLab/marlin)**: drop-in
+  CUDA kernel for FP16×INT4 GEMM optimized for batch=16-32 decode.
+  Exposed via `viva_marlin_w4a16_bench` NIF for kernel-only TFLOPS
+  measurement. Pico ~62 TFLOPS @ M=512 K=N=4096. Integration with
+  decode path is future work (requires `Layer.pack()` port).
+- **Per-generate `BlockState` resource**: opaque NIF resource that owns
+  cuBLASLt handle, workspace, CUDA stream, ~30 scratch buffers, CUDA
+  Graph cache, and plan cache. Created in `viva_tensor_llm` via
+  `with_block_state(fun)`, eliminating shared global state across
+  concurrent generates.
+
+### Changed
+
+- **`nt_forward_decode_step` is now re-entrant**: a 7-step state refactor
+  (commits C1.1–C1.7) migrated all `static` globals in
+  `zig_src/nif_forward_block.c` to fields of `BlockState`. The
+  `block_state_current()` macro maps legacy `g_*` / `b_*` names to the
+  current per-call state via `_Thread_local g_current_state`.
+- **All `vt_*` / `cuda_fp8_*` kernel signatures now take `cudaStream_t`
+  explicitly** instead of relying on a thread-local global. Callers in
+  `nif_forward_block.c` and `nif_linear_fp8.c` thread the per-call
+  stream from `BlockState`. Legacy setters (`vt_block_set_stream`,
+  `cuda_fp8_dequant_set_stream`) remain for backwards compatibility —
+  passing `NULL` stream falls back to them.
+- **`DBG_FAIL_RET` macro** wraps every error return in
+  `run_decode_block_device*`, `run_helper_*`, and `gemm_w8a16_dequant`,
+  logging `func/line/path/rc_inner/ret` to stderr on failure for
+  triagable concurrency bug reports.
+
+### Fixed
+
+- **Race in CUDA Graph capture under `generate_batch`**: pre-Wave 1, two
+  concurrent BEAM processes calling `nt_forward_decode_step` shared
+  ~30 scratch buffers + a `thread_local cudaStream_t`, causing
+  `cudaStreamEndCapture` to fail with error 901 on ~25% of calls
+  (visible as `decode_block_-3001` / `-4001` / `-3801` returns). Wave 1
+  serialized via mutex (~6% residual rate from instrumentation
+  overhead). Wave 2 isolated state per generate. Wave 3 replaced
+  `thread_local` stream with explicit argument. Net: **5/5 runs of
+  `generate_batch` on TinyLlama complete 256/256 tokens with zero
+  crashes**.
+
+### Performance
+
+- **`generate_batch` honest speedup on RTX 4090 (TinyLlama, 16 prompts):**
+
+  | Run | Sequential | Batch          | Speedup |
+  | --: | ---------: | -------------: | ------: |
+  | 1   | 276 tok/s  | **461 tok/s**  | 1.67×   |
+  | 2   | 307 tok/s  | 453 tok/s      | 1.47×   |
+  | 3   | 312 tok/s  | 444 tok/s      | 1.42×   |
+  | 4   | 267 tok/s  | 454 tok/s      | 1.70×   |
+  | 5   | 306 tok/s  | **464 tok/s**  | 1.52×   |
+
+  Average **1.55× speedup, zero crashes across all 5 runs**. The 4.7×
+  speedup reported during Wave 2 was an artifact — it included crashes
+  that aborted decodes after only partial token output. The honest 1.5×
+  is limited by single-GPU saturation with 16 concurrent streams; true
+  4-8× gains require batched-M decode (single CUDA call for M prompts),
+  which is roadmap for v2.3.0.
+
+### Validated
+
+- 795 tests passing (3 new `generate_batch_*_test`), `gleam check` clean.
+- `make zig` + `make cutlass-libs` rebuild green (CUDA 13.2 + Ada SM89).
+- TinyLlama-1.1B and Llama-3.2-1B-Instruct still pass through public
+  `ModelHandle` API.
+
+### Known issues
+
+- Marlin kernel is exposed only via `viva_marlin_w4a16_bench` — no
+  integration with `viva_tensor.generate` yet. Pico observed: 62 TFLOPS
+  @ M=512 (synthetic input, no Layer.pack prepack).
+- `DBG_FAIL_RET` writes to stderr on every decode-path error. Kept
+  intentionally to surface future concurrency bugs; suppress with
+  `2>/dev/null` if undesired.
+
 ## [2.2.104] - 2026-05-21
 
 ### Added
