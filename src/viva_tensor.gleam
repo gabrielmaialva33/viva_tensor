@@ -5622,6 +5622,17 @@ pub fn load_model(path: String) -> Result(ModelHandle, String) {
   load_model_ffi(path)
 }
 
+/// Load a model with a specific weight format.
+pub fn load_model_with_format(
+  path: String,
+  weight_format: WeightFormat,
+) -> Result(ModelHandle, String) {
+  case weight_format {
+    FP8W8A16 -> load_model(path)
+    MarlinW4A16 -> load_model_marlin_ffi(path)
+  }
+}
+
 /// Generate text from a loaded model handle.
 ///
 /// `temperature == 0.0` uses the fused argmax decode-step path. Non-zero
@@ -5847,6 +5858,9 @@ pub fn linear_swiglu_fp8(
 
 @external(erlang, "viva_tensor_llm", "load_for_gleam")
 fn load_model_ffi(path: String) -> Result(ModelHandle, String)
+
+@external(erlang, "viva_tensor_llm", "load_marlin_for_gleam")
+fn load_model_marlin_ffi(path: String) -> Result(ModelHandle, String)
 
 @external(erlang, "viva_tensor_llm", "generate_for_gleam")
 fn generate_ffi(
