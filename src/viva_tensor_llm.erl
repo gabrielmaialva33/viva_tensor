@@ -29,16 +29,23 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
         Config = model_config(Header, SafetensorsPath, Opts0),
         TokenizerPath = tokenizer_path(SafetensorsPath, Opts0),
         {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(TokenizerPath),
-        Layers = [build_layer_blocked(Header, I, Config)
-                  || I <- lists:seq(0, maps:get(num_layers, Config) - 1)],
+        Layers = [
+            build_layer_blocked(Header, I, Config)
+         || I <- lists:seq(0, maps:get(num_layers, Config) - 1)
+        ],
         EmbedTable = load_embed_table_resource(Header, Config),
         FinalNorm = load_rmsnorm_bin(Header, <<"model.norm.weight">>),
-        LmHeadName = case maps:get(tie_word_embeddings, Config, false) of
-            true -> <<"model.embed_tokens.weight">>;
-            false -> <<"lm_head.weight">>
-        end,
-        LmHead = load_linear(Header, LmHeadName,
-                             maps:get(vocab_size, Config), maps:get(hidden_size, Config)),
+        LmHeadName =
+            case maps:get(tie_word_embeddings, Config, false) of
+                true -> <<"model.embed_tokens.weight">>;
+                false -> <<"lm_head.weight">>
+            end,
+        LmHead = load_linear(
+            Header,
+            LmHeadName,
+            maps:get(vocab_size, Config),
+            maps:get(hidden_size, Config)
+        ),
         LmHeadPacked = prepack_blocked(
             LmHead,
             maps:get(hidden_size, Config),
@@ -70,8 +77,9 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
             {error, {Class, Reason, Stack}}
     end.
 
-generate(Handle, Prompt0, GenOpts0)
-        when is_map(Handle), is_map(GenOpts0) ->
+generate(Handle, Prompt0, GenOpts0) when
+    is_map(Handle), is_map(GenOpts0)
+->
     try
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         Prompt = to_binary(Prompt0),
@@ -111,7 +119,11 @@ generate_for_gleam(Handle, Prompt, MaxNewTokens, Temperature, TopK, TopP, Seed, 
     Opts = #{
         max_new_tokens => MaxNewTokens,
         temperature => Temperature,
-        top_k => case TopK of -1 -> infinity; _ -> TopK end,
+        top_k =>
+            case TopK of
+                -1 -> infinity;
+                _ -> TopK
+            end,
         top_p => TopP,
         seed => Seed,
         stop_on_eos => StopOnEos
@@ -127,7 +139,11 @@ generate_batch_for_gleam(Handle, Prompts, MaxNewTokens, Temperature, TopK, TopP,
     Opts = #{
         max_new_tokens => MaxNewTokens,
         temperature => Temperature,
-        top_k => case TopK of -1 -> infinity; _ -> TopK end,
+        top_k =>
+            case TopK of
+                -1 -> infinity;
+                _ -> TopK
+            end,
         top_p => TopP,
         seed => Seed,
         stop_on_eos => StopOnEos
@@ -165,7 +181,9 @@ collect_generate_result({Pid, Ref}, Timeout) ->
         {error, {process_timeout, Timeout}}
     end.
 
-generate_result_for_gleam({ok, #{tokens := Tokens, text := Text, ms_per_token := Ms, total_tokens := Total}}) ->
+generate_result_for_gleam(
+    {ok, #{tokens := Tokens, text := Text, ms_per_token := Ms, total_tokens := Total}}
+) ->
     {ok, {Tokens, Text, Ms, Total}};
 generate_result_for_gleam({error, Reason}) ->
     {error, reason_to_binary(Reason)}.
@@ -204,9 +222,17 @@ generate_argmax(Handle, Prompt, Opts) ->
                 Caches = new_kv_caches(Config),
                 {FirstNext, _} = lists:foldl(
                     fun({Pos, TokenId}, {_, CL}) ->
-                        Next = forward_decode_step(BlockState, TokenId, EmbedTable,
-                                                   Layers, FinalNorm, LmHead, CL,
-                                                   Pos, RopeFreqs),
+                        Next = forward_decode_step(
+                            BlockState,
+                            TokenId,
+                            EmbedTable,
+                            Layers,
+                            FinalNorm,
+                            LmHead,
+                            CL,
+                            Pos,
+                            RopeFreqs
+                        ),
                         {Next, CL}
                     end,
                     {undefined, Caches},
@@ -214,16 +240,27 @@ generate_argmax(Handle, Prompt, Opts) ->
                 ),
                 TGen = us(),
                 GeneratedIds = decode_loop_decode_fused(
-                    BlockState, FirstNext, Caches, Layers, EmbedTable, FinalNorm,
-                    LmHead, RopeFreqs, length(PromptTokens), MaxNew, EOS,
-                    StopOnEos, []
+                    BlockState,
+                    FirstNext,
+                    Caches,
+                    Layers,
+                    EmbedTable,
+                    FinalNorm,
+                    LmHead,
+                    RopeFreqs,
+                    length(PromptTokens),
+                    MaxNew,
+                    EOS,
+                    StopOnEos,
+                    []
                 ),
                 GenUs = us() - TGen,
                 TokCount = length(GeneratedIds),
-                MsPerToken = case TokCount of
-                    0 -> 0.0;
-                    _ -> float(GenUs) / 1000.0 / float(TokCount)
-                end,
+                MsPerToken =
+                    case TokCount of
+                        0 -> 0.0;
+                        _ -> float(GenUs) / 1000.0 / float(TokCount)
+                    end,
                 Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
                 {ok, #{
                     tokens => GeneratedIds,
@@ -234,21 +271,67 @@ generate_argmax(Handle, Prompt, Opts) ->
             end)
     end.
 
-decode_loop_decode_fused(_BlockState, _NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0,
-                         _EOS, _StopOnEos, Acc) ->
+decode_loop_decode_fused(
+    _BlockState,
+    _NextTok,
+    _C,
+    _L,
+    _E,
+    _FN,
+    _LH,
+    _R,
+    _P,
+    0,
+    _EOS,
+    _StopOnEos,
+    Acc
+) ->
     lists:reverse(Acc);
-decode_loop_decode_fused(BlockState, NextTok, Caches, Layers, EmbedTable, FinalNorm, LmHead,
-                         RopeFreqs, Pos, Remaining, EOS, StopOnEos, Acc) ->
+decode_loop_decode_fused(
+    BlockState,
+    NextTok,
+    Caches,
+    Layers,
+    EmbedTable,
+    FinalNorm,
+    LmHead,
+    RopeFreqs,
+    Pos,
+    Remaining,
+    EOS,
+    StopOnEos,
+    Acc
+) ->
     case StopOnEos andalso NextTok =:= EOS of
         true ->
             lists:reverse([NextTok | Acc]);
         false ->
-            Following = forward_decode_step(BlockState, NextTok, EmbedTable, Layers,
-                                            FinalNorm, LmHead, Caches, Pos, RopeFreqs),
-            decode_loop_decode_fused(BlockState, Following, Caches, Layers, EmbedTable,
-                                     FinalNorm, LmHead, RopeFreqs, Pos + 1,
-                                     Remaining - 1, EOS, StopOnEos,
-                                     [NextTok | Acc])
+            Following = forward_decode_step(
+                BlockState,
+                NextTok,
+                EmbedTable,
+                Layers,
+                FinalNorm,
+                LmHead,
+                Caches,
+                Pos,
+                RopeFreqs
+            ),
+            decode_loop_decode_fused(
+                BlockState,
+                Following,
+                Caches,
+                Layers,
+                EmbedTable,
+                FinalNorm,
+                LmHead,
+                RopeFreqs,
+                Pos + 1,
+                Remaining - 1,
+                EOS,
+                StopOnEos,
+                [NextTok | Acc]
+            )
     end.
 
 generate_sampling(Handle, Prompt, Opts) ->
@@ -273,21 +356,42 @@ generate_sampling(Handle, Prompt, Opts) ->
                 Caches = new_kv_caches(Config),
                 TopK = sampling_top_k(Opts, maps:get(vocab_size, Config)),
                 FirstNext = prefill_sampling(
-                    BlockState, PromptTokens, Caches, Layers, EmbedTable, FinalNorm,
-                    LmHead, RopeFreqs, TopK, Opts
+                    BlockState,
+                    PromptTokens,
+                    Caches,
+                    Layers,
+                    EmbedTable,
+                    FinalNorm,
+                    LmHead,
+                    RopeFreqs,
+                    TopK,
+                    Opts
                 ),
                 TGen = us(),
                 GeneratedIds = decode_loop_decode_sampled(
-                    BlockState, FirstNext, Caches, Layers, EmbedTable, FinalNorm,
-                    LmHead, RopeFreqs, length(PromptTokens), MaxNew, EOS,
-                    StopOnEos, TopK, Opts, []
+                    BlockState,
+                    FirstNext,
+                    Caches,
+                    Layers,
+                    EmbedTable,
+                    FinalNorm,
+                    LmHead,
+                    RopeFreqs,
+                    length(PromptTokens),
+                    MaxNew,
+                    EOS,
+                    StopOnEos,
+                    TopK,
+                    Opts,
+                    []
                 ),
                 GenUs = us() - TGen,
                 TokCount = length(GeneratedIds),
-                MsPerToken = case TokCount of
-                    0 -> 0.0;
-                    _ -> float(GenUs) / 1000.0 / float(TokCount)
-                end,
+                MsPerToken =
+                    case TokCount of
+                        0 -> 0.0;
+                        _ -> float(GenUs) / 1000.0 / float(TokCount)
+                    end,
                 Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
                 {ok, #{
                     tokens => GeneratedIds,
@@ -298,20 +402,50 @@ generate_sampling(Handle, Prompt, Opts) ->
             end)
     end.
 
-prefill_sampling(BlockState, PromptTokens, Caches, Layers, EmbedTable, FinalNorm, LmHead,
-                 RopeFreqs, TopK, Opts) ->
+prefill_sampling(
+    BlockState,
+    PromptTokens,
+    Caches,
+    Layers,
+    EmbedTable,
+    FinalNorm,
+    LmHead,
+    RopeFreqs,
+    TopK,
+    Opts
+) ->
     LastPos = length(PromptTokens) - 1,
     {Next, _} = lists:foldl(
         fun({Pos, TokenId}, {_, CL}) ->
-            Sampled = case Pos =:= LastPos of
-                true ->
-                    forward_decode_step_sample(BlockState, TokenId, EmbedTable,
-                                               Layers, FinalNorm, LmHead, CL,
-                                               Pos, RopeFreqs, TopK, Opts);
-                false ->
-                    forward_decode_step(BlockState, TokenId, EmbedTable, Layers,
-                                        FinalNorm, LmHead, CL, Pos, RopeFreqs)
-            end,
+            Sampled =
+                case Pos =:= LastPos of
+                    true ->
+                        forward_decode_step_sample(
+                            BlockState,
+                            TokenId,
+                            EmbedTable,
+                            Layers,
+                            FinalNorm,
+                            LmHead,
+                            CL,
+                            Pos,
+                            RopeFreqs,
+                            TopK,
+                            Opts
+                        );
+                    false ->
+                        forward_decode_step(
+                            BlockState,
+                            TokenId,
+                            EmbedTable,
+                            Layers,
+                            FinalNorm,
+                            LmHead,
+                            CL,
+                            Pos,
+                            RopeFreqs
+                        )
+                end,
             {Sampled, CL}
         end,
         {undefined, Caches},
@@ -319,42 +453,134 @@ prefill_sampling(BlockState, PromptTokens, Caches, Layers, EmbedTable, FinalNorm
     ),
     Next.
 
-decode_loop_decode_sampled(_BlockState, _NextTok, _C, _L, _E, _FN, _LH, _R, _P, 0,
-                           _EOS, _StopOnEos, _TopK, _Opts, Acc) ->
+decode_loop_decode_sampled(
+    _BlockState,
+    _NextTok,
+    _C,
+    _L,
+    _E,
+    _FN,
+    _LH,
+    _R,
+    _P,
+    0,
+    _EOS,
+    _StopOnEos,
+    _TopK,
+    _Opts,
+    Acc
+) ->
     lists:reverse(Acc);
-decode_loop_decode_sampled(BlockState, NextTok, Caches, Layers, EmbedTable, FinalNorm, LmHead,
-                           RopeFreqs, Pos, Remaining, EOS, StopOnEos, TopK, Opts,
-                           Acc) ->
+decode_loop_decode_sampled(
+    BlockState,
+    NextTok,
+    Caches,
+    Layers,
+    EmbedTable,
+    FinalNorm,
+    LmHead,
+    RopeFreqs,
+    Pos,
+    Remaining,
+    EOS,
+    StopOnEos,
+    TopK,
+    Opts,
+    Acc
+) ->
     case StopOnEos andalso NextTok =:= EOS of
         true ->
             lists:reverse([NextTok | Acc]);
         false ->
             Following = forward_decode_step_sample(
-                BlockState, NextTok, EmbedTable, Layers, FinalNorm, LmHead,
-                Caches, Pos, RopeFreqs, TopK, Opts
+                BlockState,
+                NextTok,
+                EmbedTable,
+                Layers,
+                FinalNorm,
+                LmHead,
+                Caches,
+                Pos,
+                RopeFreqs,
+                TopK,
+                Opts
             ),
-            decode_loop_decode_sampled(BlockState, Following, Caches, Layers, EmbedTable,
-                                       FinalNorm, LmHead, RopeFreqs, Pos + 1,
-                                       Remaining - 1, EOS, StopOnEos, TopK, Opts,
-                                       [NextTok | Acc])
+            decode_loop_decode_sampled(
+                BlockState,
+                Following,
+                Caches,
+                Layers,
+                EmbedTable,
+                FinalNorm,
+                LmHead,
+                RopeFreqs,
+                Pos + 1,
+                Remaining - 1,
+                EOS,
+                StopOnEos,
+                TopK,
+                Opts,
+                [NextTok | Acc]
+            )
     end.
 
-forward_decode_step(BlockState, TokenId, EmbedTable, Layers, FinalNorm, LmHead,
-                    Caches, Pos, RopeFreqs) ->
-    case viva_tensor_zig:nt_forward_decode_step(
-             BlockState, TokenId, EmbedTable, Layers, FinalNorm, LmHead, Caches,
-             Pos, RopeFreqs) of
+forward_decode_step(
+    BlockState,
+    TokenId,
+    EmbedTable,
+    Layers,
+    FinalNorm,
+    LmHead,
+    Caches,
+    Pos,
+    RopeFreqs
+) ->
+    case
+        viva_tensor_zig:nt_forward_decode_step(
+            BlockState,
+            TokenId,
+            EmbedTable,
+            Layers,
+            FinalNorm,
+            LmHead,
+            Caches,
+            Pos,
+            RopeFreqs
+        )
+    of
         {ok, NextToken} when is_integer(NextToken) ->
             NextToken;
         Error ->
             error({forward_decode_step_failed, Error})
     end.
 
-forward_decode_step_sample(BlockState, TokenId, EmbedTable, Layers, FinalNorm, LmHead,
-                           Caches, Pos, RopeFreqs, TopK, Opts) ->
-    case viva_tensor_zig:nt_forward_decode_step_topk(
-             BlockState, TokenId, EmbedTable, Layers, FinalNorm, LmHead, Caches,
-             Pos, RopeFreqs, TopK) of
+forward_decode_step_sample(
+    BlockState,
+    TokenId,
+    EmbedTable,
+    Layers,
+    FinalNorm,
+    LmHead,
+    Caches,
+    Pos,
+    RopeFreqs,
+    TopK,
+    Opts
+) ->
+    case
+        viva_tensor_zig:nt_forward_decode_step_topk(
+            BlockState,
+            TokenId,
+            EmbedTable,
+            Layers,
+            FinalNorm,
+            LmHead,
+            Caches,
+            Pos,
+            RopeFreqs,
+            TopK
+        )
+    of
         {ok, {IndicesBin, ValuesBin}} when is_binary(IndicesBin), is_binary(ValuesBin) ->
             Indices = decode_int32_le(IndicesBin),
             Logits = decode_float32_le(ValuesBin),
@@ -365,11 +591,12 @@ forward_decode_step_sample(BlockState, TokenId, EmbedTable, Layers, FinalNorm, L
     end.
 
 sampling_top_k(Opts, VocabSize) ->
-    Requested = case maps:get(top_k, Opts) of
-        infinity -> 256;
-        K when is_integer(K), K > 0 -> K;
-        _ -> 256
-    end,
+    Requested =
+        case maps:get(top_k, Opts) of
+            infinity -> 256;
+            K when is_integer(K), K > 0 -> K;
+            _ -> 256
+        end,
     min(VocabSize, min(256, Requested)).
 
 sampling_opts_for_pos(Opts, Pos) ->
@@ -386,28 +613,38 @@ model_config(Header, SafetensorsPath, Opts) ->
     NumLayers = opt(Opts, num_layers, detect_num_layers(Header)),
     BlockSize = opt(Opts, block_size, ?DEFAULT_BLOCK_SIZE),
     {VocabSize0, HiddenSize0} = shape2(Header, <<"model.embed_tokens.weight">>),
-    Tied = case maps:get(<<"tie_word_embeddings">>, FileConfig, false) of
-        true -> true;
-        _ -> false
-    end,
-    LmHidden = case Tied of
-        true -> HiddenSize0;
-        false ->
-            {_, LH} = shape2(Header, <<"lm_head.weight">>),
-            LH
-    end,
+    Tied =
+        case maps:get(<<"tie_word_embeddings">>, FileConfig, false) of
+            true -> true;
+            _ -> false
+        end,
+    LmHidden =
+        case Tied of
+            true ->
+                HiddenSize0;
+            false ->
+                {_, LH} = shape2(Header, <<"lm_head.weight">>),
+                LH
+        end,
     HiddenSize = int_config(FileConfig, <<"hidden_size">>, HiddenSize0),
     VocabSize = int_config(FileConfig, <<"vocab_size">>, VocabSize0),
-    NumHeads = int_config(FileConfig, <<"num_attention_heads">>,
-                          max(1, HiddenSize div ?DEFAULT_HEAD_DIM)),
+    NumHeads = int_config(
+        FileConfig,
+        <<"num_attention_heads">>,
+        max(1, HiddenSize div ?DEFAULT_HEAD_DIM)
+    ),
     NumKvHeads = int_config(FileConfig, <<"num_key_value_heads">>, NumHeads),
-    HeadDim = case NumHeads of
-        0 -> ?DEFAULT_HEAD_DIM;
-        _ -> HiddenSize div NumHeads
-    end,
+    HeadDim =
+        case NumHeads of
+            0 -> ?DEFAULT_HEAD_DIM;
+            _ -> HiddenSize div NumHeads
+        end,
     KvDim = NumKvHeads * HeadDim,
-    FfnSize = int_config_lazy(FileConfig, <<"intermediate_size">>,
-                              fun() -> first_layer_ffn(Header) end),
+    FfnSize = int_config_lazy(
+        FileConfig,
+        <<"intermediate_size">>,
+        fun() -> first_layer_ffn(Header) end
+    ),
     #{
         num_layers => NumLayers,
         block_size => BlockSize,
@@ -429,8 +666,10 @@ read_hf_config(SafetensorsPath) ->
     ConfigPath = filename:join(model_dir(SafetensorsPath), "config.json"),
     case file:read_file(ConfigPath) of
         {ok, Bin} ->
-            try json:decode(Bin)
-            catch _:_ -> #{}
+            try
+                json:decode(Bin)
+            catch
+                _:_ -> #{}
             end;
         _ ->
             #{}
@@ -440,8 +679,10 @@ detect_num_layers(Header) ->
     detect_num_layers(Header, 0).
 
 detect_num_layers(Header, I) ->
-    Name = list_to_binary("model.layers." ++ integer_to_list(I) ++
-                          ".input_layernorm.weight"),
+    Name = list_to_binary(
+        "model.layers." ++ integer_to_list(I) ++
+            ".input_layernorm.weight"
+    ),
     case viva_tensor_safetensors_ffi:tensor_info(Header, Name) of
         {ok, _} -> detect_num_layers(Header, I + 1);
         {error, _} when I > 0 -> I;
@@ -459,17 +700,21 @@ shape2(Header, Name) ->
 build_layer_blocked(Header, LayerIdx, Config) ->
     Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",
     P = fun(Suffix) -> list_to_binary(Prefix ++ Suffix) end,
-    require_tensors(Header, [
-        P("self_attn.q_proj.weight"),
-        P("self_attn.k_proj.weight"),
-        P("self_attn.v_proj.weight"),
-        P("self_attn.o_proj.weight"),
-        P("mlp.gate_proj.weight"),
-        P("mlp.up_proj.weight"),
-        P("mlp.down_proj.weight"),
-        P("input_layernorm.weight"),
-        P("post_attention_layernorm.weight")
-    ], LayerIdx),
+    require_tensors(
+        Header,
+        [
+            P("self_attn.q_proj.weight"),
+            P("self_attn.k_proj.weight"),
+            P("self_attn.v_proj.weight"),
+            P("self_attn.o_proj.weight"),
+            P("mlp.gate_proj.weight"),
+            P("mlp.up_proj.weight"),
+            P("mlp.down_proj.weight"),
+            P("input_layernorm.weight"),
+            P("post_attention_layernorm.weight")
+        ],
+        LayerIdx
+    ),
     Hidden = maps:get(hidden_size, Config),
     KvDim = maps:get(kv_dim, Config),
     Ffn = maps:get(ffn_size, Config),
@@ -524,9 +769,11 @@ load_linear(Header, Name, OutF, InF) ->
 concat_linear_columns(Parts, InF) ->
     BytesPerFloat = 4,
     list_to_binary([
-        [binary:part(Bin, Row * OutF * BytesPerFloat, OutF * BytesPerFloat)
-         || {Bin, OutF} <- Parts]
-        || Row <- lists:seq(0, InF - 1)
+        [
+            binary:part(Bin, Row * OutF * BytesPerFloat, OutF * BytesPerFloat)
+         || {Bin, OutF} <- Parts
+        ]
+     || Row <- lists:seq(0, InF - 1)
     ]).
 
 load_rmsnorm_bin(Header, Name) ->
@@ -535,12 +782,14 @@ load_rmsnorm_bin(Header, Name) ->
 
 load_embed_table_resource(Header, Config) ->
     {ok, Dtype, Bin} = viva_tensor_safetensors_ffi:read_tensor_raw(
-        Header, <<"model.embed_tokens.weight">>),
-    NewTable = case Dtype of
-        <<"BF16">> -> fun viva_tensor_zig:nt_embedding_table_new/3;
-        <<"F16">> -> fun viva_tensor_zig:nt_embedding_table_new_fp16/3;
-        Unsupported -> error({unsupported_dtype, Unsupported})
-    end,
+        Header, <<"model.embed_tokens.weight">>
+    ),
+    NewTable =
+        case Dtype of
+            <<"BF16">> -> fun viva_tensor_zig:nt_embedding_table_new/3;
+            <<"F16">> -> fun viva_tensor_zig:nt_embedding_table_new_fp16/3;
+            Unsupported -> error({unsupported_dtype, Unsupported})
+        end,
     case NewTable(Bin, maps:get(vocab_size, Config), maps:get(hidden_size, Config)) of
         {ok, Resource} when is_reference(Resource) -> Resource;
         LoadError -> error({embedding_table_resource_failed, LoadError})
@@ -554,17 +803,23 @@ prepack_blocked(Bin, InF, OutF, BlockSize) when is_binary(Bin) ->
     end.
 
 new_kv_caches(Config) ->
-    [begin
-         {ok, Cache} = viva_tensor_zig:nt_kv_cache_new(
-             maps:get(max_seq, Config), maps:get(kv_dim, Config)),
-         Cache
-     end || _ <- lists:seq(1, maps:get(num_layers, Config))].
+    [
+        begin
+            {ok, Cache} = viva_tensor_zig:nt_kv_cache_new(
+                maps:get(max_seq, Config), maps:get(kv_dim, Config)
+            ),
+            Cache
+        end
+     || _ <- lists:seq(1, maps:get(num_layers, Config))
+    ].
 
 precompute_rope_freqs_bin(HeadDim, Theta) ->
     Half = HeadDim div 2,
-    Freqs = [math:pow(Theta, -2.0 * float(I) / float(HeadDim))
-             || I <- lists:seq(0, Half - 1)],
-    << <<F:32/float-little>> || F <- Freqs >>.
+    Freqs = [
+        math:pow(Theta, -2.0 * float(I) / float(HeadDim))
+     || I <- lists:seq(0, Half - 1)
+    ],
+    <<<<F:32/float-little>> || F <- Freqs>>.
 
 generation_options(Opts) ->
     #{
@@ -597,7 +852,8 @@ default_tokenizer_path(SafetensorsPath) ->
         false ->
             Inferred = inferred_tokenizer_path(SafetensorsPath),
             case filelib:is_file(binary_to_list(Inferred)) of
-                true -> Inferred;
+                true ->
+                    Inferred;
                 false ->
                     case filelib:is_file(binary_to_list(Sibling)) of
                         true -> Sibling;
@@ -622,7 +878,8 @@ model_dir(Path0) ->
 
 opt(Map, Key, Default) ->
     case maps:find(Key, Map) of
-        {ok, Value} -> Value;
+        {ok, Value} ->
+            Value;
         error ->
             BinKey = atom_to_binary(Key, utf8),
             maps:get(BinKey, Map, Default)

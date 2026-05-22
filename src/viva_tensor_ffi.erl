@@ -54,19 +54,31 @@ array_matmul(A, B, M, N, K) ->
     C0 = array:new([{size, M * N}, {fixed, true}, {default, 0.0}]),
     %% ikj loop: for each row i, for each k, scatter A[i,k]*B[k,j] across j
     %% This gives sequential access to B's row (cache-friendly)
-    C = lists:foldl(fun(I, CAcc) ->
-        RowStart = I * K,
-        lists:foldl(fun(KIdx, CAcc2) ->
-            AVal = array:get(RowStart + KIdx, A),
-            BRowStart = KIdx * N,
-            CRowStart = I * N,
-            lists:foldl(fun(J, CAcc3) ->
-                OldVal = array:get(CRowStart + J, CAcc3),
-                BVal = array:get(BRowStart + J, B),
-                array:set(CRowStart + J, OldVal + AVal * BVal, CAcc3)
-            end, CAcc2, lists:seq(0, N - 1))
-        end, CAcc, lists:seq(0, K - 1))
-    end, C0, lists:seq(0, M - 1)),
+    C = lists:foldl(
+        fun(I, CAcc) ->
+            RowStart = I * K,
+            lists:foldl(
+                fun(KIdx, CAcc2) ->
+                    AVal = array:get(RowStart + KIdx, A),
+                    BRowStart = KIdx * N,
+                    CRowStart = I * N,
+                    lists:foldl(
+                        fun(J, CAcc3) ->
+                            OldVal = array:get(CRowStart + J, CAcc3),
+                            BVal = array:get(BRowStart + J, B),
+                            array:set(CRowStart + J, OldVal + AVal * BVal, CAcc3)
+                        end,
+                        CAcc2,
+                        lists:seq(0, N - 1)
+                    )
+                end,
+                CAcc,
+                lists:seq(0, K - 1)
+            )
+        end,
+        C0,
+        lists:seq(0, M - 1)
+    ),
     C.
 
 %% Sum all elements in array

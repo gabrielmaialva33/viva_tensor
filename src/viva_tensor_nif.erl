@@ -23,15 +23,17 @@
 %% NIF Loading
 init() ->
     %% Try to find the NIF in priv directory
-    PrivDir = case code:priv_dir(viva_tensor) of
-        {error, bad_name} ->
-            %% Not installed as app, try relative path
-            case file:get_cwd() of
-                {ok, Cwd} -> filename:join(Cwd, "priv");
-                _ -> "priv"
-            end;
-        Dir -> Dir
-    end,
+    PrivDir =
+        case code:priv_dir(viva_tensor) of
+            {error, bad_name} ->
+                %% Not installed as app, try relative path
+                case file:get_cwd() of
+                    {ok, Cwd} -> filename:join(Cwd, "priv");
+                    _ -> "priv"
+                end;
+            Dir ->
+                Dir
+        end,
     NifPath = filename:join(PrivDir, "viva_tensor_nif"),
     case erlang:load_nif(NifPath, 0) of
         ok ->
@@ -54,8 +56,10 @@ init() ->
 %% Check if NIF is loaded
 is_nif_loaded() ->
     %% Check persistent_term flag set during init
-    try persistent_term:get(viva_tensor_nif_loaded)
-    catch error:badarg -> false
+    try
+        persistent_term:get(viva_tensor_nif_loaded)
+    catch
+        error:badarg -> false
     end.
 
 %% Get backend info string

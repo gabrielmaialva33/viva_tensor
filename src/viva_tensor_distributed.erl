@@ -75,12 +75,17 @@ shard_tensor(Data, RowSize, NumShards) ->
 
     shard_tensor_acc(Data, RowSize, RowsPerShard, Remainder, NumShards, 0, []).
 
-shard_tensor_acc(_Data, _RowSize, _RowsPerShard, _Remainder, NumShards, Current, Acc)
-  when Current >= NumShards ->
+shard_tensor_acc(_Data, _RowSize, _RowsPerShard, _Remainder, NumShards, Current, Acc) when
+    Current >= NumShards
+->
     lists:reverse(Acc);
 shard_tensor_acc(Data, RowSize, RowsPerShard, Remainder, NumShards, Current, Acc) ->
     %% First 'Remainder' shards get an extra row
-    Extra = case Current < Remainder of true -> 1; false -> 0 end,
+    Extra =
+        case Current < Remainder of
+            true -> 1;
+            false -> 0
+        end,
     Rows = RowsPerShard + Extra,
     Elements = Rows * RowSize,
 
@@ -132,7 +137,8 @@ parallel_matmul(A, B, M, N, K) ->
                 fun(Node, {ShardData, ShardRows}) ->
                     spawn_matmul_task(Node, ShardData, B, ShardRows, N, K)
                 end,
-                Nodes, Shards
+                Nodes,
+                Shards
             ),
 
             %% Gather and combine results

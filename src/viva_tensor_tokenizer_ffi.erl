@@ -70,18 +70,20 @@ build_state(Json) ->
     %% Build reverse lookup id -> token.
     IdToToken = maps:fold(
         fun(Tok, Id, Acc) -> maps:put(Id, Tok, Acc) end,
-        #{}, VocabMap
+        #{},
+        VocabMap
     ),
 
     %% Build merge ranks: {<<"a">>, <<"b">>} -> Rank (lower = higher priority).
     {_, Merges} = lists:foldl(
         fun(Merge, {Rank, Acc}) ->
-            {A, B} = case Merge of
-                [A0, B0] when is_binary(A0), is_binary(B0) -> {A0, B0};
-                MergeBin when is_binary(MergeBin) ->
-                    [A0, B0] = binary:split(MergeBin, <<" ">>),
-                    {A0, B0}
-            end,
+            {A, B} =
+                case Merge of
+                    [A0, B0] when is_binary(A0), is_binary(B0) -> {A0, B0};
+                    MergeBin when is_binary(MergeBin) ->
+                        [A0, B0] = binary:split(MergeBin, <<" ">>),
+                        {A0, B0}
+                end,
             {Rank + 1, maps:put({A, B}, Rank, Acc)}
         end,
         {0, #{}},
@@ -99,10 +101,11 @@ build_state(Json) ->
 
     %% Detect byte-level BPE (GPT-2/Llama-3 style: vocab contains 'Ġ' marker).
     ByteLevel = detect_byte_level(VocabMap),
-    ByteDecoder = case ByteLevel of
-        true  -> build_byte_decoder();
-        false -> #{}
-    end,
+    ByteDecoder =
+        case ByteLevel of
+            true -> build_byte_decoder();
+            false -> #{}
+        end,
 
     {ok, #{
         vocab => VocabMap,
@@ -122,14 +125,16 @@ build_state(Json) ->
 detect_byte_level(VocabMap) ->
     {SpCount, ByteCount} = maps:fold(
         fun(Tok, _, {Sp, By}) ->
-            Sp1 = case binary:match(Tok, <<"▁"/utf8>>) of
-                nomatch -> Sp;
-                _ -> Sp + 1
-            end,
-            By1 = case binary:match(Tok, <<"Ġ"/utf8>>) of
-                nomatch -> By;
-                _ -> By + 1
-            end,
+            Sp1 =
+                case binary:match(Tok, <<"▁"/utf8>>) of
+                    nomatch -> Sp;
+                    _ -> Sp + 1
+                end,
+            By1 =
+                case binary:match(Tok, <<"Ġ"/utf8>>) of
+                    nomatch -> By;
+                    _ -> By + 1
+                end,
             {Sp1, By1}
         end,
         {0, 0},
@@ -152,11 +157,12 @@ build_byte_decoder() ->
     ),
     maps:merge(PrintableMap, NonPrintableMap).
 
-find_special([], _Tok, Default) -> Default;
+find_special([], _Tok, Default) ->
+    Default;
 find_special([H | T], Tok, Default) ->
     case maps:get(<<"content">>, H, undefined) of
         Tok -> maps:get(<<"id">>, H);
-        _   -> find_special(T, Tok, Default)
+        _ -> find_special(T, Tok, Default)
     end.
 
 build_byte_table(Vocab) ->
@@ -167,7 +173,11 @@ build_byte_table(Vocab) ->
 
 byte_token_name(B) ->
     Hex = string:uppercase(integer_to_binary(B, 16)),
-    Pad = case byte_size(Hex) of 1 -> <<"0", Hex/binary>>; _ -> Hex end,
+    Pad =
+        case byte_size(Hex) of
+            1 -> <<"0", Hex/binary>>;
+            _ -> Hex
+        end,
     <<"<0x", Pad/binary, ">">>.
 
 %% ---------------------------------------------------------------- bos_id/eos_id/unk_id
@@ -214,11 +224,14 @@ split_chars(Bin, Acc) ->
 %% This is the classical SentencePiece/HF reference algorithm:
 %% repeatedly find the adjacent pair with the smallest merge rank
 %% and replace it with its concatenation. Stop when no pair has a rank.
-bpe_loop([], _Merges) -> [];
-bpe_loop([Single], _Merges) -> [Single];
+bpe_loop([], _Merges) ->
+    [];
+bpe_loop([Single], _Merges) ->
+    [Single];
 bpe_loop(Pieces, Merges) ->
     case find_best_pair(Pieces, Merges) of
-        none -> Pieces;
+        none ->
+            Pieces;
         {BestRank, _BestIdx} ->
             {A, B} = pair_at_rank(Pieces, Merges, BestRank),
             Merged = merge_all_pairs(Pieces, A, B),
@@ -229,8 +242,10 @@ bpe_loop(Pieces, Merges) ->
 find_best_pair(Pieces, Merges) ->
     find_best_pair(Pieces, Merges, 0, none).
 
-find_best_pair([_], _Merges, _Idx, Best) -> Best;
-find_best_pair([], _Merges, _Idx, Best) -> Best;
+find_best_pair([_], _Merges, _Idx, Best) ->
+    Best;
+find_best_pair([], _Merges, _Idx, Best) ->
+    Best;
 find_best_pair([A, B | Rest], Merges, Idx, Best) ->
     NewBest =
         case maps:find({A, B}, Merges) of
@@ -261,10 +276,8 @@ pair_at_rank_loop([A, B | Rest], Merges, TargetRank) ->
 %% of (A, B) into AB. Matches HF's tokenizers behavior for this step.
 merge_all_pairs([], _A, _B) -> [];
 merge_all_pairs([X], _A, _B) -> [X];
-merge_all_pairs([A, B | Rest], A, B) ->
-    [<<A/binary, B/binary>> | merge_all_pairs(Rest, A, B)];
-merge_all_pairs([X | Rest], A, B) ->
-    [X | merge_all_pairs(Rest, A, B)].
+merge_all_pairs([A, B | Rest], A, B) -> [<<A/binary, B/binary>> | merge_all_pairs(Rest, A, B)];
+merge_all_pairs([X | Rest], A, B) -> [X | merge_all_pairs(Rest, A, B)].
 
 %% ---------------------------------------------------------------- tokens -> ids
 tokens_to_ids(Tokens, State) ->
@@ -275,7 +288,7 @@ tokens_to_ids(Tokens, State) ->
         fun(Tok) ->
             case maps:find(Tok, Vocab) of
                 {ok, Id} -> [Id];
-                error    -> byte_fallback(Tok, ByteIds, Unk)
+                error -> byte_fallback(Tok, ByteIds, Unk)
             end
         end,
         Tokens
@@ -307,13 +320,13 @@ decode(State, Ids) ->
             Joined = fuse_tokens(Tokens, []),
             Spaced = binary:replace(Joined, <<"▁"/utf8>>, <<" ">>, [global]),
             case Spaced of
-                <<$ , Rest/binary>> -> Rest;
+                <<$\s, Rest/binary>> -> Rest;
                 _ -> Spaced
             end
     end.
 
 byte_level_decode(Joined, ByteDecoder) ->
-    << <<(maps:get(CP, ByteDecoder, $?))>> || <<CP/utf8>> <= Joined >>.
+    <<<<(maps:get(CP, ByteDecoder, $?))>> || <<CP/utf8>> <= Joined>>.
 
 %% Collapse adjacent <0xNN> tokens into the raw bytes they encode.
 %% Non-byte-fallback tokens are appended as-is.
@@ -331,7 +344,7 @@ fuse_tokens([Tok | Rest], Acc) ->
 collect_bytes([Tok | Rest], Acc) ->
     case byte_token_value(Tok) of
         {ok, B} -> collect_bytes(Rest, [B | Acc]);
-        error   -> {list_to_binary(lists:reverse(Acc)), [Tok | Rest]}
+        error -> {list_to_binary(lists:reverse(Acc)), [Tok | Rest]}
     end;
 collect_bytes([], Acc) ->
     {list_to_binary(lists:reverse(Acc)), []}.
@@ -340,6 +353,8 @@ collect_bytes([], Acc) ->
 byte_token_value(<<"<0x", Hex:2/binary, ">">>) ->
     try
         {ok, binary_to_integer(Hex, 16)}
-    catch _:_ -> error
+    catch
+        _:_ -> error
     end;
-byte_token_value(_) -> error.
+byte_token_value(_) ->
+    error.

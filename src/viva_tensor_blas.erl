@@ -34,7 +34,8 @@ detect_unix_blas() ->
     %% Check if MKL is available
     MklPath = "/opt/intel/oneapi/mkl/latest/lib/intel64/libmkl_rt.so",
     case filelib:is_file(MklPath) of
-        true -> intel_mkl;
+        true ->
+            intel_mkl;
         false ->
             %% Check OpenBLAS
             case os:find_executable("libopenblas.so") of
@@ -44,7 +45,8 @@ detect_unix_blas() ->
                         [] -> zig_simd;
                         _ -> open_blas
                     end;
-                _ -> open_blas
+                _ ->
+                    open_blas
             end
     end.
 
@@ -65,10 +67,14 @@ get_cpu_topology() ->
 
 fallback_topology() ->
     Logical = erlang:system_info(logical_processors),
-    #{physical_cores => Logical div 2,
-      logical_cpus => Logical,
-      l2_cache_kb => 256, l3_cache_kb => 8192,
-      has_avx2 => true, has_avx512 => false}.
+    #{
+        physical_cores => Logical div 2,
+        logical_cpus => Logical,
+        l2_cache_kb => 256,
+        l3_cache_kb => 8192,
+        has_avx2 => true,
+        has_avx512 => false
+    }.
 
 %% Configure threads for BLAS operations
 configure_threads(NumThreads) ->
@@ -82,11 +88,12 @@ configure_threads(NumThreads) ->
 
 %% Set thread affinity mode
 set_affinity(Mode) ->
-    ModeStr = case Mode of
-        <<"scatter">> -> "scatter,granularity=fine";
-        <<"compact">> -> "compact,granularity=fine";
-        _ -> "scatter,granularity=fine"
-    end,
+    ModeStr =
+        case Mode of
+            <<"scatter">> -> "scatter,granularity=fine";
+            <<"compact">> -> "compact,granularity=fine";
+            _ -> "scatter,granularity=fine"
+        end,
     os:putenv("KMP_AFFINITY", ModeStr),
     os:putenv("GOMP_CPU_AFFINITY", "0-23"),
     %% MKL threading layer (INTEL is fastest for GEMM)

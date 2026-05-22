@@ -31,11 +31,12 @@ floats_to_fp32_binary(Floats) when is_list(Floats) ->
 floats_to_fp16_binary(Floats) when is_list(Floats) ->
     %% Fast path: C NIF (single C pass, ~14× faster than per-element Erlang).
     %% Fallback to Erlang if the NIF isn't loaded.
-    try viva_tensor_zig:nt_floats_to_fp16_binary(Floats)
+    try
+        viva_tensor_zig:nt_floats_to_fp16_binary(Floats)
     catch
         error:nif_not_loaded -> floats_to_fp16_binary_erlang(Floats);
-        error:undef          -> floats_to_fp16_binary_erlang(Floats);
-        error:badarg         -> floats_to_fp16_binary_erlang(Floats)
+        error:undef -> floats_to_fp16_binary_erlang(Floats);
+        error:badarg -> floats_to_fp16_binary_erlang(Floats)
     end.
 
 floats_to_fp16_binary_erlang(Floats) ->
@@ -50,12 +51,17 @@ fp16_encode(F) when is_float(F) ->
             (S bsl 15);
         255 ->
             %% Inf / NaN
-            (S bsl 15) bor (16#1F bsl 10) bor (case M of 0 -> 0; _ -> 1 end);
+            (S bsl 15) bor (16#1F bsl 10) bor
+                (case M of
+                    0 -> 0;
+                    _ -> 1
+                end);
         _ ->
             UnbiasedE = E - 127,
             case UnbiasedE of
                 X when X < -24 ->
-                    (S bsl 15);  %% truly < 2^-24, flush
+                    %% truly < 2^-24, flush
+                    (S bsl 15);
                 X when X < -14 ->
                     %% IEEE-754 binary16 subnormal range [2^-24, 2^-14).
                     %% Shift the implicit leading 1 into the mantissa field.
@@ -65,33 +71,42 @@ fp16_encode(F) when is_float(F) ->
                     Shift = -1 - X,
                     (S bsl 15) bor (MantFull bsr Shift);
                 X when X > 15 ->
-                    (S bsl 15) bor (16#1F bsl 10);  %% overflow → ±Inf
+                    %% overflow → ±Inf
+                    (S bsl 15) bor (16#1F bsl 10);
                 X ->
                     Eh = X + 15,
                     %% Round-to-nearest-even on the mantissa: keep top 10 bits
                     Mh = (M bsr 13),
                     Round = (M bsr 12) band 1,
-                    Sticky = case M band 16#FFF of 0 -> 0; _ -> 1 end,
-                    {Mh2, Eh2} = case Round of
-                        0 -> {Mh, Eh};
-                        1 when Sticky =:= 1 ->
-                            Mh1 = Mh + 1,
-                            case Mh1 of
-                                1024 -> {0, Eh + 1};
-                                _ -> {Mh1, Eh}
-                            end;
-                        1 when (Mh band 1) =:= 1 ->
-                            Mh1 = Mh + 1,
-                            case Mh1 of
-                                1024 -> {0, Eh + 1};
-                                _ -> {Mh1, Eh}
-                            end;
-                        1 -> {Mh, Eh}
-                    end,
+                    Sticky =
+                        case M band 16#FFF of
+                            0 -> 0;
+                            _ -> 1
+                        end,
+                    {Mh2, Eh2} =
+                        case Round of
+                            0 ->
+                                {Mh, Eh};
+                            1 when Sticky =:= 1 ->
+                                Mh1 = Mh + 1,
+                                case Mh1 of
+                                    1024 -> {0, Eh + 1};
+                                    _ -> {Mh1, Eh}
+                                end;
+                            1 when (Mh band 1) =:= 1 ->
+                                Mh1 = Mh + 1,
+                                case Mh1 of
+                                    1024 -> {0, Eh + 1};
+                                    _ -> {Mh1, Eh}
+                                end;
+                            1 ->
+                                {Mh, Eh}
+                        end,
                     (S bsl 15) bor (Eh2 bsl 10) bor Mh2
             end
     end;
-fp16_encode(0) -> 0;
+fp16_encode(0) ->
+    0;
 fp16_encode(F) when is_integer(F) -> fp16_encode(float(F)).
 
 %% binary of FP16 little-endian values -> list of floats. Used to decode
@@ -102,26 +117,38 @@ fp16_binary_to_floats(Bin) when is_binary(Bin) ->
 %% IEEE-754 binary16 → float64. Simple table-free decoder.
 fp16_decode(H) ->
     Sign = (H bsr 15) band 1,
-    Exp  = (H bsr 10) band 16#1F,
-    Frac =  H band 16#3FF,
+    Exp = (H bsr 10) band 16#1F,
+    Frac = H band 16#3FF,
     case Exp of
         0 when Frac =:= 0 ->
-            case Sign of 0 -> +0.0; 1 -> -0.0 end;
+            case Sign of
+                0 -> +0.0;
+                1 -> -0.0
+            end;
         0 ->
             %% Subnormal
             M = Frac / 1024.0,
             V = M * math:pow(2.0, -14.0),
-            case Sign of 0 -> V; 1 -> -V end;
+            case Sign of
+                0 -> V;
+                1 -> -V
+            end;
         16#1F when Frac =:= 0 ->
             %% Inf: Erlang doesn't have a native Inf literal — return the
             %% largest finite double (1.79e308). Callers comparing for
             %% magnitude will still see "huge" without crashing.
-            case Sign of 0 -> 1.7976931348623157e308; 1 -> -1.7976931348623157e308 end;
+            case Sign of
+                0 -> 1.7976931348623157e308;
+                1 -> -1.7976931348623157e308
+            end;
         16#1F ->
             %% NaN — return 0 to keep tests numerically stable
             0.0;
         _ ->
             M = 1.0 + Frac / 1024.0,
             V = M * math:pow(2.0, float(Exp - 15)),
-            case Sign of 0 -> V; 1 -> -V end
+            case Sign of
+                0 -> V;
+                1 -> -V
+            end
     end.

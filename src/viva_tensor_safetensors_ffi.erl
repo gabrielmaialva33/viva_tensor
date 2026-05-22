@@ -33,7 +33,8 @@ open(Path0) ->
     Path = to_binary(Path0),
     PathList = binary_to_list(Path),
     case filelib:is_dir(PathList) of
-        true -> open_dir(Path);
+        true ->
+            open_dir(Path);
         false ->
             case filename:basename(PathList) of
                 "model.safetensors.index.json" -> open_sharded_header(Path);
@@ -120,7 +121,9 @@ open_sharded_from_dir(Dir) ->
     end.
 
 open_sharded_scan(ShardPaths) ->
-    case open_shards([{list_to_binary(filename:basename(P)), list_to_binary(P)} || P <- ShardPaths]) of
+    case
+        open_shards([{list_to_binary(filename:basename(P)), list_to_binary(P)} || P <- ShardPaths])
+    of
         {ok, Shards} ->
             try
                 WeightMap = maps:fold(
@@ -153,7 +156,7 @@ open_sharded_weight_map(Dir, WeightMap0) ->
     ShardNames = lists:usort(maps:values(WeightMap)),
     ShardSpecs = [
         {ShardName, list_to_binary(filename:join(Dir, binary_to_list(ShardName)))}
-        || ShardName <- ShardNames
+     || ShardName <- ShardNames
     ],
     case open_shards(ShardSpecs) of
         {ok, Shards} -> {ok, #{sharded => true, weight_map => WeightMap, shards => Shards}};
@@ -257,34 +260,42 @@ sharded_tensor_header(#{weight_map := WeightMap, shards := Shards}, Name) ->
 bf16_to_fp32_binary(BF16) when is_binary(BF16) ->
     bf16_to_fp32(BF16, <<>>).
 
-bf16_to_fp32(<<>>, Acc) -> Acc;
+bf16_to_fp32(<<>>, Acc) ->
+    Acc;
 bf16_to_fp32(<<U:16/unsigned-little, Rest/binary>>, Acc) ->
     bf16_to_fp32(Rest, <<Acc/binary, 0:16/unsigned-little, U:16/unsigned-little>>).
 
 fp16_to_fp32_binary(FP16) when is_binary(FP16) ->
-    try viva_tensor_zig:nt_fp16_to_fp32_binary(FP16)
+    try
+        viva_tensor_zig:nt_fp16_to_fp32_binary(FP16)
     catch
         error:nif_not_loaded -> fp16_to_fp32_binary_erlang(FP16);
-        error:undef          -> fp16_to_fp32_binary_erlang(FP16);
-        error:badarg         -> fp16_to_fp32_binary_erlang(FP16)
+        error:undef -> fp16_to_fp32_binary_erlang(FP16);
+        error:badarg -> fp16_to_fp32_binary_erlang(FP16)
     end.
 
 fp16_to_fp32_binary_erlang(FP16) ->
-    << <<(fp16_to_float(H)):32/float-little>>
-       || <<H:16/unsigned-little>> <= FP16 >>.
+    <<
+        <<(fp16_to_float(H)):32/float-little>>
+     || <<H:16/unsigned-little>> <= FP16
+    >>.
 
 fp16_to_float(H) ->
     Sign = (H bsr 15) band 1,
     Exp = (H bsr 10) band 16#1F,
     Frac = H band 16#3FF,
-    V = case Exp of
-        0 when Frac =:= 0 -> 0.0;
-        0 -> (Frac / 1024.0) * math:pow(2.0, -14.0);
-        16#1F when Frac =:= 0 -> 1.7976931348623157e308;
-        16#1F -> 0.0;
-        _ -> (1.0 + Frac / 1024.0) * math:pow(2.0, float(Exp - 15))
-    end,
-    case Sign of 0 -> V; 1 -> -V end.
+    V =
+        case Exp of
+            0 when Frac =:= 0 -> 0.0;
+            0 -> (Frac / 1024.0) * math:pow(2.0, -14.0);
+            16#1F when Frac =:= 0 -> 1.7976931348623157e308;
+            16#1F -> 0.0;
+            _ -> (1.0 + Frac / 1024.0) * math:pow(2.0, float(Exp - 15))
+        end,
+    case Sign of
+        0 -> V;
+        1 -> -V
+    end.
 
 %% Transpose an fp32 row-major matrix of shape {Rows, Cols} into a new
 %% binary with shape {Cols, Rows} (still row-major). Used to flip
@@ -304,8 +315,8 @@ transpose_fp32(Bin, Rows, Cols) when is_binary(Bin) ->
                 {ok, Out}
             catch
                 error:nif_not_loaded -> transpose_fp32_erlang(Bin, Rows, Cols);
-                error:undef          -> transpose_fp32_erlang(Bin, Rows, Cols);
-                error:badarg         -> transpose_fp32_erlang(Bin, Rows, Cols)
+                error:undef -> transpose_fp32_erlang(Bin, Rows, Cols);
+                error:badarg -> transpose_fp32_erlang(Bin, Rows, Cols)
             end;
         _ ->
             {error, size_mismatch}
@@ -318,8 +329,10 @@ transpose_fp32(Bin, Rows, Cols) when is_binary(Bin) ->
 %% 32000×2048 matrices.
 transpose_fp32_erlang(Bin, Rows, Cols) ->
     Out = iolist_to_binary(
-        [transpose_col(Bin, C, Rows, Cols)
-         || C <- lists:seq(0, Cols - 1)]
+        [
+            transpose_col(Bin, C, Rows, Cols)
+         || C <- lists:seq(0, Cols - 1)
+        ]
     ),
     {ok, Out}.
 
