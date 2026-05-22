@@ -277,7 +277,7 @@ with_block_state(Fun) ->
 generate_argmax(Handle, Prompt, Opts) ->
     Config = maps:get(config, Handle),
     Tokenizer = maps:get(tokenizer, Handle),
-    Layers = maps:get(layers, Handle),
+    Layers0 = maps:get(layers, Handle),
     EmbedTable = maps:get(embed_table_ref, Handle),
     FinalNorm = maps:get(final_norm, Handle),
     LmHead = maps:get(lm_head, Handle),
@@ -285,6 +285,7 @@ generate_argmax(Handle, Prompt, Opts) ->
     MaxNew = maps:get(max_new_tokens, Opts),
     StopOnEos = maps:get(stop_on_eos, Opts),
     WeightFormat = maps:get(weight_format, Opts),
+    Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
     BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
     EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
     PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
@@ -418,7 +419,9 @@ decode_loop_decode_fused(
 generate_sampling(Handle, Prompt, Opts) ->
     Config = maps:get(config, Handle),
     Tokenizer = maps:get(tokenizer, Handle),
-    Layers = maps:get(layers, Handle),
+    Layers0 = maps:get(layers, Handle),
+    WeightFormat = maps:get(weight_format, Opts),
+    Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
     EmbedTable = maps:get(embed_table_ref, Handle),
     FinalNorm = maps:get(final_norm, Handle),
     LmHead = maps:get(lm_head, Handle),
@@ -1244,6 +1247,22 @@ generation_options(Opts) ->
         stop_on_eos => opt(Opts, stop_on_eos, true),
         weight_format => weight_format_atom(opt(Opts, weight_format, fp8_w8a16))
     }.
+
+%% Inject top-level marlin_handles map (indexed by LayerIdx) into each layer map
+%% so the NIF can find handles via decode_layer_has_marlin_weights + get_layer_marlin.
+enrich_layers_with_marlin(Layers, _Handle, fp8_w8a16) ->
+    Layers;
+enrich_layers_with_marlin(Layers, Handle, marlin_w4a16) ->
+    MarlinHandles = maps:get(marlin_handles, Handle, #{}),
+    {Enriched, _} = lists:mapfoldl(
+        fun(LayerMap, Idx) ->
+            PerLayer = maps:get(Idx, MarlinHandles, #{}),
+            {LayerMap#{marlin_handles => PerLayer}, Idx + 1}
+        end,
+        0,
+        Layers
+    ),
+    Enriched.
 
 weight_format_atom(fp8_w8a16) -> fp8_w8a16;
 weight_format_atom(marlin_w4a16) -> marlin_w4a16;
