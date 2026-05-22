@@ -105,18 +105,43 @@ generate(Handle, Prompt0, GenOpts0) when
     end.
 
 generate_batch(Handle, Prompts, GenOpts0) when is_list(Prompts) ->
-    Timeout = generate_batch_timeout(GenOpts0),
-    Jobs = lists:map(
-        fun(Prompt) ->
-            Parent = self(),
-            {Pid, Ref} = erlang:spawn_monitor(
-                fun() -> Parent ! {self(), generate(Handle, Prompt, GenOpts0)} end
-            ),
-            {Pid, Ref}
-        end,
-        Prompts
-    ),
-    lists:map(fun(Job) -> collect_generate_result(Job, Timeout) end, Jobs).
+    %% Shared-state batched decode: a single BlockState (and thus a single
+    %% cuBLASLt plan cache, scratch arena and CUDA Graph capture) is reused
+    %% across all prompts. Drops per-prompt setup overhead vs the previous
+    %% spawn_monitor-per-prompt model. Prompts execute sequentially on the
+    %% GPU device (already the case in practice — the device serialises
+    %% concurrent forward_decode_step calls under ErlNifMutex), but no
+    %% longer pay the BlockState + graph capture cost N times.
+    try
+        true = maps:get(viva_tensor_llm_handle, Handle, false),
+        GenOpts = generation_options(GenOpts0),
+        with_block_state(fun(BlockState) ->
+            lists:map(
+                fun(Prompt0) ->
+                    try
+                        Prompt = to_binary(Prompt0),
+                        case maps:get(temperature, GenOpts) of
+                            Temp when Temp =< 0.0 ->
+                                generate_argmax_with_state(
+                                    Handle, Prompt, GenOpts, BlockState
+                                );
+                            _ ->
+                                generate_sampling_with_state(
+                                    Handle, Prompt, GenOpts, BlockState
+                                )
+                        end
+                    catch
+                        Class:Reason:Stack ->
+                            {error, {Class, Reason, Stack}}
+                    end
+                end,
+                Prompts
+            )
+        end)
+    catch
+        Class:Reason:Stack ->
+            [{error, {Class, Reason, Stack}} || _ <- Prompts]
+    end.
 
 load_for_gleam(Path) ->
     case load(Path, #{}) of
@@ -275,6 +300,13 @@ with_block_state(Fun) ->
     end.
 
 generate_argmax(Handle, Prompt, Opts) ->
+    with_block_state(fun(BlockState) ->
+        generate_argmax_with_state(Handle, Prompt, Opts, BlockState)
+    end).
+
+%% Internal: same as generate_argmax, but skips the with_block_state wrap so
+%% the caller (e.g. generate_batch) can reuse a single BlockState across calls.
+generate_argmax_with_state(Handle, Prompt, Opts, BlockState) ->
     Config = maps:get(config, Handle),
     Tokenizer = maps:get(tokenizer, Handle),
     Layers0 = maps:get(layers, Handle),
@@ -294,60 +326,68 @@ generate_argmax(Handle, Prompt, Opts) ->
         true ->
             {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}};
         false ->
-            with_block_state(fun(BlockState) ->
-                Caches = new_kv_caches(Config),
-                {FirstNext, _} = lists:foldl(
-                    fun({Pos, TokenId}, {_, CL}) ->
-                        Next = forward_decode_step(
-                            BlockState,
-                            TokenId,
-                            EmbedTable,
-                            Layers,
-                            FinalNorm,
-                            LmHead,
-                            CL,
-                            Pos,
-                            RopeFreqs,
-                            WeightFormat
-                        ),
-                        {Next, CL}
-                    end,
-                    {undefined, Caches},
-                    lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
-                ),
-                TGen = us(),
-                GeneratedIds = decode_loop_decode_fused(
-                    BlockState,
-                    FirstNext,
-                    Caches,
-                    Layers,
-                    EmbedTable,
-                    FinalNorm,
-                    LmHead,
-                    RopeFreqs,
-                    length(PromptTokens),
-                    MaxNew,
-                    EOS,
-                    StopOnEos,
-                    WeightFormat,
-                    []
-                ),
-                GenUs = us() - TGen,
-                TokCount = length(GeneratedIds),
-                MsPerToken =
-                    case TokCount of
-                        0 -> 0.0;
-                        _ -> float(GenUs) / 1000.0 / float(TokCount)
-                    end,
-                Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
-                {ok, #{
-                    tokens => GeneratedIds,
-                    text => Text,
-                    ms_per_token => MsPerToken,
-                    total_tokens => TokCount
-                }}
-            end)
+            generate_argmax_decode_with_state(
+                BlockState, Handle, Tokenizer, Layers, EmbedTable, FinalNorm,
+                LmHead, RopeFreqs, MaxNew, StopOnEos, WeightFormat,
+                PromptTokens, EOS
+            )
     end.
+
+generate_argmax_decode_with_state(BlockState, Handle, Tokenizer, Layers, EmbedTable,
+                                  FinalNorm, LmHead, RopeFreqs, MaxNew, StopOnEos,
+                                  WeightFormat, PromptTokens, EOS) ->
+    Config = maps:get(config, Handle),
+    Caches = new_kv_caches(Config),
+    {FirstNext, _} = lists:foldl(
+        fun({Pos, TokenId}, {_, CL}) ->
+            Next = forward_decode_step(
+                BlockState,
+                TokenId,
+                EmbedTable,
+                Layers,
+                FinalNorm,
+                LmHead,
+                CL,
+                Pos,
+                RopeFreqs,
+                WeightFormat
+            ),
+            {Next, CL}
+        end,
+        {undefined, Caches},
+        lists:zip(lists:seq(0, length(PromptTokens) - 1), PromptTokens)
+    ),
+    TGen = us(),
+    GeneratedIds = decode_loop_decode_fused(
+        BlockState,
+        FirstNext,
+        Caches,
+        Layers,
+        EmbedTable,
+        FinalNorm,
+        LmHead,
+        RopeFreqs,
+        length(PromptTokens),
+        MaxNew,
+        EOS,
+        StopOnEos,
+        WeightFormat,
+        []
+    ),
+    GenUs = us() - TGen,
+    TokCount = length(GeneratedIds),
+    MsPerToken =
+        case TokCount of
+            0 -> 0.0;
+            _ -> float(GenUs) / 1000.0 / float(TokCount)
+        end,
+    Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+    {ok, #{
+        tokens => GeneratedIds,
+        text => Text,
+        ms_per_token => MsPerToken,
+        total_tokens => TokCount
+    }}.
 
 decode_loop_decode_fused(
     _BlockState,
@@ -417,6 +457,11 @@ decode_loop_decode_fused(
     end.
 
 generate_sampling(Handle, Prompt, Opts) ->
+    with_block_state(fun(BlockState) ->
+        generate_sampling_with_state(Handle, Prompt, Opts, BlockState)
+    end).
+
+generate_sampling_with_state(Handle, Prompt, Opts, BlockState) ->
     Config = maps:get(config, Handle),
     Tokenizer = maps:get(tokenizer, Handle),
     Layers0 = maps:get(layers, Handle),
@@ -436,54 +481,52 @@ generate_sampling(Handle, Prompt, Opts) ->
         true ->
             {error, {max_sequence_exceeded, length(PromptTokens), MaxNew, MaxSeq}};
         false ->
-            with_block_state(fun(BlockState) ->
-                Caches = new_kv_caches(Config),
-                TopK = sampling_top_k(Opts, maps:get(vocab_size, Config)),
-                FirstNext = prefill_sampling(
-                    BlockState,
-                    PromptTokens,
-                    Caches,
-                    Layers,
-                    EmbedTable,
-                    FinalNorm,
-                    LmHead,
-                    RopeFreqs,
-                    TopK,
-                    Opts
-                ),
-                TGen = us(),
-                GeneratedIds = decode_loop_decode_sampled(
-                    BlockState,
-                    FirstNext,
-                    Caches,
-                    Layers,
-                    EmbedTable,
-                    FinalNorm,
-                    LmHead,
-                    RopeFreqs,
-                    length(PromptTokens),
-                    MaxNew,
-                    EOS,
-                    StopOnEos,
-                    TopK,
-                    Opts,
-                    []
-                ),
-                GenUs = us() - TGen,
-                TokCount = length(GeneratedIds),
-                MsPerToken =
-                    case TokCount of
-                        0 -> 0.0;
-                        _ -> float(GenUs) / 1000.0 / float(TokCount)
-                    end,
-                Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
-                {ok, #{
-                    tokens => GeneratedIds,
-                    text => Text,
-                    ms_per_token => MsPerToken,
-                    total_tokens => TokCount
-                }}
-            end)
+            Caches = new_kv_caches(Config),
+            TopK = sampling_top_k(Opts, maps:get(vocab_size, Config)),
+            FirstNext = prefill_sampling(
+                BlockState,
+                PromptTokens,
+                Caches,
+                Layers,
+                EmbedTable,
+                FinalNorm,
+                LmHead,
+                RopeFreqs,
+                TopK,
+                Opts
+            ),
+            TGen = us(),
+            GeneratedIds = decode_loop_decode_sampled(
+                BlockState,
+                FirstNext,
+                Caches,
+                Layers,
+                EmbedTable,
+                FinalNorm,
+                LmHead,
+                RopeFreqs,
+                length(PromptTokens),
+                MaxNew,
+                EOS,
+                StopOnEos,
+                TopK,
+                Opts,
+                []
+            ),
+            GenUs = us() - TGen,
+            TokCount = length(GeneratedIds),
+            MsPerToken =
+                case TokCount of
+                    0 -> 0.0;
+                    _ -> float(GenUs) / 1000.0 / float(TokCount)
+                end,
+            Text = viva_tensor_tokenizer_ffi:decode(Tokenizer, GeneratedIds),
+            {ok, #{
+                tokens => GeneratedIds,
+                text => Text,
+                ms_per_token => MsPerToken,
+                total_tokens => TokCount
+            }}
     end.
 
 prefill_sampling(
