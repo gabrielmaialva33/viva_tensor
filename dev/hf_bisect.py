@@ -54,7 +54,7 @@ def rope(x, pos, head_dim=HEAD_DIM, theta=10000.0):
     # x: [num_heads, head_dim]
     half = head_dim // 2
     freqs = theta ** (-torch.arange(0, half, dtype=torch.float32) * 2.0 / head_dim)
-    angle = pos * freqs                       # [half]
+    angle = pos * freqs  # [half]
     cos = angle.cos()
     sin = angle.sin()
     x1 = x[..., :half]
@@ -69,12 +69,14 @@ def main():
     model = LlamaForCausalLM.from_pretrained(MODEL_PATH, torch_dtype=torch.float32)
     model.eval()
     cfg = model.config
-    print(f"hidden={cfg.hidden_size}, kv={cfg.num_key_value_heads}*{HEAD_DIM}, ffn={cfg.intermediate_size}")
+    print(
+        f"hidden={cfg.hidden_size}, kv={cfg.num_key_value_heads}*{HEAD_DIM}, ffn={cfg.intermediate_size}"
+    )
     sd = model.state_dict()
 
     # --- Stage 0: embedding ---
     embed = sd["model.embed_tokens.weight"]
-    x = embed[BOS].clone()       # [hidden]
+    x = embed[BOS].clone()  # [hidden]
     m("embed[BOS]", x)
 
     # --- Layer 0 ---
@@ -94,9 +96,9 @@ def main():
     m("after input_layernorm", x_norm1)
 
     # --- Stage 2: Q/K/V projections (HF stores [out, in], y = x @ W^T) ---
-    q = x_norm1 @ qw.T           # [hidden=2048]
-    k = x_norm1 @ kw.T           # [kv_dim=256]
-    v = x_norm1 @ vw.T           # [kv_dim=256]
+    q = x_norm1 @ qw.T  # [hidden=2048]
+    k = x_norm1 @ kw.T  # [kv_dim=256]
+    v = x_norm1 @ vw.T  # [kv_dim=256]
     m("Q proj raw", q)
     m("K proj raw", k)
     m("V proj raw", v)
@@ -112,10 +114,7 @@ def main():
     # --- Stage 4: single-token attention (softmax(1 scalar)=1, attn=v_head) ---
     v_heads = v.view(NUM_KV_HEADS, HEAD_DIM)
     q_per_kv = NUM_HEADS // NUM_KV_HEADS
-    attn = torch.cat([
-        v_heads[h // q_per_kv]
-        for h in range(NUM_HEADS)
-    ])
+    attn = torch.cat([v_heads[h // q_per_kv] for h in range(NUM_HEADS)])
     m("attention output", attn)
 
     # --- Stage 5: O proj + residual 1 ---

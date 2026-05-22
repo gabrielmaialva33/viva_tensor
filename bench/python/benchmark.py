@@ -42,6 +42,7 @@ import numpy as np
 try:
     import scipy.stats as stats
     from scipy.stats import shapiro, mannwhitneyu, bootstrap
+
     HAS_SCIPY = True
 except ImportError:
     HAS_SCIPY = False
@@ -49,6 +50,7 @@ except ImportError:
 
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
@@ -58,12 +60,14 @@ except ImportError:
 # Configuration
 # =============================================================================
 
+
 @dataclass
 class BenchmarkConfig:
     """Professional benchmark configuration"""
+
     # Timing parameters
-    warmup_runs: int = 5           # Warmup iterations (discarded)
-    timed_runs: int = 30           # Measured iterations
+    warmup_runs: int = 5  # Warmup iterations (discarded)
+    timed_runs: int = 30  # Measured iterations
     cooldown_seconds: float = 0.1  # Pause between runs
 
     # Matrix sizes to test
@@ -85,9 +89,11 @@ class BenchmarkConfig:
 # Statistical Analysis
 # =============================================================================
 
+
 @dataclass
 class LatencyMetrics:
     """Latency and I/O performance metrics"""
+
     # Latency percentiles (ms)
     p50_ms: float = 0.0
     p90_ms: float = 0.0
@@ -111,6 +117,7 @@ class LatencyMetrics:
 @dataclass
 class StatisticalResult:
     """Comprehensive statistical analysis result"""
+
     # Raw data
     raw_times_ms: List[float] = field(default_factory=list)
     raw_gflops: List[float] = field(default_factory=list)
@@ -219,7 +226,7 @@ class StatisticalResult:
                     np.mean,
                     n_resamples=config.bootstrap_samples,
                     confidence_level=config.confidence_level,
-                    method='BCa'  # Bias-corrected and accelerated
+                    method="BCa",  # Bias-corrected and accelerated
                 )
                 self.ci_lower = float(res.confidence_interval.low)
                 self.ci_upper = float(res.confidence_interval.high)
@@ -232,7 +239,7 @@ class StatisticalResult:
         if len(data) >= 2:
             sem = self.std_gflops / np.sqrt(len(data))
             if HAS_SCIPY:
-                t_crit = stats.t.ppf(1 - alpha/2, len(data) - 1)
+                t_crit = stats.t.ppf(1 - alpha / 2, len(data) - 1)
             else:
                 t_crit = 2.0  # Approximate for large n
 
@@ -264,13 +271,14 @@ class StatisticalResult:
             self.latency.warm_avg_ms = float(np.mean(self.raw_times_ms[1:]))
             if self.latency.warm_avg_ms > 0:
                 self.latency.cold_overhead_percent = (
-                    (self.latency.cold_start_ms / self.latency.warm_avg_ms - 1) * 100
-                )
+                    self.latency.cold_start_ms / self.latency.warm_avg_ms - 1
+                ) * 100
 
 
 @dataclass
 class BenchmarkResult:
     """Complete benchmark result for one library/size combination"""
+
     library: str
     operation: str
     size: int
@@ -293,9 +301,11 @@ class BenchmarkResult:
 # Comparison Analysis
 # =============================================================================
 
+
 @dataclass
 class ComparisonResult:
     """Statistical comparison between two libraries"""
+
     size: int
     library_a: str
     library_b: str
@@ -321,9 +331,7 @@ class ComparisonResult:
 
 
 def compare_results(
-    result_a: BenchmarkResult,
-    result_b: BenchmarkResult,
-    alpha: float = 0.05
+    result_a: BenchmarkResult, result_b: BenchmarkResult, alpha: float = 0.05
 ) -> ComparisonResult:
     """Perform statistical comparison between two benchmark results"""
 
@@ -332,7 +340,7 @@ def compare_results(
         library_a=result_a.library,
         library_b=result_b.library,
         mean_a=result_a.stats.mean_gflops,
-        mean_b=result_b.stats.mean_gflops
+        mean_b=result_b.stats.mean_gflops,
     )
 
     # Difference
@@ -357,7 +365,7 @@ def compare_results(
             comp.test_name = "Welch's t-test"
         else:
             # Mann-Whitney U test (non-parametric)
-            stat, pval = mannwhitneyu(data_a, data_b, alternative='two-sided')
+            stat, pval = mannwhitneyu(data_a, data_b, alternative="two-sided")
             comp.test_name = "Mann-Whitney U"
 
         comp.test_statistic = float(stat)
@@ -366,9 +374,8 @@ def compare_results(
 
     # Cohen's d effect size
     pooled_std = np.sqrt(
-        ((len(data_a) - 1) * np.var(data_a, ddof=1) +
-         (len(data_b) - 1) * np.var(data_b, ddof=1)) /
-        (len(data_a) + len(data_b) - 2)
+        ((len(data_a) - 1) * np.var(data_a, ddof=1) + (len(data_b) - 1) * np.var(data_b, ddof=1))
+        / (len(data_a) + len(data_b) - 2)
     )
 
     if pooled_std > 0:
@@ -392,14 +399,17 @@ def compare_results(
 # Benchmarking Functions
 # =============================================================================
 
+
 def benchmark_numpy(config: BenchmarkConfig) -> List[BenchmarkResult]:
     """Benchmark NumPy with full statistical analysis"""
     results = []
 
     # Get NumPy BLAS info
     try:
-        blas_info = np.show_config(mode='dicts')
-        backend = "NumPy + " + str(blas_info.get('Build Dependencies', {}).get('blas', {}).get('name', 'unknown'))
+        blas_info = np.show_config(mode="dicts")
+        backend = "NumPy + " + str(
+            blas_info.get("Build Dependencies", {}).get("blas", {}).get("name", "unknown")
+        )
     except:
         backend = "NumPy"
 
@@ -430,10 +440,7 @@ def benchmark_numpy(config: BenchmarkConfig) -> List[BenchmarkResult]:
             gflops_list.append(flops / (elapsed * 1e9))
 
         # Create result with statistics
-        stat = StatisticalResult(
-            raw_times_ms=times_ms,
-            raw_gflops=gflops_list
-        )
+        stat = StatisticalResult(raw_times_ms=times_ms, raw_gflops=gflops_list)
         stat.compute(config)
 
         result = BenchmarkResult(
@@ -442,12 +449,14 @@ def benchmark_numpy(config: BenchmarkConfig) -> List[BenchmarkResult]:
             size=size,
             timestamp=datetime.now().isoformat(),
             stats=stat,
-            backend=backend
+            backend=backend,
         )
         results.append(result)
 
         cv_indicator = "✓" if stat.coefficient_of_variation < 5 else "!"
-        print(f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})")
+        print(
+            f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})"
+        )
 
     return results
 
@@ -488,10 +497,7 @@ def benchmark_pytorch(config: BenchmarkConfig) -> List[BenchmarkResult]:
             times_ms.append(elapsed * 1000)
             gflops_list.append(flops / (elapsed * 1e9))
 
-        stat = StatisticalResult(
-            raw_times_ms=times_ms,
-            raw_gflops=gflops_list
-        )
+        stat = StatisticalResult(raw_times_ms=times_ms, raw_gflops=gflops_list)
         stat.compute(config)
 
         result = BenchmarkResult(
@@ -501,12 +507,14 @@ def benchmark_pytorch(config: BenchmarkConfig) -> List[BenchmarkResult]:
             timestamp=datetime.now().isoformat(),
             stats=stat,
             backend=backend,
-            threads=threads
+            threads=threads,
         )
         results.append(result)
 
         cv_indicator = "✓" if stat.coefficient_of_variation < 5 else "!"
-        print(f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})")
+        print(
+            f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})"
+        )
 
     return results
 
@@ -519,7 +527,7 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
         print(f"  viva_tensor {size}×{size}...", end=" ", flush=True)
 
         # Run Erlang benchmark - zero-allocation path with pre-faulted memory
-        erlang_code = f'''
+        erlang_code = f"""
             N = {size},
             Warmup = {config.warmup_runs},
             Runs = {config.timed_runs},
@@ -545,22 +553,31 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
 
             io:format("~w|~w|~s~n", [Times, Gflops, Backend]),
             halt().
-        '''
+        """
 
         try:
             result = subprocess.run(
-                ["erl", "-pa", "build/dev/erlang/viva_tensor/ebin",
-                 "-pa", "ebin", "-noshell", "-eval", erlang_code],
+                [
+                    "erl",
+                    "-pa",
+                    "build/dev/erlang/viva_tensor/ebin",
+                    "-pa",
+                    "ebin",
+                    "-noshell",
+                    "-eval",
+                    erlang_code,
+                ],
                 capture_output=True,
                 text=True,
                 timeout=600,
-                env={**os.environ,
-                     "MKL_NUM_THREADS": "24",
-                     "MKL_DYNAMIC": "FALSE",
-                     "KMP_AFFINITY": "granularity=fine,compact,1,0",
-                     "KMP_BLOCKTIME": "0",
-                     "MKL_ENABLE_INSTRUCTIONS": "AVX2",
-                }
+                env={
+                    **os.environ,
+                    "MKL_NUM_THREADS": "24",
+                    "MKL_DYNAMIC": "FALSE",
+                    "KMP_AFFINITY": "granularity=fine,compact,1,0",
+                    "KMP_BLOCKTIME": "0",
+                    "MKL_ENABLE_INSTRUCTIONS": "AVX2",
+                },
             )
 
             output = result.stdout.strip()
@@ -576,10 +593,7 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
                 gflops_list = eval(parts[1])
                 backend = parts[2].strip() if len(parts) > 2 else "viva_tensor"
 
-                stat = StatisticalResult(
-                    raw_times_ms=times_ms,
-                    raw_gflops=gflops_list
-                )
+                stat = StatisticalResult(raw_times_ms=times_ms, raw_gflops=gflops_list)
                 stat.compute(config)
 
                 bench_result = BenchmarkResult(
@@ -588,12 +602,14 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
                     size=size,
                     timestamp=datetime.now().isoformat(),
                     stats=stat,
-                    backend=backend
+                    backend=backend,
                 )
                 results.append(bench_result)
 
                 cv_indicator = "✓" if stat.coefficient_of_variation < 5 else "!"
-                print(f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})")
+                print(
+                    f"{stat.mean_gflops:.1f} ±{stat.std_gflops:.1f} GFLOPS (CV={stat.coefficient_of_variation:.1f}%{cv_indicator})"
+                )
             else:
                 print(f"PARSE ERROR")
 
@@ -609,15 +625,16 @@ def benchmark_viva_tensor(config: BenchmarkConfig) -> List[BenchmarkResult]:
 # Reporting
 # =============================================================================
 
+
 def generate_markdown_report(
     all_results: List[BenchmarkResult],
     comparisons: List[ComparisonResult],
     config: BenchmarkConfig,
-    output_file: str
+    output_file: str,
 ):
     """Generate comprehensive markdown report"""
 
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         f.write("# viva_tensor Benchmark Report\n\n")
         f.write(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
 
@@ -627,7 +644,7 @@ def generate_markdown_report(
         f.write("|:----------|------:|\n")
         f.write(f"| Warmup runs | {config.warmup_runs} |\n")
         f.write(f"| Timed runs | {config.timed_runs} |\n")
-        f.write(f"| Confidence level | {config.confidence_level*100:.0f}% |\n")
+        f.write(f"| Confidence level | {config.confidence_level * 100:.0f}% |\n")
         f.write(f"| Bootstrap samples | {config.bootstrap_samples:,} |\n")
         f.write(f"| Outlier removal | IQR × {config.outlier_iqr_factor} |\n")
         f.write("\n")
@@ -641,10 +658,12 @@ def generate_markdown_report(
             s = r.stats
             normal = "✓" if s.is_normal else "✗"
             cv_status = "✓" if s.coefficient_of_variation < 5 else "⚠"
-            f.write(f"| {r.size}×{r.size} | {r.library} | "
-                   f"**{s.mean_gflops:.1f}** ±{s.std_gflops:.1f} | "
-                   f"[{s.ci_lower:.1f}, {s.ci_upper:.1f}] | "
-                   f"{s.coefficient_of_variation:.1f}{cv_status} | {normal} |\n")
+            f.write(
+                f"| {r.size}×{r.size} | {r.library} | "
+                f"**{s.mean_gflops:.1f}** ±{s.std_gflops:.1f} | "
+                f"[{s.ci_lower:.1f}, {s.ci_upper:.1f}] | "
+                f"{s.coefficient_of_variation:.1f}{cv_status} | {normal} |\n"
+            )
 
         f.write("\n")
 
@@ -655,9 +674,11 @@ def generate_markdown_report(
 
         for c in comparisons:
             sig = "**Yes**" if c.is_significant else "No"
-            f.write(f"| {c.size}×{c.size} | {c.library_a} vs {c.library_b} | "
-                   f"{c.diff_percent:+.1f}% | {c.p_value:.4f} | {sig} | "
-                   f"{c.effect_interpretation} (d={c.cohens_d:.2f}) |\n")
+            f.write(
+                f"| {c.size}×{c.size} | {c.library_a} vs {c.library_b} | "
+                f"{c.diff_percent:+.1f}% | {c.p_value:.4f} | {sig} | "
+                f"{c.effect_interpretation} (d={c.cohens_d:.2f}) |\n"
+            )
 
         f.write("\n")
 
@@ -671,11 +692,17 @@ def generate_markdown_report(
             size_results = [r for r in all_results if r.size == size]
             if size_results:
                 best = max(size_results, key=lambda x: x.stats.mean_gflops)
-                second = sorted(size_results, key=lambda x: x.stats.mean_gflops, reverse=True)[1] if len(size_results) > 1 else None
+                second = (
+                    sorted(size_results, key=lambda x: x.stats.mean_gflops, reverse=True)[1]
+                    if len(size_results) > 1
+                    else None
+                )
 
                 if second:
                     margin = (best.stats.mean_gflops / second.stats.mean_gflops - 1) * 100
-                    f.write(f"| {size}×{size} | **{best.library}** | +{margin:.1f}% vs {second.library} |\n")
+                    f.write(
+                        f"| {size}×{size} | **{best.library}** | +{margin:.1f}% vs {second.library} |\n"
+                    )
                 else:
                     f.write(f"| {size}×{size} | **{best.library}** | - |\n")
 
@@ -689,7 +716,7 @@ def save_results_json(
     all_results: List[BenchmarkResult],
     comparisons: List[ComparisonResult],
     config: BenchmarkConfig,
-    output_file: str
+    output_file: str,
 ):
     """Save results to JSON"""
 
@@ -698,13 +725,13 @@ def save_results_json(
             "timestamp": datetime.now().isoformat(),
             "platform": platform.platform(),
             "python_version": platform.python_version(),
-            "config": asdict(config)
+            "config": asdict(config),
         },
         "results": [r.to_dict() for r in all_results],
-        "comparisons": [asdict(c) for c in comparisons]
+        "comparisons": [asdict(c) for c in comparisons],
     }
 
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         json.dump(data, f, indent=2, default=str)
 
     print(f"Data saved: {output_file}")
@@ -713,6 +740,7 @@ def save_results_json(
 # =============================================================================
 # Main
 # =============================================================================
+
 
 def parse_args():
     """Parse command line arguments"""
@@ -724,32 +752,21 @@ Examples:
     python3 bench/python/benchmark.py              # Full benchmark
     python3 bench/python/benchmark.py --quick      # Quick mode
     python3 bench/python/benchmark.py --sizes 1000 2000 3000
-        """
+        """,
     )
     parser.add_argument(
-        "--quick", action="store_true",
-        help="Quick mode: fewer runs, smaller sizes"
+        "--quick", action="store_true", help="Quick mode: fewer runs, smaller sizes"
     )
     parser.add_argument(
-        "--sizes", type=int, nargs="+",
-        help="Matrix sizes to benchmark (default: 2000 3000 4000 5000)"
+        "--sizes",
+        type=int,
+        nargs="+",
+        help="Matrix sizes to benchmark (default: 2000 3000 4000 5000)",
     )
-    parser.add_argument(
-        "--runs", type=int, default=30,
-        help="Number of timed runs (default: 30)"
-    )
-    parser.add_argument(
-        "--warmup", type=int, default=5,
-        help="Number of warmup runs (default: 5)"
-    )
-    parser.add_argument(
-        "--no-pytorch", action="store_true",
-        help="Skip PyTorch benchmarks"
-    )
-    parser.add_argument(
-        "--no-viva", action="store_true",
-        help="Skip viva_tensor benchmarks"
-    )
+    parser.add_argument("--runs", type=int, default=30, help="Number of timed runs (default: 30)")
+    parser.add_argument("--warmup", type=int, default=5, help="Number of warmup runs (default: 5)")
+    parser.add_argument("--no-pytorch", action="store_true", help="Skip PyTorch benchmarks")
+    parser.add_argument("--no-viva", action="store_true", help="Skip viva_tensor benchmarks")
     return parser.parse_args()
 
 
@@ -776,13 +793,15 @@ def main():
         timed_runs=runs,
         cooldown_seconds=0.05,
         sizes=sizes,
-        bootstrap_samples=10000
+        bootstrap_samples=10000,
     )
 
     print(f"\nConfiguration:")
     print(f"  Warmup: {config.warmup_runs} runs")
     print(f"  Timed: {config.timed_runs} runs")
-    print(f"  CI: {config.confidence_level*100:.0f}% (Bootstrap BCa, {config.bootstrap_samples:,} samples)")
+    print(
+        f"  CI: {config.confidence_level * 100:.0f}% (Bootstrap BCa, {config.bootstrap_samples:,} samples)"
+    )
 
     all_results = []
 
@@ -824,9 +843,11 @@ def main():
                     comparisons.append(comp)
 
                     sig = "*" if comp.is_significant else ""
-                    print(f"  {size}×{size}: viva_tensor vs {lib}: "
-                          f"{comp.diff_percent:+.1f}%{sig} "
-                          f"(p={comp.p_value:.4f}, d={comp.cohens_d:.2f} {comp.effect_interpretation})")
+                    print(
+                        f"  {size}×{size}: viva_tensor vs {lib}: "
+                        f"{comp.diff_percent:+.1f}%{sig} "
+                        f"(p={comp.p_value:.4f}, d={comp.cohens_d:.2f} {comp.effect_interpretation})"
+                    )
 
     # Save results
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -835,19 +856,16 @@ def main():
     Path("bench/reports").mkdir(parents=True, exist_ok=True)
 
     save_results_json(
-        all_results, comparisons, config,
-        f"{config.output_dir}/benchmark_{timestamp}.json"
+        all_results, comparisons, config, f"{config.output_dir}/benchmark_{timestamp}.json"
     )
 
     generate_markdown_report(
-        all_results, comparisons, config,
-        f"bench/reports/benchmark_report_{timestamp}.md"
+        all_results, comparisons, config, f"bench/reports/benchmark_report_{timestamp}.md"
     )
 
     # Also save as latest
     save_results_json(
-        all_results, comparisons, config,
-        f"{config.output_dir}/benchmark_latest.json"
+        all_results, comparisons, config, f"{config.output_dir}/benchmark_latest.json"
     )
 
     print("\n" + "=" * 70)

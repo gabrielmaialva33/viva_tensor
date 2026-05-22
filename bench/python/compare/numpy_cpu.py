@@ -68,11 +68,7 @@ def _record(
             "gflops_estimate": gflops_str,
         }
     )
-    print(
-        f"  {op:<12} {size_label:<13} "
-        f"median={per_op_us:>12.2f} us  "
-        f"gflops={gflops_str or '-'}"
-    )
+    print(f"  {op:<12} {size_label:<13} median={per_op_us:>12.2f} us  gflops={gflops_str or '-'}")
 
 
 def bench_matmul(rows: list[dict]) -> None:
@@ -151,8 +147,7 @@ def bench_layer_norm(rows: list[dict]) -> None:
 
 def main() -> None:
     print(
-        f"NumPy {np.__version__} CPU benchmarks "
-        f"(warmup={WARMUP_ITERS}, timed={TIMED_ITERS} per op)"
+        f"NumPy {np.__version__} CPU benchmarks (warmup={WARMUP_ITERS}, timed={TIMED_ITERS} per op)"
     )
     print("-" * 64)
     rows: list[dict] = []

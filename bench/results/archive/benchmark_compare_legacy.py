@@ -3,14 +3,17 @@
 VIVA TENSOR vs NumPy/PyTorch - Fair Comparison
 Run this on Windows native AND WSL to get fair numbers.
 """
+
 import time
 import numpy as np
 
 try:
     import torch
+
     HAS_TORCH = True
 except ImportError:
     HAS_TORCH = False
+
 
 def benchmark_matmul(lib_name, matmul_fn, sizes, warmup=3, iters=5):
     """Benchmark matrix multiplication."""
@@ -50,21 +53,23 @@ def benchmark_matmul(lib_name, matmul_fn, sizes, warmup=3, iters=5):
 
         print(f"  {n}x{n}: {avg_ms:.2f} ms  {gflops:.1f} GFLOPS")
 
+
 def main():
     print("=" * 60)
     print("  VIVA TENSOR COMPARISON BENCHMARK")
     print("=" * 60)
 
     import platform
+
     print(f"Platform: {platform.system()} {platform.machine()}")
     print(f"Python: {platform.python_version()}")
 
     # NumPy info
     print(f"\nNumPy: {np.__version__}")
     try:
-        config = np.show_config(mode='dicts')
-        if config and 'Build Dependencies' in config:
-            blas_info = config['Build Dependencies'].get('blas', {})
+        config = np.show_config(mode="dicts")
+        if config and "Build Dependencies" in config:
+            blas_info = config["Build Dependencies"].get("blas", {})
             print(f"  BLAS: {blas_info.get('name', 'unknown')}")
     except:
         pass
@@ -87,8 +92,10 @@ def main():
 
         # PyTorch GPU if available
         if torch.cuda.is_available():
+
             def torch_cuda_matmul(a, b):
                 return torch.matmul(a.cuda(), b.cuda())
+
             benchmark_matmul("PyTorch (CUDA)", torch_cuda_matmul, sizes)
 
     print("\n" + "=" * 60)
@@ -102,6 +109,7 @@ def main():
 
   To beat NumPy, we need > {numpy_gflops} GFLOPS at 2000x2000
 """)
+
 
 if __name__ == "__main__":
     main()

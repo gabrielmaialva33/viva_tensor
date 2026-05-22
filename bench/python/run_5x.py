@@ -20,6 +20,7 @@ CPU_WARMUP = 4
 
 GPU_SIZES = [1000, 2000, 4000, 6000, 8000]
 
+
 # ---------- CPU ----------
 def parse_cpu_stdout(text: str):
     """Extract (library, size, gflops) from CPU benchmark stdout."""
@@ -29,15 +30,26 @@ def parse_cpu_stdout(text: str):
     for line in text.splitlines():
         m = header_re.match(line)
         if m:
-            l, sz, gf = m.group(1).lower().replace("numpy", "numpy").replace("pytorch", "pytorch"), int(m.group(2)), float(m.group(3))
+            l, sz, gf = (
+                m.group(1).lower().replace("numpy", "numpy").replace("pytorch", "pytorch"),
+                int(m.group(2)),
+                float(m.group(3)),
+            )
             out[(l, sz)] = gf
     return out
 
 
 def run_cpu_once() -> dict:
-    cmd = [sys.executable, str(ROOT / "bench/python/benchmark.py"),
-           "--sizes", *map(str, CPU_SIZES),
-           "--runs", str(CPU_TIMED), "--warmup", str(CPU_WARMUP)]
+    cmd = [
+        sys.executable,
+        str(ROOT / "bench/python/benchmark.py"),
+        "--sizes",
+        *map(str, CPU_SIZES),
+        "--runs",
+        str(CPU_TIMED),
+        "--warmup",
+        str(CPU_WARMUP),
+    ]
     r = subprocess.run(cmd, capture_output=True, text=True, cwd=ROOT, timeout=1800)
     return parse_cpu_stdout(r.stdout)
 
@@ -86,6 +98,7 @@ def mode_binned(vals, bin_width):
     binned = [round(v / bin_width) * bin_width for v in vals]
     # Most common
     from collections import Counter
+
     most_common, count = Counter(binned).most_common(1)[0]
     return most_common
 
@@ -109,20 +122,20 @@ def main():
 
     cpu_runs = []
     for i in range(N_RUNS):
-        print(f"[CPU run {i+1}/{N_RUNS}] ...", flush=True)
+        print(f"[CPU run {i + 1}/{N_RUNS}] ...", flush=True)
         t0 = time.time()
         cpu_runs.append(run_cpu_once())
-        print(f"  → {time.time()-t0:.1f}s, parsed {len(cpu_runs[-1])} entries")
+        print(f"  → {time.time() - t0:.1f}s, parsed {len(cpu_runs[-1])} entries")
 
     gpu_runs = []
     for i in range(N_RUNS):
-        print(f"[GPU run {i+1}/{N_RUNS}] ...", flush=True)
+        print(f"[GPU run {i + 1}/{N_RUNS}] ...", flush=True)
         t0 = time.time()
         gpu_runs.append(run_gpu_once())
-        print(f"  → {time.time()-t0:.1f}s, parsed {len(gpu_runs[-1])} entries")
+        print(f"  → {time.time() - t0:.1f}s, parsed {len(gpu_runs[-1])} entries")
 
-    cpu_agg = aggregate(cpu_runs, bin_width=10.0)   # 10 GFLOPS bins
-    gpu_agg = aggregate(gpu_runs, bin_width=1.0)    # 1 TFLOPS bins
+    cpu_agg = aggregate(cpu_runs, bin_width=10.0)  # 10 GFLOPS bins
+    gpu_agg = aggregate(gpu_runs, bin_width=1.0)  # 1 TFLOPS bins
 
     print("\n" + "=" * 78)
     print(f"  CPU MATMUL — agregado de {N_RUNS} runs (f64, GFLOPS)")
@@ -135,7 +148,9 @@ def main():
     print("\n" + "=" * 78)
     print(f"  GPU MATMUL — agregado de {N_RUNS} runs (TFLOPS / TOPS)")
     print("=" * 78)
-    print(f"{'Library':<14} {'DType':<6} {'Size':>6}  {'Mean':>8} {'Median':>8} {'Mode':>8}  {'Runs':<40}")
+    print(
+        f"{'Library':<14} {'DType':<6} {'Size':>6}  {'Mean':>8} {'Median':>8} {'Mode':>8}  {'Runs':<40}"
+    )
     for (lib, dt, sz), (m, md, mo, vals) in gpu_agg.items():
         vals_str = ", ".join(f"{v:.1f}" for v in vals)
         print(f"{lib:<14} {dt:<6} {sz:>6}  {m:>8.2f} {md:>8.2f} {mo:>8.2f}  [{vals_str}]")
@@ -143,6 +158,7 @@ def main():
     # Save JSON
     import json
     from datetime import datetime
+
     out_dir = ROOT / "bench/data"
     out_dir.mkdir(parents=True, exist_ok=True)
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -151,10 +167,14 @@ def main():
         "timestamp": ts,
         "cpu_runs": [{f"{k[0]}|{k[1]}": v for k, v in d.items()} for d in cpu_runs],
         "gpu_runs": [{f"{k[0]}|{k[1]}|{k[2]}": v for k, v in d.items()} for d in gpu_runs],
-        "cpu_aggregate": {f"{k[0]}|{k[1]}": {"mean": v[0], "median": v[1], "mode": v[2], "vals": v[3]}
-                          for k, v in cpu_agg.items()},
-        "gpu_aggregate": {f"{k[0]}|{k[1]}|{k[2]}": {"mean": v[0], "median": v[1], "mode": v[2], "vals": v[3]}
-                          for k, v in gpu_agg.items()},
+        "cpu_aggregate": {
+            f"{k[0]}|{k[1]}": {"mean": v[0], "median": v[1], "mode": v[2], "vals": v[3]}
+            for k, v in cpu_agg.items()
+        },
+        "gpu_aggregate": {
+            f"{k[0]}|{k[1]}|{k[2]}": {"mean": v[0], "median": v[1], "mode": v[2], "vals": v[3]}
+            for k, v in gpu_agg.items()
+        },
     }
     path = out_dir / f"run_5x_{ts}.json"
     path.write_text(json.dumps(payload, indent=2))
