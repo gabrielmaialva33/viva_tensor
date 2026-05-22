@@ -158,6 +158,7 @@ typedef struct {
     int vocab;
     int layer_count;
     int weight_format;
+    int batch_size;
     uintptr_t signature;
     cudaGraph_t graph;
     cudaGraphExec_t exec;
@@ -198,6 +199,8 @@ typedef struct {
     int *dyn_past_len_ptr;
     int full_decode_capture;
     WeightFormat weight_format;
+    int max_batch_size;
+    int cur_batch_size;
 
     BlockGraphEntry block_graphs[BLOCK_GRAPH_MAX];
     int block_graph_count;
@@ -221,6 +224,7 @@ typedef struct {
     int decode_rolling_vocab;
     int decode_rolling_layer_count;
     int decode_rolling_weight_format;
+    int decode_rolling_batch_size;
     uintptr_t decode_rolling_signature;
 } BlockState;
 
@@ -283,6 +287,7 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_dyn_pos_ptr                  (block_state_current()->dyn_pos_ptr)
 #define g_dyn_past_len_ptr             (block_state_current()->dyn_past_len_ptr)
 #define g_weight_format                (block_state_current()->weight_format)
+#define g_cur_batch_size               (block_state_current()->cur_batch_size)
 #define g_block_graphs                 (block_state_current()->block_graphs)
 #define g_block_graph_count            (block_state_current()->block_graph_count)
 #define g_block_graph_disabled         (block_state_current()->block_graph_disabled)
@@ -305,6 +310,7 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_decode_rolling_vocab         (block_state_current()->decode_rolling_vocab)
 #define g_decode_rolling_layer_count   (block_state_current()->decode_rolling_layer_count)
 #define g_decode_rolling_weight_format (block_state_current()->decode_rolling_weight_format)
+#define g_decode_rolling_batch_size    (block_state_current()->decode_rolling_batch_size)
 #define g_decode_rolling_signature     (block_state_current()->decode_rolling_signature)
 
 static BlockState *block_state_create(void) {
@@ -312,6 +318,8 @@ static BlockState *block_state_create(void) {
     if (!st)
         return NULL;
     st->decode_last_capture_error = cudaSuccess;
+    st->max_batch_size = 1;
+    st->cur_batch_size = 1;
     return st;
 }
 
@@ -963,6 +971,25 @@ static int parse_weight_format(ErlNifEnv *env, ERL_NIF_TERM term, WeightFormat *
     return 0;
 }
 
+static int parse_decode_options(ErlNifEnv *env, ERL_NIF_TERM term, WeightFormat *weight_format,
+                                int *batch_size) {
+    if (parse_weight_format(env, term, weight_format))
+        return 1;
+
+    size_t map_size = 0;
+    if (!enif_get_map_size(env, term, &map_size))
+        return 0;
+
+    ERL_NIF_TERM val;
+    if (enif_get_map_value(env, term, enif_make_atom(env, "weight_format"), &val) &&
+        !parse_weight_format(env, val, weight_format))
+        return -1;
+    if (enif_get_map_value(env, term, enif_make_atom(env, "batch_size"), &val) &&
+        (!enif_get_int(env, val, batch_size) || *batch_size <= 0))
+        return -2;
+    return 1;
+}
+
 static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeight *v,
                                     PackedWeight *o, PackedWeight *gate, PackedWeight *up,
                                     PackedWeight *down, PackedWeight *qkv, PackedWeight *gate_up,
@@ -971,9 +998,11 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
                                     MarlinPackedResource *marlin_gate,
                                     MarlinPackedResource *marlin_up,
                                     MarlinPackedResource *marlin_down,
-                                    const ErlNifBinary *norm1_bin, const ErlNifBinary *norm2_bin,
-                                    const ErlNifBinary *rope_bin, BlockKvCache *kv_cache_res,
-                                    int pos, int head_dim, float eps) {
+                                     const ErlNifBinary *norm1_bin, const ErlNifBinary *norm2_bin,
+                                     const ErlNifBinary *rope_bin, BlockKvCache *kv_cache_res,
+                                     int pos, int head_dim, float eps) {
+    BlockState *st = block_state_current();
+    int batch = st->cur_batch_size ? st->cur_batch_size : 1;
     if (!validate_fp8_weight(q) || !validate_fp8_weight(k) || !validate_fp8_weight(v) ||
         !validate_fp8_weight(o) || !validate_fp8_weight(gate) || !validate_fp8_weight(up) ||
         !validate_fp8_weight(down)) {
@@ -1010,6 +1039,13 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     size_t kv32_bytes = (size_t)kv_dim * sizeof(float);
     size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
     size_t ffn32_bytes = (size_t)ffn * sizeof(float);
+    size_t hidden32_batch_bytes = hidden32_bytes * (size_t)batch;
+    size_t kv16_batch_bytes = kv16_bytes * (size_t)batch;
+    size_t kv32_batch_bytes = kv32_bytes * (size_t)batch;
+    size_t ffn16_batch_bytes = ffn16_bytes * (size_t)batch;
+    size_t ffn32_batch_bytes = ffn32_bytes * (size_t)batch;
+    size_t qkv_total_bytes = (size_t)(hidden + kv_dim + kv_dim) * sizeof(float);
+    size_t gate_up_total_bytes = (size_t)(ffn + ffn) * sizeof(float);
     if (norm1_bin->size != hidden32_bytes || norm2_bin->size != hidden32_bytes ||
         rope_bin->size != (size_t)(head_dim / 2) * sizeof(float)) {
         return -12;
@@ -1036,30 +1072,32 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q,      &b_o,    &b_h1,    &b_x2,
                         &b_x2_16,    &b_attn,   &b_attn16, &b_down, &b_hout16};
     for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
-        if (ensure_block_buf(bufs[i], hidden32_bytes) != 0)
+        if (ensure_block_buf(bufs[i], hidden32_batch_bytes) != 0)
             return -20;
     }
-    if (ensure_block_buf(&b_k, kv32_bytes) != 0 || ensure_block_buf(&b_v, kv32_bytes) != 0 ||
-        ensure_block_buf(&b_k_append, kv16_bytes) != 0 ||
-        ensure_block_buf(&b_v_append, kv16_bytes) != 0) {
+    if (ensure_block_buf(&b_k, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_k_append, kv16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v_append, kv16_batch_bytes) != 0) {
         return -21;
     }
-    if (ensure_block_buf(&b_gate, ffn32_bytes) != 0 || ensure_block_buf(&b_up, ffn32_bytes) != 0 ||
-        ensure_block_buf(&b_sw, ffn32_bytes) != 0 || ensure_block_buf(&b_sw16, ffn16_bytes) != 0) {
+    if (ensure_block_buf(&b_gate, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_up, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw16, ffn16_batch_bytes) != 0) {
         return -22;
     }
-    if (use_qkv &&
-        ensure_block_buf(&b_qkv, (size_t)(hidden + kv_dim + kv_dim) * sizeof(float)) != 0) {
+    if (use_qkv && ensure_block_buf(&b_qkv, qkv_total_bytes * (size_t)batch) != 0) {
         return -23;
     }
-    if (use_gate_up && ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0) {
+    if (use_gate_up && ensure_block_buf(&b_gate_up, gate_up_total_bytes * (size_t)batch) != 0) {
         return -24;
     }
     if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
         size_t marlin_tmp_elems = (size_t)(hidden + kv_dim + kv_dim);
         if ((size_t)ffn > marlin_tmp_elems)
             marlin_tmp_elems = (size_t)ffn;
-        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * (size_t)batch * sizeof(uint16_t)) != 0)
             return -25;
     }
 
@@ -1217,13 +1255,13 @@ static int ensure_decode_const(DecodeConstBuf *dst, const ErlNifBinary *src) {
 }
 
 static DecodeGraphEntry *find_decode_graph(int pos, int past_len, int hidden, int vocab,
-                                           int layer_count, int weight_format,
+                                           int layer_count, int weight_format, int batch_size,
                                            uintptr_t signature) {
     for (int i = 0; i < g_decode_graph_count; ++i) {
         DecodeGraphEntry *e = &g_decode_graphs[i];
         if (e->pos == pos && e->past_len == past_len && e->hidden == hidden && e->vocab == vocab &&
             e->layer_count == layer_count && e->weight_format == weight_format &&
-            e->signature == signature) {
+            e->batch_size == batch_size && e->signature == signature) {
             return e;
         }
     }
@@ -1231,7 +1269,7 @@ static DecodeGraphEntry *find_decode_graph(int pos, int past_len, int hidden, in
 }
 
 static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, int vocab,
-                                            int layer_count, int weight_format,
+                                            int layer_count, int weight_format, int batch_size,
                                             uintptr_t signature) {
     if (g_decode_graph_count >= DECODE_GRAPH_MAX)
         return NULL;
@@ -1243,15 +1281,17 @@ static DecodeGraphEntry *alloc_decode_graph(int pos, int past_len, int hidden, i
     e->vocab = vocab;
     e->layer_count = layer_count;
     e->weight_format = weight_format;
+    e->batch_size = batch_size;
     e->signature = signature;
     return e;
 }
 
 static int rolling_decode_graph_compatible(int hidden, int vocab, int layer_count,
-                                           int weight_format, uintptr_t signature) {
+                                           int weight_format, int batch_size, uintptr_t signature) {
     return g_decode_rolling_exec && g_decode_rolling_hidden == hidden &&
            g_decode_rolling_vocab == vocab && g_decode_rolling_layer_count == layer_count &&
            g_decode_rolling_weight_format == weight_format &&
+           g_decode_rolling_batch_size == batch_size &&
            g_decode_rolling_signature == signature;
 }
 
@@ -1268,7 +1308,7 @@ static cudaError_t update_decode_rolling_exec(cudaGraph_t graph) {
 }
 
 static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab, int layer_count,
-                                    int weight_format, uintptr_t signature) {
+                                    int weight_format, int batch_size, uintptr_t signature) {
     if (g_decode_rolling_exec && g_decode_rolling_exec != exec) {
         cudaGraphExecDestroy(g_decode_rolling_exec);
     }
@@ -1277,6 +1317,7 @@ static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab,
     g_decode_rolling_vocab = vocab;
     g_decode_rolling_layer_count = layer_count;
     g_decode_rolling_weight_format = weight_format;
+    g_decode_rolling_batch_size = batch_size;
     g_decode_rolling_signature = signature;
 }
 
@@ -1305,6 +1346,8 @@ static int all_decode_weights_captureable(DecodeLayerParams *layers, int layer_c
 
 static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedWeight *gate,
                                        PackedWeight *qkv, PackedWeight *gate_up) {
+    BlockState *st = block_state_current();
+    int batch = st->cur_batch_size ? st->cur_batch_size : 1;
     if (!q || !k || !gate)
         return -10;
     int hidden = q->in_features;
@@ -1315,24 +1358,34 @@ static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedW
     size_t kv32_bytes = (size_t)kv_dim * sizeof(float);
     size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
     size_t ffn32_bytes = (size_t)ffn * sizeof(float);
+    size_t hidden32_batch_bytes = hidden32_bytes * (size_t)batch;
+    size_t kv16_batch_bytes = kv16_bytes * (size_t)batch;
+    size_t kv32_batch_bytes = kv32_bytes * (size_t)batch;
+    size_t ffn16_batch_bytes = ffn16_bytes * (size_t)batch;
+    size_t ffn32_batch_bytes = ffn32_bytes * (size_t)batch;
+    size_t qkv_total_bytes = (size_t)(hidden + kv_dim + kv_dim) * sizeof(float);
+    size_t gate_up_total_bytes = (size_t)(ffn + ffn) * sizeof(float);
     BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q,      &b_o,    &b_h1,    &b_x2,
                         &b_x2_16,    &b_attn,   &b_attn16, &b_down, &b_hout16};
     for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
-        if (ensure_block_buf(bufs[i], hidden32_bytes) != 0)
+        if (ensure_block_buf(bufs[i], hidden32_batch_bytes) != 0)
             return -20;
     }
-    if (ensure_block_buf(&b_k, kv32_bytes) != 0 || ensure_block_buf(&b_v, kv32_bytes) != 0 ||
-        ensure_block_buf(&b_k_append, kv16_bytes) != 0 ||
-        ensure_block_buf(&b_v_append, kv16_bytes) != 0)
+    if (ensure_block_buf(&b_k, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_k_append, kv16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v_append, kv16_batch_bytes) != 0)
         return -21;
-    if (ensure_block_buf(&b_gate, ffn32_bytes) != 0 || ensure_block_buf(&b_up, ffn32_bytes) != 0 ||
-        ensure_block_buf(&b_sw, ffn32_bytes) != 0 || ensure_block_buf(&b_sw16, ffn16_bytes) != 0)
+    if (ensure_block_buf(&b_gate, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_up, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw16, ffn16_batch_bytes) != 0)
         return -22;
     if (qkv && validate_fp8_weight(qkv) &&
-        ensure_block_buf(&b_qkv, (size_t)(hidden + kv_dim + kv_dim) * sizeof(float)) != 0)
+        ensure_block_buf(&b_qkv, qkv_total_bytes * (size_t)batch) != 0)
         return -23;
     if (gate_up && validate_fp8_weight(gate_up) &&
-        ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
+        ensure_block_buf(&b_gate_up, gate_up_total_bytes * (size_t)batch) != 0)
         return -24;
     if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
         size_t marlin_tmp_elems = qkv && validate_fp8_weight(qkv)
@@ -1340,13 +1393,15 @@ static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedW
                                       : (size_t)hidden;
         if ((size_t)ffn > marlin_tmp_elems)
             marlin_tmp_elems = (size_t)ffn;
-        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * (size_t)batch * sizeof(uint16_t)) != 0)
             return -25;
     }
     return 0;
 }
 
 static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, int pos) {
+    BlockState *st = block_state_current();
+    int batch = st->cur_batch_size ? st->cur_batch_size : 1;
     if (!validate_fp8_weight(l->q) || !validate_fp8_weight(l->k) || !validate_fp8_weight(l->v) ||
         !validate_fp8_weight(l->o) || !validate_fp8_weight(l->gate) ||
         !validate_fp8_weight(l->up) || !validate_fp8_weight(l->down)) {
@@ -1392,30 +1447,40 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     size_t kv32_bytes = (size_t)kv_dim * sizeof(float);
     size_t ffn16_bytes = (size_t)ffn * sizeof(uint16_t);
     size_t ffn32_bytes = (size_t)ffn * sizeof(float);
+    size_t hidden32_batch_bytes = hidden32_bytes * (size_t)batch;
+    size_t kv16_batch_bytes = kv16_bytes * (size_t)batch;
+    size_t kv32_batch_bytes = kv32_bytes * (size_t)batch;
+    size_t ffn16_batch_bytes = ffn16_bytes * (size_t)batch;
+    size_t ffn32_batch_bytes = ffn32_bytes * (size_t)batch;
+    size_t qkv_total_bytes = (size_t)(hidden + kv_dim + kv_dim) * sizeof(float);
+    size_t gate_up_total_bytes = (size_t)(ffn + ffn) * sizeof(float);
 
     BlockBuf *bufs[] = {&b_hidden32, &b_norm16, &b_q,      &b_o,    &b_h1,    &b_x2,
                         &b_x2_16,    &b_attn,   &b_attn16, &b_down, &b_hout16};
     for (unsigned i = 0; i < sizeof(bufs) / sizeof(bufs[0]); ++i) {
-        if (ensure_block_buf(bufs[i], hidden32_bytes) != 0)
+        if (ensure_block_buf(bufs[i], hidden32_batch_bytes) != 0)
             return -20;
     }
-    if (ensure_block_buf(&b_k, kv32_bytes) != 0 || ensure_block_buf(&b_v, kv32_bytes) != 0 ||
-        ensure_block_buf(&b_k_append, kv16_bytes) != 0 ||
-        ensure_block_buf(&b_v_append, kv16_bytes) != 0)
+    if (ensure_block_buf(&b_k, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v, kv32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_k_append, kv16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_v_append, kv16_batch_bytes) != 0)
         return -21;
-    if (ensure_block_buf(&b_gate, ffn32_bytes) != 0 || ensure_block_buf(&b_up, ffn32_bytes) != 0 ||
-        ensure_block_buf(&b_sw, ffn32_bytes) != 0 || ensure_block_buf(&b_sw16, ffn16_bytes) != 0)
+    if (ensure_block_buf(&b_gate, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_up, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw, ffn32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_sw16, ffn16_batch_bytes) != 0)
         return -22;
     if (use_qkv &&
-        ensure_block_buf(&b_qkv, (size_t)(hidden + kv_dim + kv_dim) * sizeof(float)) != 0)
+        ensure_block_buf(&b_qkv, qkv_total_bytes * (size_t)batch) != 0)
         return -23;
-    if (use_gate_up && ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
+    if (use_gate_up && ensure_block_buf(&b_gate_up, gate_up_total_bytes * (size_t)batch) != 0)
         return -24;
     if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
         size_t marlin_tmp_elems = (size_t)(hidden + kv_dim + kv_dim);
         if ((size_t)ffn > marlin_tmp_elems)
             marlin_tmp_elems = (size_t)ffn;
-        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * (size_t)batch * sizeof(uint16_t)) != 0)
             return -25;
     }
 
@@ -1919,9 +1984,21 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         return make_error(env, "bad_arity");
 
     WeightFormat weight_format = WEIGHT_FORMAT_FP8;
-    if (argc == base_arity + 1 && !parse_weight_format(env, argv[base_arity], &weight_format))
-        return make_error(env, "invalid_weight_format");
+    int batch_size = 1;
+    if (argc == base_arity + 1) {
+        int opts_rc = parse_decode_options(env, argv[base_arity], &weight_format, &batch_size);
+        if (opts_rc == 0 || opts_rc == -1)
+            return make_error(env, "invalid_weight_format");
+        if (opts_rc == -2)
+            return make_error(env, "invalid_batch_size");
+    }
     g_weight_format = weight_format;
+    BlockState *st = block_state_current();
+    st->cur_batch_size = batch_size;
+    if (batch_size > st->max_batch_size)
+        st->max_batch_size = batch_size;
+    if (batch_size > 1)
+        return make_block_error(env, "batched_decode_not_implemented", -8500);
 
     int token_id = 0, pos = 0, topk = 0;
     if (!enif_get_int(env, argv[0], &token_id) || token_id < 0)
@@ -1958,18 +2035,22 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
 
     size_t hidden16_bytes = (size_t)hidden * sizeof(uint16_t);
     size_t hidden32_bytes = (size_t)hidden * sizeof(float);
-    if (ensure_block_buf(&b_hidden16, hidden16_bytes) != 0 ||
-        ensure_block_buf(&b_hidden32, hidden32_bytes) != 0 ||
-        ensure_block_buf(&b_norm1, hidden32_bytes) != 0 ||
-        ensure_block_buf(&b_x2, hidden32_bytes) != 0 ||
-        ensure_block_buf(&b_norm16, hidden16_bytes) != 0 ||
-        ensure_block_buf(&b_logits, (size_t)lm_head->out_features * sizeof(float)) != 0 ||
-        ensure_block_buf(&b_argmax, sizeof(int)) != 0 ||
-        (return_topk && (ensure_block_buf(&b_topk_indices, (size_t)topk * sizeof(int)) != 0 ||
-                         ensure_block_buf(&b_topk_values, (size_t)topk * sizeof(float)) != 0)) ||
-        ensure_block_buf(&b_token_id, sizeof(int)) != 0 ||
-        ensure_block_buf(&b_pos_id, sizeof(int)) != 0 ||
-        ensure_block_buf(&b_past_len_id, sizeof(int)) != 0) {
+    size_t hidden16_batch_bytes = hidden16_bytes * (size_t)batch_size;
+    size_t hidden32_batch_bytes = hidden32_bytes * (size_t)batch_size;
+    size_t vocab_batch_bytes = (size_t)lm_head->out_features * (size_t)batch_size * sizeof(float);
+    if (ensure_block_buf(&b_hidden16, hidden16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_hidden32, hidden32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_norm1, hidden32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_x2, hidden32_batch_bytes) != 0 ||
+        ensure_block_buf(&b_norm16, hidden16_batch_bytes) != 0 ||
+        ensure_block_buf(&b_logits, vocab_batch_bytes) != 0 ||
+        ensure_block_buf(&b_argmax, (size_t)batch_size * sizeof(int)) != 0 ||
+        (return_topk &&
+         (ensure_block_buf(&b_topk_indices, (size_t)topk * (size_t)batch_size * sizeof(int)) != 0 ||
+          ensure_block_buf(&b_topk_values, (size_t)topk * (size_t)batch_size * sizeof(float)) != 0)) ||
+        ensure_block_buf(&b_token_id, (size_t)batch_size * sizeof(int)) != 0 ||
+        ensure_block_buf(&b_pos_id, (size_t)batch_size * sizeof(int)) != 0 ||
+        ensure_block_buf(&b_past_len_id, (size_t)batch_size * sizeof(int)) != 0) {
         return make_error(env, "cuda_malloc_decode_failed");
     }
 
@@ -1986,6 +2067,7 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
     ErlNifBinary norm2_bins[DECODE_MAX_LAYERS];
     memset(decode_layers, 0, sizeof(decode_layers));
     signature = mix_ptr(signature, (const void *)(uintptr_t)weight_format);
+    signature = mix_ptr(signature, (const void *)(uintptr_t)batch_size);
     while (enif_get_list_cell(env, layers_tail, &layer_term, &layers_tail)) {
         if (layer_count >= DECODE_MAX_LAYERS)
             return make_error(env, "too_many_layers");
@@ -2154,7 +2236,7 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         int graph_past_key = -1;
         DecodeGraphEntry *entry =
             find_decode_graph(graph_pos_key, graph_past_key, hidden, embed->vocab, layer_count,
-                              (int)g_weight_format, signature);
+                              (int)g_weight_format, (int)g_cur_batch_size, signature);
         if (entry && entry->exec) {
             cudaError_t launch_err = cudaGraphLaunch(entry->exec, g_block_stream);
             if (launch_err != cudaSuccess) {
@@ -2199,7 +2281,8 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                 } else {
                     g_decode_graph_captures++;
                     if (rolling_decode_graph_compatible(hidden, embed->vocab, layer_count,
-                                                        (int)g_weight_format, signature)) {
+                                                        (int)g_weight_format,
+                                                        (int)g_cur_batch_size, signature)) {
                         err = update_decode_rolling_exec(graph);
                         if (err == cudaSuccess) {
                             g_decode_graph_updates++;
@@ -2228,7 +2311,8 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                                 graph_ok = 0;
                             } else {
                                 set_decode_rolling_exec(exec, hidden, embed->vocab, layer_count,
-                                                        (int)g_weight_format, signature);
+                                                        (int)g_weight_format,
+                                                        (int)g_cur_batch_size, signature);
                                 err = cudaGraphLaunch(exec, g_block_stream);
                                 cudaGraphDestroy(graph);
                                 if (err != cudaSuccess) {
@@ -2256,11 +2340,12 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
                             if (roll_err == cudaSuccess && rolling_exec) {
                                 set_decode_rolling_exec(rolling_exec, hidden, embed->vocab,
                                                         layer_count, (int)g_weight_format,
-                                                        signature);
+                                                        (int)g_cur_batch_size, signature);
                             }
                             entry = alloc_decode_graph(graph_pos_key, graph_past_key, hidden,
                                                        embed->vocab, layer_count,
-                                                       (int)g_weight_format, signature);
+                                                       (int)g_weight_format,
+                                                       (int)g_cur_batch_size, signature);
                             if (entry) {
                                 entry->graph = graph;
                                 entry->exec = exec;
