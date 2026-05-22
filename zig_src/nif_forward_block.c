@@ -92,9 +92,6 @@ typedef struct {
 } BlockGraphEntry;
 
 #define BLOCK_GRAPH_MAX 256
-static BlockGraphEntry g_block_graphs[BLOCK_GRAPH_MAX];
-static int g_block_graph_count = 0;
-static int g_block_graph_disabled = 0;
 
 typedef struct {
   int in_features;
@@ -240,6 +237,9 @@ static _Thread_local BlockState *g_current_state = NULL;
 #define g_rope_ptr (block_state_current()->rope_ptr)
 #define g_dyn_pos_ptr (block_state_current()->dyn_pos_ptr)
 #define g_dyn_past_len_ptr (block_state_current()->dyn_past_len_ptr)
+#define g_block_graphs (block_state_current()->block_graphs)
+#define g_block_graph_count (block_state_current()->block_graph_count)
+#define g_block_graph_disabled (block_state_current()->block_graph_disabled)
 
 static BlockState *block_state_create(void) {
   BlockState *st = (BlockState *)calloc(1, sizeof(BlockState));
@@ -257,6 +257,10 @@ static void block_buf_destroy(BlockBuf *buf) {
 
 static void block_state_destroy(BlockState *st) {
   if (!st) return;
+  for (int i = 0; i < st->block_graph_count; ++i) {
+    if (st->block_graphs[i].exec) cudaGraphExecDestroy(st->block_graphs[i].exec);
+    if (st->block_graphs[i].graph) cudaGraphDestroy(st->block_graphs[i].graph);
+  }
   BlockBuf *bufs[] = {
       &st->hidden16, &st->hidden32, &st->norm16,
       &st->norm1, &st->norm2, &st->rope,
