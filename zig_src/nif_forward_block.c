@@ -54,10 +54,7 @@ typedef struct {
   size_t cap;
 } BlockBuf;
 
-static cublasLtHandle_t g_block_lt = NULL;
-static void *g_block_workspace = NULL;
 static const size_t g_block_workspace_size = 32 * 1024 * 1024;
-static cudaStream_t g_block_stream = NULL;
 static ErlNifMutex *g_block_decode_mutex = NULL;
 
 static BlockBuf b_hidden16 = {0}, b_hidden32 = {0}, b_norm16 = {0};
@@ -77,12 +74,6 @@ static float *g_gate_ptr = NULL, *g_up_ptr = NULL;
 static float *g_norm1_ptr = NULL, *g_norm2_ptr = NULL, *g_rope_ptr = NULL;
 static int *g_dyn_pos_ptr = NULL, *g_dyn_past_len_ptr = NULL;
 static int g_full_decode_capture = 0;
-
-void block_state_init_mutex(void) {
-  if (g_block_decode_mutex == NULL) {
-    g_block_decode_mutex = enif_mutex_create("vt_block_decode");
-  }
-}
 
 typedef struct {
   void *d_k;
@@ -154,8 +145,6 @@ typedef struct {
 } DecodeGraphEntry;
 
 #define BLOCK_GEMM_PLAN_MAX 16
-static BlockGemmPlan g_block_gemm_plans[BLOCK_GEMM_PLAN_MAX];
-static int g_block_gemm_plan_count = 0;
 
 typedef struct {
   cublasLtHandle_t block_lt;
@@ -213,6 +202,12 @@ typedef struct {
   uintptr_t decode_rolling_signature;
 } BlockState;
 
+static BlockState *g_default_state = NULL;
+
+#define g_block_lt (g_default_state->block_lt)
+#define g_block_workspace (g_default_state->block_workspace)
+#define g_block_stream (g_default_state->block_stream)
+
 static BlockState *block_state_create(void) {
   BlockState *st = (BlockState *)calloc(1, sizeof(BlockState));
   if (!st) return NULL;
@@ -221,7 +216,20 @@ static BlockState *block_state_create(void) {
 }
 
 static void block_state_destroy(BlockState *st) {
+  if (!st) return;
+  if (st->block_stream) cudaStreamDestroy(st->block_stream);
+  if (st->block_workspace) cudaFree(st->block_workspace);
+  if (st->block_lt) cublasLtDestroy(st->block_lt);
   free(st);
+}
+
+void block_state_init_mutex(void) {
+  if (g_block_decode_mutex == NULL) {
+    g_block_decode_mutex = enif_mutex_create("vt_block_decode");
+  }
+  if (g_default_state == NULL) {
+    g_default_state = block_state_create();
+  }
 }
 
 static int ensure_block_buf(BlockBuf *buf, size_t needed) {
@@ -236,20 +244,26 @@ static int ensure_block_buf(BlockBuf *buf, size_t needed) {
 }
 
 static int ensure_block_lt(void) {
-  if (!g_block_lt) {
-    if (cublasLtCreate(&g_block_lt) != CUBLAS_STATUS_SUCCESS) return -1;
-    if (cudaMalloc(&g_block_workspace, g_block_workspace_size) != cudaSuccess) {
-      cublasLtDestroy(g_block_lt);
-      g_block_lt = NULL;
+  BlockState *st = g_default_state;
+  if (!st) {
+    st = block_state_create();
+    if (!st) return -4;
+    g_default_state = st;
+  }
+  if (!st->block_lt) {
+    if (cublasLtCreate(&st->block_lt) != CUBLAS_STATUS_SUCCESS) return -1;
+    if (cudaMalloc(&st->block_workspace, g_block_workspace_size) != cudaSuccess) {
+      cublasLtDestroy(st->block_lt);
+      st->block_lt = NULL;
       return -2;
     }
   }
-  if (!g_block_stream) {
-    if (cudaStreamCreateWithFlags(&g_block_stream, cudaStreamNonBlocking) != cudaSuccess) {
+  if (!st->block_stream) {
+    if (cudaStreamCreateWithFlags(&st->block_stream, cudaStreamNonBlocking) != cudaSuccess) {
       return -3;
     }
-    vt_block_set_stream((void *)g_block_stream);
-    cuda_fp8_dequant_set_stream((void *)g_block_stream);
+    vt_block_set_stream((void *)st->block_stream);
+    cuda_fp8_dequant_set_stream((void *)st->block_stream);
   }
   return 0;
 }
@@ -264,7 +278,7 @@ static int upload_binary_async(BlockBuf *buf, const ErlNifBinary *bin) {
   if (ensure_block_buf(buf, bin->size) != 0) return -1;
   if (bin->size == 0) return 0;
   return cudaMemcpyAsync(buf->ptr, bin->data, bin->size, cudaMemcpyHostToDevice,
-                         g_block_stream) == cudaSuccess ? 0 : -2;
+                         g_default_state->block_stream) == cudaSuccess ? 0 : -2;
 }
 
 static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
@@ -302,17 +316,19 @@ static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
 }
 
 static int get_block_gemm_plan(const PackedWeight *w, int batch, BlockGemmPlan **out_plan) {
-  for (int i = 0; i < g_block_gemm_plan_count; ++i) {
-    BlockGemmPlan *p = &g_block_gemm_plans[i];
+  BlockState *state = g_default_state;
+  if (!state) return -20;
+  for (int i = 0; i < state->block_gemm_plan_count; ++i) {
+    BlockGemmPlan *p = &state->block_gemm_plans[i];
     if (p->in_features == w->in_features && p->out_features == w->out_features &&
         p->batch == batch) {
       *out_plan = p;
       return 0;
     }
   }
-  if (g_block_gemm_plan_count >= BLOCK_GEMM_PLAN_MAX) return -1;
+  if (state->block_gemm_plan_count >= BLOCK_GEMM_PLAN_MAX) return -1;
 
-  BlockGemmPlan *p = &g_block_gemm_plans[g_block_gemm_plan_count];
+  BlockGemmPlan *p = &state->block_gemm_plans[state->block_gemm_plan_count];
   memset(p, 0, sizeof(*p));
   p->in_features = w->in_features;
   p->out_features = w->out_features;
@@ -339,12 +355,12 @@ static int get_block_gemm_plan(const PackedWeight *w, int batch, BlockGemmPlan *
   cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
                                        &g_block_workspace_size, sizeof(g_block_workspace_size));
   int returned = 0;
-  st = cublasLtMatmulAlgoGetHeuristic(g_block_lt, p->desc, p->layout_bt, p->layout_a,
-                                      p->layout_c, p->layout_c, pref, 1, &p->heur, &returned);
+  st = cublasLtMatmulAlgoGetHeuristic(g_default_state->block_lt, p->desc, p->layout_bt, p->layout_a,
+                                       p->layout_c, p->layout_c, pref, 1, &p->heur, &returned);
   cublasLtMatmulPreferenceDestroy(pref);
   if (st != CUBLAS_STATUS_SUCCESS || returned == 0) return -6;
 
-  g_block_gemm_plan_count++;
+  g_default_state->block_gemm_plan_count++;
   *out_plan = p;
   return 0;
 }
