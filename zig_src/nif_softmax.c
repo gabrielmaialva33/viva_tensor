@@ -78,24 +78,26 @@
  *         y[idx] *= inv_s;
  * ========================================================================= */
 ERL_NIF_TERM nt_softmax_axis(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t) return make_error(env, "invalid_tensor");
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
 
-  int axis = 0;
-  if (!enif_get_int(env, argv[1], &axis)) {
-    return make_error(env, "invalid_axis");
-  }
+    int axis = 0;
+    if (!enif_get_int(env, argv[1], &axis)) {
+        return make_error(env, "invalid_axis");
+    }
 
-  /* Normalize negative axis. */
-  if (axis < 0) axis += t->ndim;
-  if (axis < 0 || axis >= t->ndim) {
-    return make_error(env, "axis_out_of_range");
-  }
+    /* Normalize negative axis. */
+    if (axis < 0)
+        axis += t->ndim;
+    if (axis < 0 || axis >= t->ndim) {
+        return make_error(env, "axis_out_of_range");
+    }
 
-  /* TODO: implement the log-sum-exp softmax. Until then, return a clean
+    /* TODO: implement the log-sum-exp softmax. Until then, return a clean
    * not_implemented error so callers can fall back gracefully. */
-  return make_error(env, "not_implemented");
+    return make_error(env, "not_implemented");
 }
 
 /* =========================================================================
@@ -124,31 +126,36 @@ ERL_NIF_TERM nt_softmax_axis(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]
  *       y[base + c] = (x[base + c] - m) * inv * scale[c] + bias[c];
  * ========================================================================= */
 ERL_NIF_TERM nt_layer_norm(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *x = get_tensor(env, argv[0]);
-  if (!x) return make_error(env, "invalid_tensor");
-  NativeTensor *scale = get_tensor(env, argv[1]);
-  if (!scale) return make_error(env, "invalid_scale");
-  NativeTensor *bias = get_tensor(env, argv[2]);
-  if (!bias) return make_error(env, "invalid_bias");
+    (void)argc;
+    NativeTensor *x = get_tensor(env, argv[0]);
+    if (!x)
+        return make_error(env, "invalid_tensor");
+    NativeTensor *scale = get_tensor(env, argv[1]);
+    if (!scale)
+        return make_error(env, "invalid_scale");
+    NativeTensor *bias = get_tensor(env, argv[2]);
+    if (!bias)
+        return make_error(env, "invalid_bias");
 
-  int eps_ok = 0;
-  double eps = get_number(env, argv[3], &eps_ok);
-  if (!eps_ok) return make_error(env, "invalid_eps");
-  (void)eps;
+    int eps_ok = 0;
+    double eps = get_number(env, argv[3], &eps_ok);
+    if (!eps_ok)
+        return make_error(env, "invalid_eps");
+    (void)eps;
 
-  /* Validate shapes: scale and bias must be 1D matching x's last dim. */
-  if (x->ndim < 1) return make_error(env, "rank_too_low");
-  int last = x->shape[x->ndim - 1];
-  if (scale->ndim != 1 || scale->shape[0] != last) {
-    return make_error(env, "scale_shape_mismatch");
-  }
-  if (bias->ndim != 1 || bias->shape[0] != last) {
-    return make_error(env, "bias_shape_mismatch");
-  }
+    /* Validate shapes: scale and bias must be 1D matching x's last dim. */
+    if (x->ndim < 1)
+        return make_error(env, "rank_too_low");
+    int last = x->shape[x->ndim - 1];
+    if (scale->ndim != 1 || scale->shape[0] != last) {
+        return make_error(env, "scale_shape_mismatch");
+    }
+    if (bias->ndim != 1 || bias->shape[0] != last) {
+        return make_error(env, "bias_shape_mismatch");
+    }
 
-  /* TODO: implement standard LayerNorm. Until then, not_implemented. */
-  return make_error(env, "not_implemented");
+    /* TODO: implement standard LayerNorm. Until then, not_implemented. */
+    return make_error(env, "not_implemented");
 }
 
 /* =========================================================================
@@ -163,10 +170,11 @@ ERL_NIF_TERM nt_layer_norm(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) 
  *     y[i] = 0.5 * x[i] * (1.0 + erf(x[i] * INV_SQRT2));
  * ========================================================================= */
 ERL_NIF_TERM nt_gelu_exact(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t) return make_error(env, "invalid_tensor");
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
 
-  /* TODO: implement exact GELU using erf(). Until then, not_implemented. */
-  return make_error(env, "not_implemented");
+    /* TODO: implement exact GELU using erf(). Until then, not_implemented. */
+    return make_error(env, "not_implemented");
 }

@@ -17,11 +17,10 @@
 #include <mkl.h>
 #define USE_MKL_SGEMM 1
 #else
-typedef enum { CblasRowMajor=101, CblasColMajor=102 } CBLAS_LAYOUT;
-typedef enum { CblasNoTrans=111, CblasTrans=112 } CBLAS_TRANSPOSE;
-extern void cblas_sgemm(CBLAS_LAYOUT, CBLAS_TRANSPOSE, CBLAS_TRANSPOSE,
-                        int, int, int, float, const float*, int,
-                        const float*, int, float, float*, int);
+typedef enum { CblasRowMajor = 101, CblasColMajor = 102 } CBLAS_LAYOUT;
+typedef enum { CblasNoTrans = 111, CblasTrans = 112 } CBLAS_TRANSPOSE;
+extern void cblas_sgemm(CBLAS_LAYOUT, CBLAS_TRANSPOSE, CBLAS_TRANSPOSE, int, int, int, float,
+                        const float *, int, const float *, int, float, float *, int);
 #define USE_MKL_SGEMM 1
 #endif
 
@@ -35,12 +34,14 @@ extern int cuda_available(void);
 /**
  * Allocate GPU memory for FP8 tensors
  */
-fp8_e4m3_t* cuda_tensor_alloc_fp8(size_t num_elements) {
-    if (!cuda_available()) return NULL;
+fp8_e4m3_t *cuda_tensor_alloc_fp8(size_t num_elements) {
+    if (!cuda_available())
+        return NULL;
 
     fp8_e4m3_t *d_ptr = NULL;
-    cudaError_t err = g_cuda_malloc((void**)&d_ptr, num_elements * sizeof(fp8_e4m3_t));
-    if (err != cudaSuccess) return NULL;
+    cudaError_t err = g_cuda_malloc((void **)&d_ptr, num_elements * sizeof(fp8_e4m3_t));
+    if (err != cudaSuccess)
+        return NULL;
 
     return d_ptr;
 }
@@ -49,8 +50,10 @@ fp8_e4m3_t* cuda_tensor_alloc_fp8(size_t num_elements) {
  * Upload FP8 data to GPU
  */
 int cuda_tensor_upload_fp8(fp8_e4m3_t *d_dst, const fp8_e4m3_t *h_src, size_t num_elements) {
-    if (!g_cuda_memcpy) return -1;
-    cudaError_t err = g_cuda_memcpy(d_dst, h_src, num_elements * sizeof(fp8_e4m3_t), cudaMemcpyHostToDevice);
+    if (!g_cuda_memcpy)
+        return -1;
+    cudaError_t err =
+        g_cuda_memcpy(d_dst, h_src, num_elements * sizeof(fp8_e4m3_t), cudaMemcpyHostToDevice);
     return (err == cudaSuccess) ? 0 : -1;
 }
 
@@ -58,8 +61,10 @@ int cuda_tensor_upload_fp8(fp8_e4m3_t *d_dst, const fp8_e4m3_t *h_src, size_t nu
  * Download FP8 data from GPU
  */
 int cuda_tensor_download_fp8(fp8_e4m3_t *h_dst, const fp8_e4m3_t *d_src, size_t num_elements) {
-    if (!g_cuda_memcpy) return -1;
-    cudaError_t err = g_cuda_memcpy(h_dst, d_src, num_elements * sizeof(fp8_e4m3_t), cudaMemcpyDeviceToHost);
+    if (!g_cuda_memcpy)
+        return -1;
+    cudaError_t err =
+        g_cuda_memcpy(h_dst, d_src, num_elements * sizeof(fp8_e4m3_t), cudaMemcpyDeviceToHost);
     return (err == cudaSuccess) ? 0 : -1;
 }
 
@@ -69,28 +74,20 @@ int cuda_tensor_download_fp8(fp8_e4m3_t *h_dst, const fp8_e4m3_t *d_src, size_t 
  *
  * Uses FP8 E4M3 Tensor Cores when available (Ada/Hopper)
  */
-int cuda_fp8gemm_gpu(int M, int N, int K,
-                     float alpha, const fp8_e4m3_t *d_A, int lda,
-                     const fp8_e4m3_t *d_B, int ldb,
-                     float beta, float *d_C, int ldc) {
+int cuda_fp8gemm_gpu(int M, int N, int K, float alpha, const fp8_e4m3_t *d_A, int lda,
+                     const fp8_e4m3_t *d_B, int ldb, float beta, float *d_C, int ldc) {
     if (!cuda_available() || !g_cublas_gemm_ex) {
         fprintf(stderr, "[viva_tensor] cublasGemmEx not available for FP8\n");
         return -1;
     }
 
     /* FP8 E4M3 input with FP32 output and accumulator */
-    cublasStatus_t stat = g_cublas_gemm_ex(
-        g_cublas_ctx,
-        CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,
-        &alpha,
-        d_B, CUDA_R_8F_E4M3, N,          /* B is FP8 E4M3 */
-        d_A, CUDA_R_8F_E4M3, K,          /* A is FP8 E4M3 */
-        &beta,
-        d_C, CUDA_R_32F, N,              /* C is FP32 for accuracy */
-        CUBLAS_COMPUTE_32F,               /* FP32 accumulator */
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP
-    );
+    cublasStatus_t stat = g_cublas_gemm_ex(g_cublas_ctx, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha,
+                                           d_B, CUDA_R_8F_E4M3, N,    /* B is FP8 E4M3 */
+                                           d_A, CUDA_R_8F_E4M3, K,    /* A is FP8 E4M3 */
+                                           &beta, d_C, CUDA_R_32F, N, /* C is FP32 for accuracy */
+                                           CUBLAS_COMPUTE_32F,        /* FP32 accumulator */
+                                           CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
     if (stat != CUBLAS_STATUS_SUCCESS) {
         fprintf(stderr, "[viva_tensor] cuBLAS FP8 GEMM error: %d\n", stat);
@@ -104,24 +101,15 @@ int cuda_fp8gemm_gpu(int M, int N, int K,
 /**
  * FP8 E4M3 GEMM - Async version (no sync)
  */
-int cuda_fp8gemm_gpu_async(int M, int N, int K,
-                           float alpha, const fp8_e4m3_t *d_A, int lda,
-                           const fp8_e4m3_t *d_B, int ldb,
-                           float beta, float *d_C, int ldc) {
-    if (!cuda_available() || !g_cublas_gemm_ex) return -1;
+int cuda_fp8gemm_gpu_async(int M, int N, int K, float alpha, const fp8_e4m3_t *d_A, int lda,
+                           const fp8_e4m3_t *d_B, int ldb, float beta, float *d_C, int ldc) {
+    if (!cuda_available() || !g_cublas_gemm_ex)
+        return -1;
 
-    cublasStatus_t stat = g_cublas_gemm_ex(
-        g_cublas_ctx,
-        CUBLAS_OP_N, CUBLAS_OP_N,
-        N, M, K,
-        &alpha,
-        d_B, CUDA_R_8F_E4M3, N,
-        d_A, CUDA_R_8F_E4M3, K,
-        &beta,
-        d_C, CUDA_R_32F, N,
-        CUBLAS_COMPUTE_32F,
-        CUBLAS_GEMM_DEFAULT_TENSOR_OP
-    );
+    cublasStatus_t stat =
+        g_cublas_gemm_ex(g_cublas_ctx, CUBLAS_OP_N, CUBLAS_OP_N, N, M, K, &alpha, d_B,
+                         CUDA_R_8F_E4M3, N, d_A, CUDA_R_8F_E4M3, K, &beta, d_C, CUDA_R_32F, N,
+                         CUBLAS_COMPUTE_32F, CUBLAS_GEMM_DEFAULT_TENSOR_OP);
 
     return (stat == CUBLAS_STATUS_SUCCESS) ? 0 : -2;
 }
@@ -130,7 +118,8 @@ int cuda_fp8gemm_gpu_async(int M, int N, int K,
  * Check if FP8 is available (Ada/Hopper architecture)
  */
 int cuda_fp8_available(void) {
-    if (!cuda_available()) return 0;
+    if (!cuda_available())
+        return 0;
     /* FP8 requires Ada (SM89) or Hopper (SM90) */
     /* For now, assume if cublasGemmEx is available, try FP8 */
     return g_cublas_gemm_ex != NULL;
@@ -152,27 +141,30 @@ static fp8_e4m3_t float_to_fp8_e4m3(float x) {
     const float max_val = 448.0f;
     const float min_val = -448.0f;
 
-    if (x > max_val) x = max_val;
-    if (x < min_val) x = min_val;
-    if (isnan(x)) x = 0.0f;
+    if (x > max_val)
+        x = max_val;
+    if (x < min_val)
+        x = min_val;
+    if (isnan(x))
+        x = 0.0f;
 
     /* Get bits */
     uint32_t bits;
     memcpy(&bits, &x, sizeof(float));
 
     int sign = (bits >> 31) & 1;
-    int exp = ((bits >> 23) & 0xFF) - 127;  /* Unbias FP32 exponent */
-    int mantissa = (bits >> 20) & 0x7;       /* Top 3 bits of mantissa */
+    int exp = ((bits >> 23) & 0xFF) - 127; /* Unbias FP32 exponent */
+    int mantissa = (bits >> 20) & 0x7;     /* Top 3 bits of mantissa */
 
     /* Bias for E4M3 is 7 */
     int fp8_exp = exp + 7;
 
     /* Clamp exponent */
     if (fp8_exp <= 0) {
-        return sign ? 0x80 : 0x00;  /* Underflow to zero */
+        return sign ? 0x80 : 0x00; /* Underflow to zero */
     }
     if (fp8_exp >= 15) {
-        return sign ? 0xFE : 0x7E;  /* Saturate to max (no inf in E4M3) */
+        return sign ? 0xFE : 0x7E; /* Saturate to max (no inf in E4M3) */
     }
 
     /* Pack: 1 sign + 4 exp + 3 mantissa */
@@ -195,7 +187,7 @@ static float fp8_e4m3_to_float(fp8_e4m3_t x) {
     float value;
     if (exp == 0) {
         /* Subnormal */
-        value = ldexpf((float)mantissa / 8.0f, -6);  /* 1 - 7 = -6 */
+        value = ldexpf((float)mantissa / 8.0f, -6); /* 1 - 7 = -6 */
     } else {
         value = ldexpf(1.0f + (float)mantissa / 8.0f, exp - 7);
     }
@@ -238,27 +230,27 @@ void fp8_e4m3_to_float_batch(float *dst, const fp8_e4m3_t *src, size_t n) {
  *   - int8_data: quantized values
  *   - scales: one scale per block
  */
-int quant_int8_per_block_cpu(
-    int8_t *int8_data,      /* Output: [n] */
-    float *scales,          /* Output: [n / block_size] */
-    const float *fp32_data, /* Input: [n] */
-    size_t n,
-    size_t block_size
-) {
-    if (block_size == 0 || n == 0) return -1;
+int quant_int8_per_block_cpu(int8_t *int8_data,      /* Output: [n] */
+                             float *scales,          /* Output: [n / block_size] */
+                             const float *fp32_data, /* Input: [n] */
+                             size_t n, size_t block_size) {
+    if (block_size == 0 || n == 0)
+        return -1;
 
     size_t num_blocks = (n + block_size - 1) / block_size;
 
     for (size_t b = 0; b < num_blocks; b++) {
         size_t start = b * block_size;
         size_t end = start + block_size;
-        if (end > n) end = n;
+        if (end > n)
+            end = n;
 
         /* Find max absolute value */
-        float max_abs = 1e-7f;  /* Prevent division by zero */
+        float max_abs = 1e-7f; /* Prevent division by zero */
         for (size_t i = start; i < end; i++) {
             float abs_val = fabsf(fp32_data[i]);
-            if (abs_val > max_abs) max_abs = abs_val;
+            if (abs_val > max_abs)
+                max_abs = abs_val;
         }
 
         /* Compute scale */
@@ -270,8 +262,10 @@ int quant_int8_per_block_cpu(
         for (size_t i = start; i < end; i++) {
             float scaled = fp32_data[i] * inv_scale;
             int val = (int)roundf(scaled);
-            if (val > 127) val = 127;
-            if (val < -128) val = -128;
+            if (val > 127)
+                val = 127;
+            if (val < -128)
+                val = -128;
             int8_data[i] = (int8_t)val;
         }
     }
@@ -282,21 +276,20 @@ int quant_int8_per_block_cpu(
 /**
  * Dequantize INT8 with per-block scales back to FP32
  */
-int dequant_int8_per_block_cpu(
-    float *fp32_data,         /* Output: [n] */
-    const int8_t *int8_data,  /* Input: [n] */
-    const float *scales,      /* Input: [n / block_size] */
-    size_t n,
-    size_t block_size
-) {
-    if (block_size == 0 || n == 0) return -1;
+int dequant_int8_per_block_cpu(float *fp32_data,        /* Output: [n] */
+                               const int8_t *int8_data, /* Input: [n] */
+                               const float *scales,     /* Input: [n / block_size] */
+                               size_t n, size_t block_size) {
+    if (block_size == 0 || n == 0)
+        return -1;
 
     size_t num_blocks = (n + block_size - 1) / block_size;
 
     for (size_t b = 0; b < num_blocks; b++) {
         size_t start = b * block_size;
         size_t end = start + block_size;
-        if (end > n) end = n;
+        if (end > n)
+            end = n;
 
         float scale = scales[b];
 
@@ -325,7 +318,8 @@ int softmax_cpu(float *output, const float *input, size_t batch, size_t dim) {
         /* Find max for numerical stability */
         float max_val = in[0];
         for (size_t i = 1; i < dim; i++) {
-            if (in[i] > max_val) max_val = in[i];
+            if (in[i] > max_val)
+                max_val = in[i];
         }
 
         /* Compute exp and sum */
@@ -366,17 +360,12 @@ int softmax_cpu(float *output, const float *input, size_t batch, size_t dim) {
  *
  * Uses MKL cblas_sgemm for both Q@K^T and attn@V
  */
-int sage_attention_cpu(
-    float *O,           /* Output */
-    const float *Q,     /* Query */
-    const float *K,     /* Key */
-    const float *V,     /* Value */
-    int batch,
-    int heads,
-    int seq_q,
-    int seq_k,
-    int head_dim,
-    float sm_scale      /* 1/sqrt(head_dim) */
+int sage_attention_cpu(float *O,       /* Output */
+                       const float *Q, /* Query */
+                       const float *K, /* Key */
+                       const float *V, /* Value */
+                       int batch, int heads, int seq_q, int seq_k, int head_dim,
+                       float sm_scale /* 1/sqrt(head_dim) */
 ) {
     /* Allocate temporary buffers */
     size_t qk_size = (size_t)seq_q * seq_k;
@@ -384,7 +373,8 @@ int sage_attention_cpu(
     float *attn = malloc(qk_size * sizeof(float));
 
     if (!qk_float || !attn) {
-        free(qk_float); free(attn);
+        free(qk_float);
+        free(attn);
         return -1;
     }
 
@@ -404,12 +394,9 @@ int sage_attention_cpu(
              * cblas_sgemm(RowMajor, NoTrans, Trans, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc)
              * M=seq_q, N=seq_k, K=head_dim
              */
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans,
-                        seq_q, seq_k, head_dim,
-                        sm_scale,       /* alpha = 1/sqrt(d) */
-                        q_ptr, head_dim,
-                        k_ptr, head_dim,
-                        0.0f,           /* beta */
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasTrans, seq_q, seq_k, head_dim,
+                        sm_scale,                               /* alpha = 1/sqrt(d) */
+                        q_ptr, head_dim, k_ptr, head_dim, 0.0f, /* beta */
                         qk_float, seq_k);
 #else
             /* Naive fallback for Q @ K^T */
@@ -432,12 +419,9 @@ int sage_attention_cpu(
              * attn[seq_q, seq_k] @ V[seq_k, head_dim] = O[seq_q, head_dim]
              * Row-major: C = alpha * A * B + beta * C
              */
-            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
-                        seq_q, head_dim, seq_k,
-                        1.0f,           /* alpha */
-                        attn, seq_k,
-                        v_ptr, head_dim,
-                        0.0f,           /* beta */
+            cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, seq_q, head_dim, seq_k,
+                        1.0f,                               /* alpha */
+                        attn, seq_k, v_ptr, head_dim, 0.0f, /* beta */
                         o_ptr, head_dim);
 #else
             /* Naive fallback for Attn @ V */
@@ -454,7 +438,8 @@ int sage_attention_cpu(
         }
     }
 
-    free(qk_float); free(attn);
+    free(qk_float);
+    free(attn);
     return 0;
 }
 
@@ -463,12 +448,9 @@ int sage_attention_cpu(
  * ========================================================================= */
 
 /* cuBLAS SGEMM function pointer (from cuda_gemm.c) */
-typedef int (*cublas_sgemm_fn)(
-    cublasHandle_t, cublasOperation_t, cublasOperation_t,
-    int, int, int,
-    const float*, const float*, int,
-    const float*, int,
-    const float*, float*, int);
+typedef int (*cublas_sgemm_fn)(cublasHandle_t, cublasOperation_t, cublasOperation_t, int, int, int,
+                               const float *, const float *, int, const float *, int, const float *,
+                               float *, int);
 extern cublas_sgemm_fn g_cublas_sgemm;
 
 /**
@@ -479,18 +461,11 @@ extern cublas_sgemm_fn g_cublas_sgemm;
  *
  * Data stays on GPU except for softmax intermediate step
  */
-int sage_attention_gpu(
-    float *d_O,           /* Output on GPU */
-    const float *d_Q,     /* Query on GPU */
-    const float *d_K,     /* Key on GPU */
-    const float *d_V,     /* Value on GPU */
-    int batch,
-    int heads,
-    int seq_q,
-    int seq_k,
-    int head_dim,
-    float sm_scale
-) {
+int sage_attention_gpu(float *d_O,       /* Output on GPU */
+                       const float *d_Q, /* Query on GPU */
+                       const float *d_K, /* Key on GPU */
+                       const float *d_V, /* Value on GPU */
+                       int batch, int heads, int seq_q, int seq_k, int head_dim, float sm_scale) {
     if (!cuda_available() || !g_cublas_ctx || !g_cublas_sgemm) {
         /* Fall back to CPU if CUDA not available */
         return -1;
@@ -501,10 +476,10 @@ int sage_attention_gpu(
     float *d_qk = NULL;
     float *d_attn = NULL;
 
-    if (g_cuda_malloc((void**)&d_qk, qk_size * sizeof(float)) != cudaSuccess) {
+    if (g_cuda_malloc((void **)&d_qk, qk_size * sizeof(float)) != cudaSuccess) {
         return -2;
     }
-    if (g_cuda_malloc((void**)&d_attn, qk_size * sizeof(float)) != cudaSuccess) {
+    if (g_cuda_malloc((void **)&d_attn, qk_size * sizeof(float)) != cudaSuccess) {
         g_cuda_free(d_qk);
         return -2;
     }
@@ -513,8 +488,10 @@ int sage_attention_gpu(
     float *h_qk = malloc(qk_size * sizeof(float));
     float *h_attn = malloc(qk_size * sizeof(float));
     if (!h_qk || !h_attn) {
-        free(h_qk); free(h_attn);
-        g_cuda_free(d_qk); g_cuda_free(d_attn);
+        free(h_qk);
+        free(h_attn);
+        g_cuda_free(d_qk);
+        g_cuda_free(d_attn);
         return -3;
     }
 
@@ -540,23 +517,22 @@ int sage_attention_gpu(
              *             = K @ Q^T with col-major interpretation
              * So: sgemm(NoTrans, Trans, N=seq_k, M=seq_q, K=d, alpha, dk, d, dq, d, beta, d_qk, seq_k)
              */
-            cublasStatus_t status = g_cublas_sgemm(
-                g_cublas_ctx,
-                CUBLAS_OP_T,   /* K transposed */
-                CUBLAS_OP_N,   /* Q not transposed */
-                seq_k,         /* N (cols of result) */
-                seq_q,         /* M (rows of result) */
-                head_dim,      /* K */
-                &sm_scale,     /* alpha = 1/sqrt(d) */
-                dk, head_dim,  /* lda */
-                dq, head_dim,  /* ldb */
-                &beta_zero,
-                d_qk, seq_k    /* ldc */
+            cublasStatus_t status = g_cublas_sgemm(g_cublas_ctx, CUBLAS_OP_T, /* K transposed */
+                                                   CUBLAS_OP_N,               /* Q not transposed */
+                                                   seq_k,                  /* N (cols of result) */
+                                                   seq_q,                  /* M (rows of result) */
+                                                   head_dim,               /* K */
+                                                   &sm_scale,              /* alpha = 1/sqrt(d) */
+                                                   dk, head_dim,           /* lda */
+                                                   dq, head_dim,           /* ldb */
+                                                   &beta_zero, d_qk, seq_k /* ldc */
             );
 
             if (status != CUBLAS_STATUS_SUCCESS) {
-                free(h_qk); free(h_attn);
-                g_cuda_free(d_qk); g_cuda_free(d_attn);
+                free(h_qk);
+                free(h_attn);
+                g_cuda_free(d_qk);
+                g_cuda_free(d_attn);
                 return -4;
             }
 
@@ -571,30 +547,28 @@ int sage_attention_gpu(
              * Col-major: O[d, seq_q] = V[d, seq_k] @ attn^T[seq_k, seq_q]
              * sgemm(NoTrans, Trans, d, seq_q, seq_k, 1, dv, d, d_attn, seq_k, 0, do_, d)
              */
-            status = g_cublas_sgemm(
-                g_cublas_ctx,
-                CUBLAS_OP_N,   /* V not transposed */
-                CUBLAS_OP_T,   /* attn transposed */
-                head_dim,      /* N */
-                seq_q,         /* M */
-                seq_k,         /* K */
-                &alpha_one,
-                dv, head_dim,
-                d_attn, seq_k,
-                &beta_zero,
-                do_, head_dim
-            );
+            status =
+                g_cublas_sgemm(g_cublas_ctx, CUBLAS_OP_N, /* V not transposed */
+                               CUBLAS_OP_T,               /* attn transposed */
+                               head_dim,                  /* N */
+                               seq_q,                     /* M */
+                               seq_k,                     /* K */
+                               &alpha_one, dv, head_dim, d_attn, seq_k, &beta_zero, do_, head_dim);
 
             if (status != CUBLAS_STATUS_SUCCESS) {
-                free(h_qk); free(h_attn);
-                g_cuda_free(d_qk); g_cuda_free(d_attn);
+                free(h_qk);
+                free(h_attn);
+                g_cuda_free(d_qk);
+                g_cuda_free(d_attn);
                 return -5;
             }
         }
     }
 
-    free(h_qk); free(h_attn);
-    g_cuda_free(d_qk); g_cuda_free(d_attn);
+    free(h_qk);
+    free(h_attn);
+    g_cuda_free(d_qk);
+    g_cuda_free(d_attn);
     g_cuda_sync();
 
     return 0;
@@ -625,21 +599,34 @@ int sage_fp8_available(void) {
     return cuda_fp8_available();
 }
 
-#else  /* _WIN32 */
+#else /* _WIN32 */
 
 /* Stubs for Windows - not implemented yet */
-int sage_init(void) { return 0; }
-int sage_available(void) { return 0; }
-int sage_fp8_available(void) { return 0; }
+int sage_init(void) {
+    return 0;
+}
+int sage_available(void) {
+    return 0;
+}
+int sage_fp8_available(void) {
+    return 0;
+}
 
-int quant_int8_per_block_cpu(int8_t *out, float *scales, const float *in,
-                              size_t n, size_t block_size) { return -1; }
-int dequant_int8_per_block_cpu(float *out, const int8_t *in, const float *scales,
-                                size_t n, size_t block_size) { return -1; }
-int softmax_cpu(float *out, const float *in, size_t batch, size_t dim) { return -1; }
+int quant_int8_per_block_cpu(int8_t *out, float *scales, const float *in, size_t n,
+                             size_t block_size) {
+    return -1;
+}
+int dequant_int8_per_block_cpu(float *out, const int8_t *in, const float *scales, size_t n,
+                               size_t block_size) {
+    return -1;
+}
+int softmax_cpu(float *out, const float *in, size_t batch, size_t dim) {
+    return -1;
+}
 
-int sage_attention_cpu(float *O, const float *Q, const float *K, const float *V,
-                       int batch, int heads, int seq_q, int seq_k, int head_dim,
-                       float sm_scale) { return -1; }
+int sage_attention_cpu(float *O, const float *Q, const float *K, const float *V, int batch,
+                       int heads, int seq_q, int seq_k, int head_dim, float sm_scale) {
+    return -1;
+}
 
 #endif /* _WIN32 */

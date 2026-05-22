@@ -20,204 +20,201 @@
 ErlNifResourceType *TENSOR_RESOURCE = NULL;
 
 void tensor_destructor(ErlNifEnv *env, void *obj) {
-  (void)env;
-  NativeTensor *t = (NativeTensor *)obj;
-  if (t->owns_data && t->data)
-    aligned_tensor_free(t->data);
-  if (t->owner)
-    enif_release_resource(t->owner);
-  if (t->shape)
-    free(t->shape);
-  if (t->strides)
-    free(t->strides);
+    (void)env;
+    NativeTensor *t = (NativeTensor *)obj;
+    if (t->owns_data && t->data)
+        aligned_tensor_free(t->data);
+    if (t->owner)
+        enif_release_resource(t->owner);
+    if (t->shape)
+        free(t->shape);
+    if (t->strides)
+        free(t->strides);
 }
 
 /** Allocate a new NativeTensor resource with given shape. Data is zeroed. */
 NativeTensor *alloc_tensor(int ndim, const int *shape) {
-  NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE,
-                                                        sizeof(NativeTensor));
-  if (!t)
-    return NULL;
+    NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE, sizeof(NativeTensor));
+    if (!t)
+        return NULL;
 
-  t->ndim = ndim;
-  t->owns_data = 1;
-  t->owner = NULL;
-  t->offset = 0;
+    t->ndim = ndim;
+    t->owns_data = 1;
+    t->owner = NULL;
+    t->offset = 0;
 
-  /* Compute size and strides (row-major) */
-  t->size = 1;
-  for (int i = 0; i < ndim; i++)
-    t->size *= shape[i];
+    /* Compute size and strides (row-major) */
+    t->size = 1;
+    for (int i = 0; i < ndim; i++)
+        t->size *= shape[i];
 
-  t->shape = (int *)malloc(ndim * sizeof(int));
-  t->strides = (int *)malloc(ndim * sizeof(int));
-  if (!t->shape || !t->strides) {
-    if (t->shape)
-      free(t->shape);
-    if (t->strides)
-      free(t->strides);
-    t->shape = NULL;
-    t->strides = NULL;
-    t->data = NULL;
-    enif_release_resource(t);
-    return NULL;
-  }
-  memcpy(t->shape, shape, ndim * sizeof(int));
+    t->shape = (int *)malloc(ndim * sizeof(int));
+    t->strides = (int *)malloc(ndim * sizeof(int));
+    if (!t->shape || !t->strides) {
+        if (t->shape)
+            free(t->shape);
+        if (t->strides)
+            free(t->strides);
+        t->shape = NULL;
+        t->strides = NULL;
+        t->data = NULL;
+        enif_release_resource(t);
+        return NULL;
+    }
+    memcpy(t->shape, shape, ndim * sizeof(int));
 
-  /* Row-major strides */
-  int stride = 1;
-  for (int i = ndim - 1; i >= 0; i--) {
-    t->strides[i] = stride;
-    stride *= shape[i];
-  }
+    /* Row-major strides */
+    int stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        t->strides[i] = stride;
+        stride *= shape[i];
+    }
 
-  /* Allocate 64-byte aligned zeroed data */
-  t->data = (double *)aligned_tensor_alloc(t->size * sizeof(double));
-  if (!t->data) {
-    free(t->shape);
-    free(t->strides);
-    t->shape = NULL;
-    t->strides = NULL;
-    enif_release_resource(t);
-    return NULL;
-  }
-  memset(t->data, 0, t->size * sizeof(double));
+    /* Allocate 64-byte aligned zeroed data */
+    t->data = (double *)aligned_tensor_alloc(t->size * sizeof(double));
+    if (!t->data) {
+        free(t->shape);
+        free(t->strides);
+        t->shape = NULL;
+        t->strides = NULL;
+        enif_release_resource(t);
+        return NULL;
+    }
+    memset(t->data, 0, t->size * sizeof(double));
 
-  return t;
+    return t;
 }
 
 /** Allocate NativeTensor with uninitialized data (use when overwriting all). */
 NativeTensor *alloc_tensor_uninit(int ndim, const int *shape) {
-  NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE,
-                                                        sizeof(NativeTensor));
-  if (!t)
-    return NULL;
+    NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE, sizeof(NativeTensor));
+    if (!t)
+        return NULL;
 
-  t->ndim = ndim;
-  t->owns_data = 1;
-  t->owner = NULL;
-  t->offset = 0;
+    t->ndim = ndim;
+    t->owns_data = 1;
+    t->owner = NULL;
+    t->offset = 0;
 
-  t->size = 1;
-  for (int i = 0; i < ndim; i++)
-    t->size *= shape[i];
+    t->size = 1;
+    for (int i = 0; i < ndim; i++)
+        t->size *= shape[i];
 
-  t->shape = (int *)malloc(ndim * sizeof(int));
-  t->strides = (int *)malloc(ndim * sizeof(int));
-  if (!t->shape || !t->strides) {
-    if (t->shape)
-      free(t->shape);
-    if (t->strides)
-      free(t->strides);
-    t->shape = NULL;
-    t->strides = NULL;
-    t->data = NULL;
-    enif_release_resource(t);
-    return NULL;
-  }
-  memcpy(t->shape, shape, ndim * sizeof(int));
+    t->shape = (int *)malloc(ndim * sizeof(int));
+    t->strides = (int *)malloc(ndim * sizeof(int));
+    if (!t->shape || !t->strides) {
+        if (t->shape)
+            free(t->shape);
+        if (t->strides)
+            free(t->strides);
+        t->shape = NULL;
+        t->strides = NULL;
+        t->data = NULL;
+        enif_release_resource(t);
+        return NULL;
+    }
+    memcpy(t->shape, shape, ndim * sizeof(int));
 
-  int stride = 1;
-  for (int i = ndim - 1; i >= 0; i--) {
-    t->strides[i] = stride;
-    stride *= shape[i];
-  }
+    int stride = 1;
+    for (int i = ndim - 1; i >= 0; i--) {
+        t->strides[i] = stride;
+        stride *= shape[i];
+    }
 
-  t->data = (double *)aligned_tensor_alloc(t->size * sizeof(double));
-  if (!t->data) {
-    free(t->shape);
-    free(t->strides);
-    t->shape = NULL;
-    t->strides = NULL;
-    enif_release_resource(t);
-    return NULL;
-  }
+    t->data = (double *)aligned_tensor_alloc(t->size * sizeof(double));
+    if (!t->data) {
+        free(t->shape);
+        free(t->strides);
+        t->shape = NULL;
+        t->strides = NULL;
+        enif_release_resource(t);
+        return NULL;
+    }
 
-  return t;
+    return t;
 }
 
 /** Allocate a zero-copy view over an existing NativeTensor resource. */
 NativeTensor *alloc_tensor_view(NativeTensor *base, int ndim, const int *shape,
                                 const int *strides) {
-  NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE,
-                                                        sizeof(NativeTensor));
-  if (!t)
-    return NULL;
+    NativeTensor *t = (NativeTensor *)enif_alloc_resource(TENSOR_RESOURCE, sizeof(NativeTensor));
+    if (!t)
+        return NULL;
 
-  t->ndim = ndim;
-  t->owns_data = 0;
-  t->owner = base;
-  t->data = base->data;
-  t->offset = base->offset;
+    t->ndim = ndim;
+    t->owns_data = 0;
+    t->owner = base;
+    t->data = base->data;
+    t->offset = base->offset;
 
-  t->size = 1;
-  for (int i = 0; i < ndim; i++)
-    t->size *= shape[i];
+    t->size = 1;
+    for (int i = 0; i < ndim; i++)
+        t->size *= shape[i];
 
-  t->shape = (int *)malloc(ndim * sizeof(int));
-  t->strides = (int *)malloc(ndim * sizeof(int));
-  if (!t->shape || !t->strides) {
-    if (t->shape)
-      free(t->shape);
-    if (t->strides)
-      free(t->strides);
-    t->shape = NULL;
-    t->strides = NULL;
-    t->data = NULL;
-    t->owner = NULL;
-    enif_release_resource(t);
-    return NULL;
-  }
+    t->shape = (int *)malloc(ndim * sizeof(int));
+    t->strides = (int *)malloc(ndim * sizeof(int));
+    if (!t->shape || !t->strides) {
+        if (t->shape)
+            free(t->shape);
+        if (t->strides)
+            free(t->strides);
+        t->shape = NULL;
+        t->strides = NULL;
+        t->data = NULL;
+        t->owner = NULL;
+        enif_release_resource(t);
+        return NULL;
+    }
 
-  memcpy(t->shape, shape, ndim * sizeof(int));
-  memcpy(t->strides, strides, ndim * sizeof(int));
-  enif_keep_resource(base);
-  return t;
+    memcpy(t->shape, shape, ndim * sizeof(int));
+    memcpy(t->strides, strides, ndim * sizeof(int));
+    enif_keep_resource(base);
+    return t;
 }
 
 /** Get NativeTensor from an Erlang resource term */
 NativeTensor *get_tensor(ErlNifEnv *env, ERL_NIF_TERM term) {
-  NativeTensor *t;
-  if (!enif_get_resource(env, term, TENSOR_RESOURCE, (void **)&t))
-    return NULL;
-  return t;
+    NativeTensor *t;
+    if (!enif_get_resource(env, term, TENSOR_RESOURCE, (void **)&t))
+        return NULL;
+    return t;
 }
 
 int tensor_is_contiguous(const NativeTensor *t) {
-  if (!t || t->offset != 0)
-    return 0;
+    if (!t || t->offset != 0)
+        return 0;
 
-  int expected = 1;
-  for (int i = t->ndim - 1; i >= 0; i--) {
-    if (t->strides[i] != expected)
-      return 0;
-    expected *= t->shape[i];
-  }
-  return 1;
+    int expected = 1;
+    for (int i = t->ndim - 1; i >= 0; i--) {
+        if (t->strides[i] != expected)
+            return 0;
+        expected *= t->shape[i];
+    }
+    return 1;
 }
 
 int tensor_storage_index(const NativeTensor *t, int logical_index) {
-  int storage_index = t->offset;
-  int remaining = logical_index;
+    int storage_index = t->offset;
+    int remaining = logical_index;
 
-  for (int i = t->ndim - 1; i >= 0; i--) {
-    int coord = remaining % t->shape[i];
-    remaining /= t->shape[i];
-    storage_index += coord * t->strides[i];
-  }
+    for (int i = t->ndim - 1; i >= 0; i--) {
+        int coord = remaining % t->shape[i];
+        remaining /= t->shape[i];
+        storage_index += coord * t->strides[i];
+    }
 
-  return storage_index;
+    return storage_index;
 }
 
 double tensor_get_flat(const NativeTensor *t, int logical_index) {
-  return t->data[tensor_storage_index(t, logical_index)];
+    return t->data[tensor_storage_index(t, logical_index)];
 }
 
 /** Wrap a NativeTensor as an Erlang term (transfers ownership to GC) */
 ERL_NIF_TERM make_tensor_term(ErlNifEnv *env, NativeTensor *t) {
-  ERL_NIF_TERM term = enif_make_resource(env, t);
-  enif_release_resource(t); /* GC now owns it */
-  return term;
+    ERL_NIF_TERM term = enif_make_resource(env, t);
+    enif_release_resource(t); /* GC now owns it */
+    return term;
 }
 
 /* =========================================================================
@@ -230,23 +227,25 @@ ERL_NIF_TERM make_tensor_term(ErlNifEnv *env, NativeTensor *t) {
 ErlNifResourceType *QINT8_RESOURCE = NULL;
 
 void qint8_destructor(ErlNifEnv *env, void *obj) {
-  (void)env;
-  QuantInt8Tensor *t = (QuantInt8Tensor *)obj;
-  if (t->data) free(t->data);
-  if (t->shape) free(t->shape);
+    (void)env;
+    QuantInt8Tensor *t = (QuantInt8Tensor *)obj;
+    if (t->data)
+        free(t->data);
+    if (t->shape)
+        free(t->shape);
 }
 
 QuantInt8Tensor *get_qint8(ErlNifEnv *env, ERL_NIF_TERM term) {
-  QuantInt8Tensor *t;
-  if (!enif_get_resource(env, term, QINT8_RESOURCE, (void **)&t))
-    return NULL;
-  return t;
+    QuantInt8Tensor *t;
+    if (!enif_get_resource(env, term, QINT8_RESOURCE, (void **)&t))
+        return NULL;
+    return t;
 }
 
 ERL_NIF_TERM make_qint8_term(ErlNifEnv *env, QuantInt8Tensor *t) {
-  ERL_NIF_TERM term = enif_make_resource(env, t);
-  enif_release_resource(t);
-  return term;
+    ERL_NIF_TERM term = enif_make_resource(env, t);
+    enif_release_resource(t);
+    return term;
 }
 
 /* =========================================================================
@@ -259,125 +258,124 @@ ERL_NIF_TERM make_qint8_term(ErlNifEnv *env, QuantInt8Tensor *t) {
 ErlNifResourceType *QNF4_RESOURCE = NULL;
 
 void qnf4_destructor(ErlNifEnv *env, void *obj) {
-  (void)env;
-  QuantNF4Tensor *t = (QuantNF4Tensor *)obj;
-  if (t->indices) free(t->indices);
-  if (t->scales) free(t->scales);
-  if (t->shape) free(t->shape);
+    (void)env;
+    QuantNF4Tensor *t = (QuantNF4Tensor *)obj;
+    if (t->indices)
+        free(t->indices);
+    if (t->scales)
+        free(t->scales);
+    if (t->shape)
+        free(t->shape);
 }
 
 QuantNF4Tensor *get_qnf4(ErlNifEnv *env, ERL_NIF_TERM term) {
-  QuantNF4Tensor *t;
-  if (!enif_get_resource(env, term, QNF4_RESOURCE, (void **)&t))
-    return NULL;
-  return t;
+    QuantNF4Tensor *t;
+    if (!enif_get_resource(env, term, QNF4_RESOURCE, (void **)&t))
+        return NULL;
+    return t;
 }
 
 ERL_NIF_TERM make_qnf4_term(ErlNifEnv *env, QuantNF4Tensor *t) {
-  ERL_NIF_TERM term = enif_make_resource(env, t);
-  enif_release_resource(t);
-  return term;
+    ERL_NIF_TERM term = enif_make_resource(env, t);
+    enif_release_resource(t);
+    return term;
 }
 
 /** Parse shape from Erlang list of ints */
-int parse_shape(ErlNifEnv *env, ERL_NIF_TERM list, int *out_shape,
-                int *out_ndim) {
-  unsigned len;
-  if (!enif_get_list_length(env, list, &len) || len == 0 || len > 8)
-    return 0;
-  *out_ndim = (int)len;
+int parse_shape(ErlNifEnv *env, ERL_NIF_TERM list, int *out_shape, int *out_ndim) {
+    unsigned len;
+    if (!enif_get_list_length(env, list, &len) || len == 0 || len > 8)
+        return 0;
+    *out_ndim = (int)len;
 
-  ERL_NIF_TERM head, tail = list;
-  int i = 0;
-  while (enif_get_list_cell(env, tail, &head, &tail)) {
-    int val;
-    if (!enif_get_int(env, head, &val) || val <= 0)
-      return 0;
-    out_shape[i++] = val;
-  }
-  return 1;
+    ERL_NIF_TERM head, tail = list;
+    int i = 0;
+    while (enif_get_list_cell(env, tail, &head, &tail)) {
+        int val;
+        if (!enif_get_int(env, head, &val) || val <= 0)
+            return 0;
+        out_shape[i++] = val;
+    }
+    return 1;
 }
 
 /* =========================================================================
  * Helpers (legacy list-based API)
  * ========================================================================= */
 
-double *list_to_doubles(ErlNifEnv *env, ERL_NIF_TERM list,
-                        unsigned *out_len) {
-  unsigned length;
-  if (!enif_get_list_length(env, list, &length))
-    return NULL;
-  double *arr = (double *)malloc(length * sizeof(double));
-  if (!arr)
-    return NULL;
-
-  ERL_NIF_TERM head, tail = list;
-  unsigned i = 0;
-  while (enif_get_list_cell(env, tail, &head, &tail)) {
-    double val;
-    if (enif_get_double(env, head, &val)) {
-      arr[i++] = val;
-    } else {
-      int ival;
-      long lval;
-      if (enif_get_int(env, head, &ival))
-        arr[i++] = (double)ival;
-      else if (enif_get_long(env, head, &lval))
-        arr[i++] = (double)lval;
-      else {
-        free(arr);
+double *list_to_doubles(ErlNifEnv *env, ERL_NIF_TERM list, unsigned *out_len) {
+    unsigned length;
+    if (!enif_get_list_length(env, list, &length))
         return NULL;
-      }
+    double *arr = (double *)malloc(length * sizeof(double));
+    if (!arr)
+        return NULL;
+
+    ERL_NIF_TERM head, tail = list;
+    unsigned i = 0;
+    while (enif_get_list_cell(env, tail, &head, &tail)) {
+        double val;
+        if (enif_get_double(env, head, &val)) {
+            arr[i++] = val;
+        } else {
+            int ival;
+            long lval;
+            if (enif_get_int(env, head, &ival))
+                arr[i++] = (double)ival;
+            else if (enif_get_long(env, head, &lval))
+                arr[i++] = (double)lval;
+            else {
+                free(arr);
+                return NULL;
+            }
+        }
     }
-  }
-  *out_len = length;
-  return arr;
+    *out_len = length;
+    return arr;
 }
 
-ERL_NIF_TERM doubles_to_list(ErlNifEnv *env, const double *arr,
-                             unsigned len) {
-  ERL_NIF_TERM result = enif_make_list(env, 0);
-  for (unsigned i = len; i > 0;) {
-    i--;
-    result = enif_make_list_cell(env, enif_make_double(env, arr[i]), result);
-  }
-  return result;
+ERL_NIF_TERM doubles_to_list(ErlNifEnv *env, const double *arr, unsigned len) {
+    ERL_NIF_TERM result = enif_make_list(env, 0);
+    for (unsigned i = len; i > 0;) {
+        i--;
+        result = enif_make_list_cell(env, enif_make_double(env, arr[i]), result);
+    }
+    return result;
 }
 
 ERL_NIF_TERM make_ok(ErlNifEnv *env, ERL_NIF_TERM value) {
-  return enif_make_tuple2(env, enif_make_atom(env, "ok"), value);
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"), value);
 }
 
 ERL_NIF_TERM make_ok_nil(ErlNifEnv *env) {
-  return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_atom(env, "nil"));
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"), enif_make_atom(env, "nil"));
 }
 
 ERL_NIF_TERM make_error(ErlNifEnv *env, const char *reason) {
-  ERL_NIF_TERM reason_bin;
-  unsigned char *dst = enif_make_new_binary(env, strlen(reason), &reason_bin);
-  memcpy(dst, reason, strlen(reason));
-  return enif_make_tuple2(env, enif_make_atom(env, "error"),
-                          reason_bin);
+    ERL_NIF_TERM reason_bin;
+    unsigned char *dst = enif_make_new_binary(env, strlen(reason), &reason_bin);
+    memcpy(dst, reason, strlen(reason));
+    return enif_make_tuple2(env, enif_make_atom(env, "error"), reason_bin);
 }
 
 double get_number(ErlNifEnv *env, ERL_NIF_TERM term, int *ok) {
-  double val;
-  if (enif_get_double(env, term, &val)) {
-    *ok = 1;
-    return val;
-  }
-  int ival;
-  if (enif_get_int(env, term, &ival)) {
-    *ok = 1;
-    return (double)ival;
-  }
-  long lval;
-  if (enif_get_long(env, term, &lval)) {
-    *ok = 1;
-    return (double)lval;
-  }
-  *ok = 0;
-  return 0.0;
+    double val;
+    if (enif_get_double(env, term, &val)) {
+        *ok = 1;
+        return val;
+    }
+    int ival;
+    if (enif_get_int(env, term, &ival)) {
+        *ok = 1;
+        return (double)ival;
+    }
+    long lval;
+    if (enif_get_long(env, term, &lval)) {
+        *ok = 1;
+        return (double)lval;
+    }
+    *ok = 0;
+    return 0.0;
 }
 
 /* =========================================================================
@@ -385,90 +383,86 @@ double get_number(ErlNifEnv *env, ERL_NIF_TERM term, int *ok) {
  * ========================================================================= */
 
 /** nt_zeros(Shape) -> {ok, Ref} */
-ERL_NIF_TERM nt_zeros(ErlNifEnv *env, int argc,
-                             const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  int shape[8], ndim;
-  if (!parse_shape(env, argv[0], shape, &ndim))
-    return make_error(env, "invalid_shape");
+ERL_NIF_TERM nt_zeros(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    int shape[8], ndim;
+    if (!parse_shape(env, argv[0], shape, &ndim))
+        return make_error(env, "invalid_shape");
 
-  NativeTensor *t = alloc_tensor(ndim, shape);
-  if (!t)
-    return make_error(env, "out_of_memory");
-  /* data already zeroed by calloc */
+    NativeTensor *t = alloc_tensor(ndim, shape);
+    if (!t)
+        return make_error(env, "out_of_memory");
+    /* data already zeroed by calloc */
 
-  return make_ok(env, make_tensor_term(env, t));
+    return make_ok(env, make_tensor_term(env, t));
 }
 
 /** nt_ones(Shape) -> {ok, Ref} */
-ERL_NIF_TERM nt_ones(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  int shape[8], ndim;
-  if (!parse_shape(env, argv[0], shape, &ndim))
-    return make_error(env, "invalid_shape");
+ERL_NIF_TERM nt_ones(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    int shape[8], ndim;
+    if (!parse_shape(env, argv[0], shape, &ndim))
+        return make_error(env, "invalid_shape");
 
-  NativeTensor *t = alloc_tensor_uninit(ndim, shape);
-  if (!t)
-    return make_error(env, "out_of_memory");
-  for (int i = 0; i < t->size; i++)
-    t->data[i] = 1.0;
+    NativeTensor *t = alloc_tensor_uninit(ndim, shape);
+    if (!t)
+        return make_error(env, "out_of_memory");
+    for (int i = 0; i < t->size; i++)
+        t->data[i] = 1.0;
 
-  return make_ok(env, make_tensor_term(env, t));
+    return make_ok(env, make_tensor_term(env, t));
 }
 
 /** nt_fill(Shape, Value) -> {ok, Ref} */
-ERL_NIF_TERM nt_fill(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  int shape[8], ndim;
-  if (!parse_shape(env, argv[0], shape, &ndim))
-    return make_error(env, "invalid_shape");
-  int ok;
-  double val = get_number(env, argv[1], &ok);
-  if (!ok)
-    return make_error(env, "invalid_value");
+ERL_NIF_TERM nt_fill(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    int shape[8], ndim;
+    if (!parse_shape(env, argv[0], shape, &ndim))
+        return make_error(env, "invalid_shape");
+    int ok;
+    double val = get_number(env, argv[1], &ok);
+    if (!ok)
+        return make_error(env, "invalid_value");
 
-  NativeTensor *t = alloc_tensor_uninit(ndim, shape);
-  if (!t)
-    return make_error(env, "out_of_memory");
-  for (int i = 0; i < t->size; i++)
-    t->data[i] = val;
+    NativeTensor *t = alloc_tensor_uninit(ndim, shape);
+    if (!t)
+        return make_error(env, "out_of_memory");
+    for (int i = 0; i < t->size; i++)
+        t->data[i] = val;
 
-  return make_ok(env, make_tensor_term(env, t));
+    return make_ok(env, make_tensor_term(env, t));
 }
 
 /** nt_from_list(Data, Shape) -> {ok, Ref} */
-ERL_NIF_TERM nt_from_list(ErlNifEnv *env, int argc,
-                                 const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  int shape[8], ndim;
-  if (!parse_shape(env, argv[1], shape, &ndim))
-    return make_error(env, "invalid_shape");
+ERL_NIF_TERM nt_from_list(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    int shape[8], ndim;
+    if (!parse_shape(env, argv[1], shape, &ndim))
+        return make_error(env, "invalid_shape");
 
-  unsigned data_len;
-  double *data = list_to_doubles(env, argv[0], &data_len);
-  if (!data)
-    return make_error(env, "invalid_data");
+    unsigned data_len;
+    double *data = list_to_doubles(env, argv[0], &data_len);
+    if (!data)
+        return make_error(env, "invalid_data");
 
-  /* Validate size matches shape */
-  int expected_size = 1;
-  for (int i = 0; i < ndim; i++)
-    expected_size *= shape[i];
-  if ((int)data_len != expected_size) {
+    /* Validate size matches shape */
+    int expected_size = 1;
+    for (int i = 0; i < ndim; i++)
+        expected_size *= shape[i];
+    if ((int)data_len != expected_size) {
+        free(data);
+        return make_error(env, "size_mismatch");
+    }
+
+    NativeTensor *t = alloc_tensor_uninit(ndim, shape);
+    if (!t) {
+        free(data);
+        return make_error(env, "out_of_memory");
+    }
+    memcpy(t->data, data, data_len * sizeof(double));
     free(data);
-    return make_error(env, "size_mismatch");
-  }
 
-  NativeTensor *t = alloc_tensor_uninit(ndim, shape);
-  if (!t) {
-    free(data);
-    return make_error(env, "out_of_memory");
-  }
-  memcpy(t->data, data, data_len * sizeof(double));
-  free(data);
-
-  return make_ok(env, make_tensor_term(env, t));
+    return make_ok(env, make_tensor_term(env, t));
 }
 
 /* =========================================================================
@@ -476,82 +470,76 @@ ERL_NIF_TERM nt_from_list(ErlNifEnv *env, int argc,
  * ========================================================================= */
 
 /** nt_to_list(Ref) -> {ok, List} */
-ERL_NIF_TERM nt_to_list(ErlNifEnv *env, int argc,
-                               const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t)
-    return make_error(env, "invalid_tensor");
-  if (tensor_is_contiguous(t))
-    return make_ok(env, doubles_to_list(env, t->data + t->offset, t->size));
+ERL_NIF_TERM nt_to_list(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
+    if (tensor_is_contiguous(t))
+        return make_ok(env, doubles_to_list(env, t->data + t->offset, t->size));
 
-  ERL_NIF_TERM result = enif_make_list(env, 0);
-  for (int i = t->size; i > 0;) {
-    i--;
-    result = enif_make_list_cell(
-        env, enif_make_double(env, tensor_get_flat(t, i)), result);
-  }
-  return make_ok(env, result);
+    ERL_NIF_TERM result = enif_make_list(env, 0);
+    for (int i = t->size; i > 0;) {
+        i--;
+        result = enif_make_list_cell(env, enif_make_double(env, tensor_get_flat(t, i)), result);
+    }
+    return make_ok(env, result);
 }
 
 /** nt_shape(Ref) -> {ok, ShapeList} */
-ERL_NIF_TERM nt_shape(ErlNifEnv *env, int argc,
-                             const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t)
-    return make_error(env, "invalid_tensor");
+ERL_NIF_TERM nt_shape(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
 
-  ERL_NIF_TERM shape_list = enif_make_list(env, 0);
-  for (int i = t->ndim - 1; i >= 0; i--)
-    shape_list =
-        enif_make_list_cell(env, enif_make_int(env, t->shape[i]), shape_list);
-  return make_ok(env, shape_list);
+    ERL_NIF_TERM shape_list = enif_make_list(env, 0);
+    for (int i = t->ndim - 1; i >= 0; i--)
+        shape_list = enif_make_list_cell(env, enif_make_int(env, t->shape[i]), shape_list);
+    return make_ok(env, shape_list);
 }
 
 /** nt_size(Ref) -> {ok, Int} */
-ERL_NIF_TERM nt_size(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t)
-    return make_error(env, "invalid_tensor");
-  return make_ok(env, enif_make_int(env, t->size));
+ERL_NIF_TERM nt_size(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
+    return make_ok(env, enif_make_int(env, t->size));
 }
 
 /** nt_broadcast_to(Ref, TargetShape) -> {ok, RefView} */
-ERL_NIF_TERM nt_broadcast_to(ErlNifEnv *env, int argc,
-                                    const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  NativeTensor *t = get_tensor(env, argv[0]);
-  if (!t)
-    return make_error(env, "invalid_tensor");
+ERL_NIF_TERM nt_broadcast_to(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *t = get_tensor(env, argv[0]);
+    if (!t)
+        return make_error(env, "invalid_tensor");
 
-  int target_shape[8], target_ndim;
-  if (!parse_shape(env, argv[1], target_shape, &target_ndim))
-    return make_error(env, "invalid_shape");
-  if (t->ndim > target_ndim)
-    return make_error(env, "broadcast_error");
+    int target_shape[8], target_ndim;
+    if (!parse_shape(env, argv[1], target_shape, &target_ndim))
+        return make_error(env, "invalid_shape");
+    if (t->ndim > target_ndim)
+        return make_error(env, "broadcast_error");
 
-  int diff = target_ndim - t->ndim;
-  int view_strides[8];
-  for (int i = 0; i < target_ndim; i++) {
-    int src_dim = i < diff ? 1 : t->shape[i - diff];
-    int src_stride = i < diff ? 0 : t->strides[i - diff];
-    int target_dim = target_shape[i];
+    int diff = target_ndim - t->ndim;
+    int view_strides[8];
+    for (int i = 0; i < target_ndim; i++) {
+        int src_dim = i < diff ? 1 : t->shape[i - diff];
+        int src_stride = i < diff ? 0 : t->strides[i - diff];
+        int target_dim = target_shape[i];
 
-    if (src_dim == target_dim) {
-      view_strides[i] = src_stride;
-    } else if (src_dim == 1) {
-      view_strides[i] = 0;
-    } else {
-      return make_error(env, "broadcast_error");
+        if (src_dim == target_dim) {
+            view_strides[i] = src_stride;
+        } else if (src_dim == 1) {
+            view_strides[i] = 0;
+        } else {
+            return make_error(env, "broadcast_error");
+        }
     }
-  }
 
-  NativeTensor *view = alloc_tensor_view(t, target_ndim, target_shape, view_strides);
-  if (!view)
-    return make_error(env, "out_of_memory");
+    NativeTensor *view = alloc_tensor_view(t, target_ndim, target_shape, view_strides);
+    if (!view)
+        return make_error(env, "out_of_memory");
 
-  return make_ok(env, make_tensor_term(env, view));
+    return make_ok(env, make_tensor_term(env, view));
 }

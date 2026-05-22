@@ -46,9 +46,9 @@
  * ========================================================================= */
 namespace int8_sparse_run {
 
-using ElementA   = int8_t;
-using ElementB   = int8_t;
-using ElementC   = int32_t;
+using ElementA = int8_t;
+using ElementB = int8_t;
+using ElementC = int32_t;
 using ElementAcc = int32_t;
 
 using LayoutA = cutlass::layout::RowMajor;
@@ -56,23 +56,18 @@ using LayoutB = cutlass::layout::ColumnMajor;
 using LayoutC = cutlass::layout::RowMajor;
 
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-    ElementC,
-    128 / cutlass::sizeof_bits<ElementC>::value,
-    ElementAcc, ElementAcc>;
+    ElementC, 128 / cutlass::sizeof_bits<ElementC>::value, ElementAcc, ElementAcc>;
 
 using Swizzle = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
 /* cfg 28: 256x128x128, 2 stages, A=16 — the winner */
 using GemmCfg28 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate>;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
-}  /* namespace int8_sparse_run */
+} /* namespace int8_sparse_run */
 
 /* =========================================================================
  * INT4 sparse — config 29-ish (256x128x256, A32, swizzle<8>)
@@ -80,9 +75,9 @@ using GemmCfg28 = cutlass::gemm::device::GemmSparseUniversal<
  * ========================================================================= */
 namespace int4_sparse_run {
 
-using ElementA   = cutlass::int4b_t;
-using ElementB   = cutlass::int4b_t;
-using ElementC   = int32_t;
+using ElementA = cutlass::int4b_t;
+using ElementB = cutlass::int4b_t;
+using ElementC = int32_t;
 using ElementAcc = int32_t;
 
 using LayoutA = cutlass::layout::RowMajor;
@@ -90,23 +85,18 @@ using LayoutB = cutlass::layout::ColumnMajor;
 using LayoutC = cutlass::layout::RowMajor;
 
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-    ElementC,
-    128 / cutlass::sizeof_bits<ElementC>::value,
-    ElementAcc, ElementAcc>;
+    ElementC, 128 / cutlass::sizeof_bits<ElementC>::value, ElementAcc, ElementAcc>;
 
 using Swizzle = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
 /* Approximation of bench cfg=28: 256x128x256, 2stg, A=32 */
 using GemmInt4Default = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 256>,
-    cutlass::gemm::GemmShape<64, 64, 256>,
-    cutlass::gemm::GemmShape<16, 8, 128>,
-    EpilogueOp, Swizzle, 2, 32, 32,
-    cutlass::arch::OpMultiplyAddSaturate>;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 256>,
+    cutlass::gemm::GemmShape<64, 64, 256>, cutlass::gemm::GemmShape<16, 8, 128>, EpilogueOp,
+    Swizzle, 2, 32, 32, cutlass::arch::OpMultiplyAddSaturate>;
 
-}  /* namespace int4_sparse_run */
+} /* namespace int4_sparse_run */
 
 /* =========================================================================
  * C-callable interface
@@ -126,18 +116,11 @@ extern "C" {
  *
  * Returns 0 on success, negative on error.
  */
-int cutlass_int8_sparse_run(
-    int M, int N, int K,
-    const int8_t* d_A_packed,
-    const int8_t* d_B,
-    int32_t*      d_C,
-    const void*   d_E,
-    void*         workspace,
-    size_t        workspace_size)
-{
+int cutlass_int8_sparse_run(int M, int N, int K, const int8_t *d_A_packed, const int8_t *d_B,
+                            int32_t *d_C, const void *d_E, void *workspace, size_t workspace_size) {
     using namespace int8_sparse_run;
     using GemmKernel = typename GemmCfg28::GemmKernel;
-    constexpr int kSparse    = GemmKernel::kSparse;
+    constexpr int kSparse = GemmKernel::kSparse;
     constexpr int kElemsPerE = GemmKernel::kElementsPerElementE;
 
     int ldA = K / kSparse;
@@ -150,30 +133,28 @@ int cutlass_int8_sparse_run(
     ElementAcc alpha = 1, beta = 0;
 
     GemmCfg28 gemm_op;
-    typename GemmCfg28::Arguments args(
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        {M, N, K},
-        1,                    /* split-K slices */
-        {alpha, beta},
-        (void const*)d_A_packed,
-        (void const*)d_B,
-        (void const*)d_C,
-        (void*)d_C,
-        (void const*)d_E,
-        int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
-        ldA, ldB, ldC, ldC, ldE);
+    typename GemmCfg28::Arguments args(cutlass::gemm::GemmUniversalMode::kGemm, {M, N, K},
+                                       1, /* split-K slices */
+                                       {alpha, beta}, (void const *)d_A_packed, (void const *)d_B,
+                                       (void const *)d_C, (void *)d_C, (void const *)d_E,
+                                       int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
+                                       ldA, ldB, ldC, ldC, ldE);
 
     cutlass::Status s = gemm_op.can_implement(args);
-    if (s != cutlass::Status::kSuccess) return -1;
+    if (s != cutlass::Status::kSuccess)
+        return -1;
 
     size_t needed = GemmCfg28::get_workspace_size(args);
-    if (needed > workspace_size) return -2;
+    if (needed > workspace_size)
+        return -2;
 
     s = gemm_op.initialize(args, workspace);
-    if (s != cutlass::Status::kSuccess) return -3;
+    if (s != cutlass::Status::kSuccess)
+        return -3;
 
     s = gemm_op();
-    if (s != cutlass::Status::kSuccess) return -4;
+    if (s != cutlass::Status::kSuccess)
+        return -4;
     return 0;
 }
 
@@ -184,14 +165,14 @@ int cutlass_int8_sparse_run(
 size_t cutlass_int8_sparse_workspace_size(int M, int N, int K) {
     using namespace int8_sparse_run;
     ElementAcc alpha = 1, beta = 0;
-    typename GemmCfg28::Arguments args(
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        {M, N, K}, 1, {alpha, beta},
-        nullptr, nullptr, nullptr, nullptr, nullptr,
-        int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
-        K / 2, K, N, N, M * 2);   /* ldE = M*kInterleave (ColumnMajorInterleaved<2>) */
+    typename GemmCfg28::Arguments args(cutlass::gemm::GemmUniversalMode::kGemm, {M, N, K}, 1,
+                                       {alpha, beta}, nullptr, nullptr, nullptr, nullptr, nullptr,
+                                       int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
+                                       K / 2, K, N, N,
+                                       M * 2); /* ldE = M*kInterleave (ColumnMajorInterleaved<2>) */
     GemmCfg28 op;
-    if (op.can_implement(args) != cutlass::Status::kSuccess) return 0;
+    if (op.can_implement(args) != cutlass::Status::kSuccess)
+        return 0;
     return GemmCfg28::get_workspace_size(args);
 }
 
@@ -208,22 +189,16 @@ size_t cutlass_int8_sparse_workspace_size(int M, int N, int K) {
  *
  * Returns 0 on success.
  */
-int cutlass_int4_sparse_run(
-    int M, int N, int K,
-    const void*   d_A_packed,    /* packed int4 */
-    const void*   d_B,           /* packed int4 */
-    int32_t*      d_C,
-    const void*   d_E,
-    void*         workspace,
-    size_t        workspace_size)
-{
+int cutlass_int4_sparse_run(int M, int N, int K, const void *d_A_packed, /* packed int4 */
+                            const void *d_B,                             /* packed int4 */
+                            int32_t *d_C, const void *d_E, void *workspace, size_t workspace_size) {
     using namespace int4_sparse_run;
     using GemmKernel = typename GemmInt4Default::GemmKernel;
-    constexpr int kSparse    = GemmKernel::kSparse;
+    constexpr int kSparse = GemmKernel::kSparse;
     constexpr int kElemsPerE = GemmKernel::kElementsPerElementE;
 
-    int ldA = K / kSparse;            /* in INT4 elements */
-    int ldB = K;                       /* in INT4 elements */
+    int ldA = K / kSparse; /* in INT4 elements */
+    int ldB = K;           /* in INT4 elements */
     int ldC = N;
     /* LayoutE = ColumnMajorInterleaved<2>; its packed stride is
      * extent.row() * kInterleave = M * 2, NOT K_words. The previous
@@ -234,30 +209,26 @@ int cutlass_int4_sparse_run(
     ElementAcc alpha = 1, beta = 0;
 
     GemmInt4Default gemm_op;
-    typename GemmInt4Default::Arguments args(
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        {M, N, K},
-        1,
-        {alpha, beta},
-        d_A_packed,
-        d_B,
-        (void const*)d_C,
-        (void*)d_C,
-        d_E,
-        int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
-        ldA, ldB, ldC, ldC, ldE);
+    typename GemmInt4Default::Arguments args(cutlass::gemm::GemmUniversalMode::kGemm, {M, N, K}, 1,
+                                             {alpha, beta}, d_A_packed, d_B, (void const *)d_C,
+                                             (void *)d_C, d_E, int64_t(0), int64_t(0), int64_t(0),
+                                             int64_t(0), int64_t(0), ldA, ldB, ldC, ldC, ldE);
 
     cutlass::Status s = gemm_op.can_implement(args);
-    if (s != cutlass::Status::kSuccess) return -1;
+    if (s != cutlass::Status::kSuccess)
+        return -1;
 
     size_t needed = GemmInt4Default::get_workspace_size(args);
-    if (needed > workspace_size) return -2;
+    if (needed > workspace_size)
+        return -2;
 
     s = gemm_op.initialize(args, workspace);
-    if (s != cutlass::Status::kSuccess) return -3;
+    if (s != cutlass::Status::kSuccess)
+        return -3;
 
     s = gemm_op();
-    if (s != cutlass::Status::kSuccess) return -4;
+    if (s != cutlass::Status::kSuccess)
+        return -4;
     return 0;
 }
 
@@ -265,25 +236,24 @@ size_t cutlass_int4_sparse_workspace_size(int M, int N, int K) {
     using namespace int4_sparse_run;
     ElementAcc alpha = 1, beta = 0;
     typename GemmInt4Default::Arguments args(
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        {M, N, K}, 1, {alpha, beta},
-        nullptr, nullptr, nullptr, nullptr, nullptr,
-        int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
-        K / 2, K, N, N, M * 2);   /* ldE = M*kInterleave (ColumnMajorInterleaved<2>) */
+        cutlass::gemm::GemmUniversalMode::kGemm, {M, N, K}, 1, {alpha, beta}, nullptr, nullptr,
+        nullptr, nullptr, nullptr, int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
+        K / 2, K, N, N, M * 2); /* ldE = M*kInterleave (ColumnMajorInterleaved<2>) */
     GemmInt4Default op;
-    if (op.can_implement(args) != cutlass::Status::kSuccess) return 0;
+    if (op.can_implement(args) != cutlass::Status::kSuccess)
+        return 0;
     return GemmInt4Default::get_workspace_size(args);
 }
 
 /* Sparsity info accessors (so .c side can size buffers correctly) */
-void cutlass_int8_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e) {
+void cutlass_int8_sparse_run_info(int *sparse, int *elem_per_e, int *sizeof_e) {
     using namespace int8_sparse_run;
     *sparse = GemmCfg28::kSparse;
     *elem_per_e = GemmCfg28::kElementsPerElementE;
     *sizeof_e = (int)sizeof(typename GemmCfg28::ElementE);
 }
 
-void cutlass_int4_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e) {
+void cutlass_int4_sparse_run_info(int *sparse, int *elem_per_e, int *sizeof_e) {
     using namespace int4_sparse_run;
     *sparse = GemmInt4Default::kSparse;
     *elem_per_e = GemmInt4Default::kElementsPerElementE;
@@ -308,25 +278,16 @@ void cutlass_int4_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e) {
  *   - src: RowMajor (offset = m*K_words + k)
  *   - dst: ColumnMajorInterleaved<2> (offset = (k/2)*M*2 + m*2 + k%2)
  */
-void cutlass_int4_sparse_reorder_meta_e(
-    uint32_t* dst,
-    const uint32_t* src,
-    int M,
-    int K_words)
-{
+void cutlass_int4_sparse_reorder_meta_e(uint32_t *dst, const uint32_t *src, int M, int K_words) {
     using ElementE = uint32_t;
     using LayoutSrc = cutlass::layout::RowMajor;
     using LayoutDst = cutlass::layout::ColumnMajorInterleaved<2>;
 
-    cutlass::TensorRef<ElementE, LayoutSrc> src_ref(
-        const_cast<ElementE*>(src),
-        LayoutSrc::packed({M, K_words}));
-    cutlass::TensorRef<ElementE, LayoutDst> dst_ref(
-        dst,
-        LayoutDst::packed({M, K_words}));
+    cutlass::TensorRef<ElementE, LayoutSrc> src_ref(const_cast<ElementE *>(src),
+                                                    LayoutSrc::packed({M, K_words}));
+    cutlass::TensorRef<ElementE, LayoutDst> dst_ref(dst, LayoutDst::packed({M, K_words}));
 
-    cutlass::reorder_meta(dst_ref, src_ref,
-                          {M, /* N unused */ 0, K_words});
+    cutlass::reorder_meta(dst_ref, src_ref, {M, /* N unused */ 0, K_words});
 }
 
 /* Round-trip validator: given the same compressed A and (non-reordered)
@@ -344,13 +305,8 @@ void cutlass_int4_sparse_reorder_meta_e(
  *                   (no nibble packing) so the caller can dot-product
  *                   without bit manipulation
  */
-void cutlass_int4_sparse_uncompress_to_dense(
-    int8_t* dst_int8_per_cell,
-    const int8_t* compressed_a,
-    const uint32_t* meta,
-    int M,
-    int K)
-{
+void cutlass_int4_sparse_uncompress_to_dense(int8_t *dst_int8_per_cell, const int8_t *compressed_a,
+                                             const uint32_t *meta, int M, int K) {
     using ElementA = cutlass::int4b_t;
     using ElementE = uint32_t;
     using LayoutA = cutlass::layout::RowMajor;
@@ -359,33 +315,33 @@ void cutlass_int4_sparse_uncompress_to_dense(
     int Kp = K / 2;
     int Kw = K / 64;
 
-    cutlass::TensorRef<ElementA, LayoutA> a_compressed_ref(
-        reinterpret_cast<ElementA*>(const_cast<int8_t*>(compressed_a)),
-        LayoutA::packed({M, Kp}));
+    cutlass::TensorRef<ElementA, LayoutA> a_compressed_ref(reinterpret_cast<ElementA *>(
+                                                               const_cast<int8_t *>(compressed_a)),
+                                                           LayoutA::packed({M, Kp}));
 
-    cutlass::TensorRef<ElementE, LayoutE> e_ref(
-        const_cast<ElementE*>(meta),
-        LayoutE::packed({M, Kw}));
+    cutlass::TensorRef<ElementE, LayoutE> e_ref(const_cast<ElementE *>(meta),
+                                                LayoutE::packed({M, Kw}));
 
     /* Need a uncompressed_a buffer of int4b_t with shape [M, K], packed. */
     size_t uncomp_bytes = (size_t)M * (size_t)(K / 2);
-    int8_t* uncomp = (int8_t*)std::malloc(uncomp_bytes);
-    if (!uncomp) return;
+    int8_t *uncomp = (int8_t *)std::malloc(uncomp_bytes);
+    if (!uncomp)
+        return;
     std::memset(uncomp, 0, uncomp_bytes);
 
-    cutlass::TensorRef<ElementA, LayoutA> uncompressed_ref(
-        reinterpret_cast<ElementA*>(uncomp),
-        LayoutA::packed({M, K}));
+    cutlass::TensorRef<ElementA, LayoutA> uncompressed_ref(reinterpret_cast<ElementA *>(uncomp),
+                                                           LayoutA::packed({M, K}));
 
-    cutlass::uncompress<ElementA, LayoutA, ElementE, LayoutE>(
-        uncompressed_ref, a_compressed_ref, e_ref, M, K);
+    cutlass::uncompress<ElementA, LayoutA, ElementE, LayoutE>(uncompressed_ref, a_compressed_ref,
+                                                              e_ref, M, K);
 
     /* Unpack nibble pairs into one int8 per cell (sign-extend int4). */
     for (int m = 0; m < M; ++m) {
         for (int k = 0; k < K; ++k) {
             uint8_t byte = (uint8_t)uncomp[(size_t)m * (K / 2) + (k / 2)];
             int nib = (k % 2 == 0) ? (byte & 0x0F) : ((byte >> 4) & 0x0F);
-            if (nib & 0x08) nib |= 0xFFFFFFF0;
+            if (nib & 0x08)
+                nib |= 0xFFFFFFF0;
             dst_int8_per_cell[(size_t)m * K + k] = (int8_t)nib;
         }
     }
@@ -405,7 +361,7 @@ void cutlass_int4_sparse_uncompress_to_dense(
  *     positive N = number of mismatched cells (also writes max_abs_diff
  *                  to *out_max_diff if non-null)
  */
-int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff) {
+int cutlass_int4_sparse_self_test(int M, int N, int K, int *out_max_diff) {
     using namespace int4_sparse_run;
     using ElementA = cutlass::int4b_t;
     using ElementB = cutlass::int4b_t;
@@ -422,55 +378,41 @@ int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff) {
     const int kElemsPerE = 32;
     const int kMetaSize = 4;
 
-    cutlass::HostTensor<ElementA, LayoutA> tensor_A(
-        cutlass::make_Coord(M, K / kSparse));
-    cutlass::HostTensor<ElementB, LayoutB> tensor_B(
-        cutlass::make_Coord(K, N));
-    cutlass::HostTensor<ElementC, LayoutC> tensor_C(
-        cutlass::make_Coord(M, N));
-    cutlass::HostTensor<ElementC, LayoutC> tensor_D_kernel(
-        cutlass::make_Coord(M, N));
-    cutlass::HostTensor<ElementC, LayoutC> tensor_D_ref(
-        cutlass::make_Coord(M, N));
-    cutlass::HostTensor<ElementA, LayoutA> tensor_A_uncompressed(
-        cutlass::make_Coord(M, K));
+    cutlass::HostTensor<ElementA, LayoutA> tensor_A(cutlass::make_Coord(M, K / kSparse));
+    cutlass::HostTensor<ElementB, LayoutB> tensor_B(cutlass::make_Coord(K, N));
+    cutlass::HostTensor<ElementC, LayoutC> tensor_C(cutlass::make_Coord(M, N));
+    cutlass::HostTensor<ElementC, LayoutC> tensor_D_kernel(cutlass::make_Coord(M, N));
+    cutlass::HostTensor<ElementC, LayoutC> tensor_D_ref(cutlass::make_Coord(M, N));
+    cutlass::HostTensor<ElementA, LayoutA> tensor_A_uncompressed(cutlass::make_Coord(M, K));
     cutlass::HostTensor<ElementE, LayoutE> tensor_E(
         cutlass::make_Coord(M, K / kSparse / kElemsPerE));
     cutlass::HostTensor<ElementE, LayoutE_RM> tensor_E_rm(
         cutlass::make_Coord(M, K / kSparse / kElemsPerE));
 
-    cutlass::reference::host::TensorFillRandomUniform(
-        tensor_A.host_view(), /*seed=*/1, /*max=*/4, /*min=*/-4, /*bits=*/0);
-    cutlass::reference::host::TensorFillRandomUniform(
-        tensor_B.host_view(), /*seed=*/2, /*max=*/4, /*min=*/-4, /*bits=*/0);
+    cutlass::reference::host::TensorFillRandomUniform(tensor_A.host_view(), /*seed=*/1, /*max=*/4,
+                                                      /*min=*/-4, /*bits=*/0);
+    cutlass::reference::host::TensorFillRandomUniform(tensor_B.host_view(), /*seed=*/2, /*max=*/4,
+                                                      /*min=*/-4, /*bits=*/0);
     cutlass::reference::host::TensorFill(tensor_C.host_view(), ElementC(0));
     cutlass::reference::host::TensorFill(tensor_D_kernel.host_view(), ElementC(0));
     cutlass::reference::host::TensorFill(tensor_D_ref.host_view(), ElementC(0));
 
-    cutlass::reference::host::TensorFillRandomSparseMeta(
-        tensor_E_rm.host_view(), /*seed=*/3, kMetaSize);
+    cutlass::reference::host::TensorFillRandomSparseMeta(tensor_E_rm.host_view(), /*seed=*/3,
+                                                         kMetaSize);
 
     /* Reorder rm -> interleaved as the kernel expects. */
     cutlass::reorder_meta(tensor_E.host_ref(), tensor_E_rm.host_ref(),
                           {M, N, K / kSparse / kElemsPerE});
 
     /* Uncompress for host reference. */
-    cutlass::uncompress(tensor_A_uncompressed.host_ref(),
-                        tensor_A.host_ref(), tensor_E_rm.host_ref(),
-                        M, K);
+    cutlass::uncompress(tensor_A_uncompressed.host_ref(), tensor_A.host_ref(),
+                        tensor_E_rm.host_ref(), M, K);
 
     /* Host dense reference: D = A_uncompressed @ B. */
-    cutlass::reference::host::compute_gemm<
-        ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC,
-        ElementAcc, ElementAcc>(
-        {M, N, K},
-        ElementAcc(1),
-        tensor_A_uncompressed.host_ref(),
-        tensor_B.host_ref(),
-        ElementAcc(0),
-        tensor_C.host_ref(),
-        tensor_D_ref.host_ref(),
-        ElementAcc(0));
+    cutlass::reference::host::compute_gemm<ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC,
+                                           ElementAcc, ElementAcc>(
+        {M, N, K}, ElementAcc(1), tensor_A_uncompressed.host_ref(), tensor_B.host_ref(),
+        ElementAcc(0), tensor_C.host_ref(), tensor_D_ref.host_ref(), ElementAcc(0));
 
     /* Upload + run kernel. */
     tensor_A.sync_device();
@@ -480,19 +422,18 @@ int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff) {
     tensor_E.sync_device();
 
     size_t ws = cutlass_int4_sparse_workspace_size(M, N, K);
-    void* d_ws = nullptr;
-    if (ws) cudaMalloc(&d_ws, ws);
+    void *d_ws = nullptr;
+    if (ws)
+        cudaMalloc(&d_ws, ws);
 
-    int rc = cutlass_int4_sparse_run(
-        M, N, K,
-        tensor_A.device_data(),
-        tensor_B.device_data(),
-        tensor_D_kernel.device_data(),
-        tensor_E.device_data(),
-        d_ws, ws);
+    int rc =
+        cutlass_int4_sparse_run(M, N, K, tensor_A.device_data(), tensor_B.device_data(),
+                                tensor_D_kernel.device_data(), tensor_E.device_data(), d_ws, ws);
 
-    if (d_ws) cudaFree(d_ws);
-    if (rc != 0) return -2;
+    if (d_ws)
+        cudaFree(d_ws);
+    if (rc != 0)
+        return -2;
 
     tensor_D_kernel.sync_host();
 
@@ -502,12 +443,15 @@ int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff) {
             int k = tensor_D_kernel.host_view().at({m, n});
             int r = tensor_D_ref.host_view().at({m, n});
             int d = (k > r) ? (k - r) : (r - k);
-            if (d > 0) ++diffs;
-            if (d > max_abs) max_abs = d;
+            if (d > 0)
+                ++diffs;
+            if (d > max_abs)
+                max_abs = d;
         }
     }
-    if (out_max_diff) *out_max_diff = max_abs;
+    if (out_max_diff)
+        *out_max_diff = max_abs;
     return diffs;
 }
 
-}  /* extern "C" */
+} /* extern "C" */

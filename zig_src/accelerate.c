@@ -21,16 +21,16 @@
  * Convert Erlang list of floats to C array
  * Returns 1 on success, 0 on failure
  */
-static int list_to_doubles(ErlNifEnv* env, ERL_NIF_TERM list,
-                           double** out, size_t* len) {
+static int list_to_doubles(ErlNifEnv *env, ERL_NIF_TERM list, double **out, size_t *len) {
     unsigned int length;
     if (!enif_get_list_length(env, list, &length)) {
         return 0;
     }
 
     *len = length;
-    *out = (double*)malloc(length * sizeof(double));
-    if (!*out) return 0;
+    *out = (double *)malloc(length * sizeof(double));
+    if (!*out)
+        return 0;
 
     ERL_NIF_TERM head, tail = list;
     for (unsigned int i = 0; i < length; i++) {
@@ -64,8 +64,8 @@ static int list_to_doubles(ErlNifEnv* env, ERL_NIF_TERM list,
 /**
  * Convert C array of doubles to Erlang list
  */
-static ERL_NIF_TERM doubles_to_list(ErlNifEnv* env, double* data, size_t len) {
-    ERL_NIF_TERM* terms = (ERL_NIF_TERM*)malloc(len * sizeof(ERL_NIF_TERM));
+static ERL_NIF_TERM doubles_to_list(ErlNifEnv *env, double *data, size_t len) {
+    ERL_NIF_TERM *terms = (ERL_NIF_TERM *)malloc(len * sizeof(ERL_NIF_TERM));
     if (!terms) {
         return enif_make_list(env, 0);
     }
@@ -82,19 +82,15 @@ static ERL_NIF_TERM doubles_to_list(ErlNifEnv* env, double* data, size_t len) {
 /**
  * Create error tuple: {error, Reason}
  */
-static ERL_NIF_TERM make_error(ErlNifEnv* env, const char* reason) {
-    return enif_make_tuple2(env,
-        enif_make_atom(env, "error"),
-        enif_make_atom(env, reason));
+static ERL_NIF_TERM make_error(ErlNifEnv *env, const char *reason) {
+    return enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_atom(env, reason));
 }
 
 /**
  * Create ok tuple: {ok, Value}
  */
-static ERL_NIF_TERM make_ok(ErlNifEnv* env, ERL_NIF_TERM value) {
-    return enif_make_tuple2(env,
-        enif_make_atom(env, "ok"),
-        value);
+static ERL_NIF_TERM make_ok(ErlNifEnv *env, ERL_NIF_TERM value) {
+    return enif_make_tuple2(env, enif_make_atom(env, "ok"), value);
 }
 
 /* ==========================================================================
@@ -102,8 +98,7 @@ static ERL_NIF_TERM make_ok(ErlNifEnv* env, ERL_NIF_TERM value) {
  * A[m,k] @ B[k,n] -> C[m,n]
  * ========================================================================== */
 
-static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
-                               const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM nif_matmul(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 5) {
         return enif_make_badarg(env);
     }
@@ -113,8 +108,7 @@ static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
     int m, n, k;
 
     /* Parse dimensions */
-    if (!enif_get_int(env, argv[2], &m) ||
-        !enif_get_int(env, argv[3], &n) ||
+    if (!enif_get_int(env, argv[2], &m) || !enif_get_int(env, argv[3], &n) ||
         !enif_get_int(env, argv[4], &k)) {
         return enif_make_badarg(env);
     }
@@ -122,8 +116,10 @@ static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
     /* Parse input lists */
     if (!list_to_doubles(env, argv[0], &a_data, &a_len) ||
         !list_to_doubles(env, argv[1], &b_data, &b_len)) {
-        if (a_data) free(a_data);
-        if (b_data) free(b_data);
+        if (a_data)
+            free(a_data);
+        if (b_data)
+            free(b_data);
         return make_error(env, "invalid_input");
     }
 
@@ -135,7 +131,7 @@ static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
     }
 
     /* Allocate output */
-    double* c_data = (double*)calloc(m * n, sizeof(double));
+    double *c_data = (double *)calloc(m * n, sizeof(double));
     if (!c_data) {
         free(a_data);
         free(b_data);
@@ -154,21 +150,20 @@ static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
      *   ldb = n (columns of B)
      *   ldc = n (columns of C)
      */
-    cblas_dgemm(
-        CblasRowMajor,  /* Row-major order (C convention) */
-        CblasNoTrans,   /* A is not transposed */
-        CblasNoTrans,   /* B is not transposed */
-        m,              /* Rows of A and C */
-        n,              /* Cols of B and C */
-        k,              /* Cols of A, rows of B */
-        1.0,            /* alpha = 1.0 */
-        a_data,         /* Matrix A */
-        k,              /* Leading dimension of A */
-        b_data,         /* Matrix B */
-        n,              /* Leading dimension of B */
-        0.0,            /* beta = 0.0 */
-        c_data,         /* Output matrix C */
-        n               /* Leading dimension of C */
+    cblas_dgemm(CblasRowMajor, /* Row-major order (C convention) */
+                CblasNoTrans,  /* A is not transposed */
+                CblasNoTrans,  /* B is not transposed */
+                m,             /* Rows of A and C */
+                n,             /* Cols of B and C */
+                k,             /* Cols of A, rows of B */
+                1.0,           /* alpha = 1.0 */
+                a_data,        /* Matrix A */
+                k,             /* Leading dimension of A */
+                b_data,        /* Matrix B */
+                n,             /* Leading dimension of B */
+                0.0,           /* beta = 0.0 */
+                c_data,        /* Output matrix C */
+                n              /* Leading dimension of C */
     );
 
     /* Convert result to Erlang list */
@@ -186,8 +181,7 @@ static ERL_NIF_TERM nif_matmul(ErlNifEnv* env, int argc,
  * NIF: Dot Product using vDSP_dotprD
  * ========================================================================== */
 
-static ERL_NIF_TERM nif_dot(ErlNifEnv* env, int argc,
-                            const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM nif_dot(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 2) {
         return enif_make_badarg(env);
     }
@@ -197,8 +191,10 @@ static ERL_NIF_TERM nif_dot(ErlNifEnv* env, int argc,
 
     if (!list_to_doubles(env, argv[0], &a_data, &a_len) ||
         !list_to_doubles(env, argv[1], &b_data, &b_len)) {
-        if (a_data) free(a_data);
-        if (b_data) free(b_data);
+        if (a_data)
+            free(a_data);
+        if (b_data)
+            free(b_data);
         return make_error(env, "invalid_input");
     }
 
@@ -222,8 +218,7 @@ static ERL_NIF_TERM nif_dot(ErlNifEnv* env, int argc,
  * NIF: Vector Sum using vDSP_sveD
  * ========================================================================== */
 
-static ERL_NIF_TERM nif_sum(ErlNifEnv* env, int argc,
-                            const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM nif_sum(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 1) {
         return enif_make_badarg(env);
     }
@@ -248,8 +243,7 @@ static ERL_NIF_TERM nif_sum(ErlNifEnv* env, int argc,
  * NIF: Vector Scale using vDSP_vsmulD
  * ========================================================================== */
 
-static ERL_NIF_TERM nif_scale(ErlNifEnv* env, int argc,
-                              const ERL_NIF_TERM argv[]) {
+static ERL_NIF_TERM nif_scale(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     if (argc != 2) {
         return enif_make_badarg(env);
     }
@@ -272,7 +266,7 @@ static ERL_NIF_TERM nif_scale(ErlNifEnv* env, int argc,
         }
     }
 
-    double* result = (double*)malloc(len * sizeof(double));
+    double *result = (double *)malloc(len * sizeof(double));
     if (!result) {
         free(data);
         return make_error(env, "out_of_memory");
@@ -293,15 +287,14 @@ static ERL_NIF_TERM nif_scale(ErlNifEnv* env, int argc,
  * NIF Initialization
  * ========================================================================== */
 
-static int load(ErlNifEnv* env, void** priv_data, ERL_NIF_TERM load_info) {
+static int load(ErlNifEnv *env, void **priv_data, ERL_NIF_TERM load_info) {
     (void)env;
     (void)priv_data;
     (void)load_info;
     return 0;
 }
 
-static int upgrade(ErlNifEnv* env, void** priv_data, void** old_priv_data,
-                   ERL_NIF_TERM load_info) {
+static int upgrade(ErlNifEnv *env, void **priv_data, void **old_priv_data, ERL_NIF_TERM load_info) {
     (void)env;
     (void)priv_data;
     (void)old_priv_data;

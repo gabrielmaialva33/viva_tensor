@@ -19,15 +19,20 @@
 extern "C" {
 
 /* From cuda_fp8_cutlass.cu */
-int cutlass_fp8_gemm_f16acc(int M, int N, int K,
-                             const void *d_A, const void *d_B, void *d_C);
+int cutlass_fp8_gemm_f16acc(int M, int N, int K, const void *d_A, const void *d_B, void *d_C);
 
-static int alloc_pair(size_t bytes_A, size_t bytes_B, size_t bytes_C,
-                      void **d_A, void **d_B, void **d_C) {
-    if (cudaMalloc(d_A, bytes_A) != cudaSuccess) return -1;
-    if (cudaMalloc(d_B, bytes_B) != cudaSuccess) { cudaFree(*d_A); return -2; }
+static int alloc_pair(size_t bytes_A, size_t bytes_B, size_t bytes_C, void **d_A, void **d_B,
+                      void **d_C) {
+    if (cudaMalloc(d_A, bytes_A) != cudaSuccess)
+        return -1;
+    if (cudaMalloc(d_B, bytes_B) != cudaSuccess) {
+        cudaFree(*d_A);
+        return -2;
+    }
     if (cudaMalloc(d_C, bytes_C) != cudaSuccess) {
-        cudaFree(*d_A); cudaFree(*d_B); return -3;
+        cudaFree(*d_A);
+        cudaFree(*d_B);
+        return -3;
     }
     cudaMemset(*d_A, 0x3C, bytes_A);
     cudaMemset(*d_B, 0x3C, bytes_B);
@@ -36,19 +41,23 @@ static int alloc_pair(size_t bytes_A, size_t bytes_B, size_t bytes_C,
 }
 
 static void free_trio(void *a, void *b, void *c) {
-    cudaFree(a); cudaFree(b); cudaFree(c);
+    cudaFree(a);
+    cudaFree(b);
+    cudaFree(c);
 }
 
 /** Serial: N GEMMs back-to-back on the default stream. */
 int cutlass_fp8_serial_bench(int M, int N, int K, int iters) {
-    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0) return -10;
+    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0)
+        return -10;
 
     size_t bytes_A = (size_t)M * K;
     size_t bytes_B = (size_t)K * N;
     size_t bytes_C = (size_t)M * N * 2;
     void *d_A, *d_B, *d_C;
     int rc = alloc_pair(bytes_A, bytes_B, bytes_C, &d_A, &d_B, &d_C);
-    if (rc != 0) return rc;
+    if (rc != 0)
+        return rc;
 
     /* Warmup */
     cutlass_fp8_gemm_f16acc(M, N, K, d_A, d_B, d_C);
@@ -79,7 +88,8 @@ int cutlass_fp8_serial_bench(int M, int N, int K, int iters) {
  * cudaSetDevice + cudaStreamWaitEvent fences — for a PoC we use 2 buffer sets
  * and rely on the CUDA scheduler to overlap them when SM occupancy permits. */
 int cutlass_fp8_concurrent_bench(int M, int N, int K, int iters) {
-    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0) return -10;
+    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0)
+        return -10;
 
     size_t bytes_A = (size_t)M * K;
     size_t bytes_B = (size_t)K * N;
@@ -88,7 +98,8 @@ int cutlass_fp8_concurrent_bench(int M, int N, int K, int iters) {
     /* Two independent buffer sets so the GEMMs have no data dependency. */
     void *aA, *aB, *aC, *bA, *bB, *bC;
     int rc = alloc_pair(bytes_A, bytes_B, bytes_C, &aA, &aB, &aC);
-    if (rc != 0) return rc - 100;
+    if (rc != 0)
+        return rc - 100;
     rc = alloc_pair(bytes_A, bytes_B, bytes_C, &bA, &bB, &bC);
     if (rc != 0) {
         free_trio(aA, aB, aC);
@@ -130,4 +141,4 @@ int cutlass_fp8_concurrent_bench(int M, int N, int K, int iters) {
     return (int)(elapsed_ms * 1000.0f);
 }
 
-}  /* extern "C" */
+} /* extern "C" */

@@ -65,66 +65,67 @@
  * what cuBLASLt does internally on Ada FP8 inputs.
  * ========================================================================= */
 static inline uint8_t float_to_fp8_e4m3(float val) {
-  if (val == 0.0f) return 0x00;
-  /* NaN -> NaN. Inf -> saturated. */
-  if (val != val) return 0x7F;
+    if (val == 0.0f)
+        return 0x00;
+    /* NaN -> NaN. Inf -> saturated. */
+    if (val != val)
+        return 0x7F;
 
-  uint32_t bits;
-  memcpy(&bits, &val, sizeof(bits));
-  uint32_t sign = (bits >> 31) & 0x1;
-  int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
-  uint32_t f32_mant = bits & 0x7FFFFF;
+    uint32_t bits;
+    memcpy(&bits, &val, sizeof(bits));
+    uint32_t sign = (bits >> 31) & 0x1;
+    int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
+    uint32_t f32_mant = bits & 0x7FFFFF;
 
-  /* Saturate ±inf and very large values. */
-  if (f32_exp >= 8) {
-    return (uint8_t)((sign << 7) | 0x7E); /* ±448, the max finite. */
-  }
-  /* Flush subnormals + values that would underflow E4M3. */
-  if (f32_exp < -9) {
-    return (uint8_t)(sign << 7);
-  }
-
-  int32_t e4m3_exp;
-  uint32_t e4m3_mant;
-
-  if (f32_exp >= -6) {
-    /* Normal range: exponent bias = 7. */
-    e4m3_exp = f32_exp + 7;
-    /* Round-to-nearest-even on mantissa (drop 20 bits, keep 3). */
-    uint32_t round_bit = (f32_mant >> 19) & 0x1;
-    uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
-    e4m3_mant = (f32_mant >> 20) & 0x7;
-    if (round_bit && (sticky || (e4m3_mant & 0x1))) {
-      e4m3_mant += 1;
-      if (e4m3_mant == 8) {
-        e4m3_mant = 0;
-        e4m3_exp += 1;
-      }
+    /* Saturate ±inf and very large values. */
+    if (f32_exp >= 8) {
+        return (uint8_t)((sign << 7) | 0x7E); /* ±448, the max finite. */
     }
-    if (e4m3_exp >= 15) {
-      /* Overflow after rounding -> saturate. */
-      return (uint8_t)((sign << 7) | 0x7E);
+    /* Flush subnormals + values that would underflow E4M3. */
+    if (f32_exp < -9) {
+        return (uint8_t)(sign << 7);
     }
-  } else {
-    /* Subnormal range in E4M3: exponent stored as 0, mantissa shifted. */
-    int32_t shift = -6 - f32_exp; /* 1..3 */
-    uint32_t mant_with_implicit = f32_mant | 0x800000;
-    e4m3_exp = 0;
-    /* Drop (20 + shift) low bits with simple rounding. */
-    uint32_t total_shift = 20 + shift;
-    uint32_t round_bit = (mant_with_implicit >> (total_shift - 1)) & 0x1;
-    uint32_t sticky =
-        (mant_with_implicit & ((1u << (total_shift - 1)) - 1)) != 0;
-    e4m3_mant = (mant_with_implicit >> total_shift) & 0x7;
-    if (round_bit && (sticky || (e4m3_mant & 0x1))) {
-      e4m3_mant += 1;
-      if (e4m3_mant == 8) {
-        e4m3_mant = 0;
-        e4m3_exp = 1;
-      }
+
+    int32_t e4m3_exp;
+    uint32_t e4m3_mant;
+
+    if (f32_exp >= -6) {
+        /* Normal range: exponent bias = 7. */
+        e4m3_exp = f32_exp + 7;
+        /* Round-to-nearest-even on mantissa (drop 20 bits, keep 3). */
+        uint32_t round_bit = (f32_mant >> 19) & 0x1;
+        uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
+        e4m3_mant = (f32_mant >> 20) & 0x7;
+        if (round_bit && (sticky || (e4m3_mant & 0x1))) {
+            e4m3_mant += 1;
+            if (e4m3_mant == 8) {
+                e4m3_mant = 0;
+                e4m3_exp += 1;
+            }
+        }
+        if (e4m3_exp >= 15) {
+            /* Overflow after rounding -> saturate. */
+            return (uint8_t)((sign << 7) | 0x7E);
+        }
+    } else {
+        /* Subnormal range in E4M3: exponent stored as 0, mantissa shifted. */
+        int32_t shift = -6 - f32_exp; /* 1..3 */
+        uint32_t mant_with_implicit = f32_mant | 0x800000;
+        e4m3_exp = 0;
+        /* Drop (20 + shift) low bits with simple rounding. */
+        uint32_t total_shift = 20 + shift;
+        uint32_t round_bit = (mant_with_implicit >> (total_shift - 1)) & 0x1;
+        uint32_t sticky = (mant_with_implicit & ((1u << (total_shift - 1)) - 1)) != 0;
+        e4m3_mant = (mant_with_implicit >> total_shift) & 0x7;
+        if (round_bit && (sticky || (e4m3_mant & 0x1))) {
+            e4m3_mant += 1;
+            if (e4m3_mant == 8) {
+                e4m3_mant = 0;
+                e4m3_exp = 1;
+            }
+        }
     }
-  }
-  return (uint8_t)((sign << 7) | ((uint32_t)e4m3_exp << 3) | e4m3_mant);
+    return (uint8_t)((sign << 7) | ((uint32_t)e4m3_exp << 3) | e4m3_mant);
 }
 
 /* =========================================================================
@@ -138,136 +139,135 @@ static inline uint8_t float_to_fp8_e4m3(float val) {
  *   {ok, PackedWeightResource}
  *   {error, atom}
  * ========================================================================= */
-ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
-                            const ERL_NIF_TERM argv[]) {
-  (void)argc;
+ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
 
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  return make_error(env, "cuda_not_available");
+    return make_error(env, "cuda_not_available");
 #else
-  /* Arg 0: binary of FP32 weights, row-major [K, N]. */
-  ErlNifBinary weight_bin;
-  if (!enif_inspect_binary(env, argv[0], &weight_bin))
-    return make_error(env, "invalid_weight_binary");
+    /* Arg 0: binary of FP32 weights, row-major [K, N]. */
+    ErlNifBinary weight_bin;
+    if (!enif_inspect_binary(env, argv[0], &weight_bin))
+        return make_error(env, "invalid_weight_binary");
 
-  /* Arg 1: [in_features, out_features] as a 2-element Erlang list. */
-  unsigned shape_len = 0;
-  if (!enif_get_list_length(env, argv[1], &shape_len) || shape_len != 2)
-    return make_error(env, "invalid_shape_list");
+    /* Arg 1: [in_features, out_features] as a 2-element Erlang list. */
+    unsigned shape_len = 0;
+    if (!enif_get_list_length(env, argv[1], &shape_len) || shape_len != 2)
+        return make_error(env, "invalid_shape_list");
 
-  int in_features = 0, out_features = 0;
-  ERL_NIF_TERM head, tail = argv[1];
-  if (!enif_get_list_cell(env, tail, &head, &tail) ||
-      !enif_get_int(env, head, &in_features))
-    return make_error(env, "invalid_in_features");
-  if (!enif_get_list_cell(env, tail, &head, &tail) ||
-      !enif_get_int(env, head, &out_features))
-    return make_error(env, "invalid_out_features");
-  if (in_features <= 0 || out_features <= 0)
-    return make_error(env, "invalid_dimensions");
+    int in_features = 0, out_features = 0;
+    ERL_NIF_TERM head, tail = argv[1];
+    if (!enif_get_list_cell(env, tail, &head, &tail) || !enif_get_int(env, head, &in_features))
+        return make_error(env, "invalid_in_features");
+    if (!enif_get_list_cell(env, tail, &head, &tail) || !enif_get_int(env, head, &out_features))
+        return make_error(env, "invalid_out_features");
+    if (in_features <= 0 || out_features <= 0)
+        return make_error(env, "invalid_dimensions");
 
-  size_t n_elems = (size_t)in_features * (size_t)out_features;
-  if (weight_bin.size != n_elems * sizeof(float))
-    return make_error(env, "weight_size_mismatch");
+    size_t n_elems = (size_t)in_features * (size_t)out_features;
+    if (weight_bin.size != n_elems * sizeof(float))
+        return make_error(env, "weight_size_mismatch");
 
-  const float *src = (const float *)weight_bin.data;
+    const float *src = (const float *)weight_bin.data;
 
-  /* Per-output-channel quantization (inspired by ggml block-wise quant
+    /* Per-output-channel quantization (inspired by ggml block-wise quant
    * and what vllm/TRT-LLM use for FP8 LLM serving). Each output column
    * gets its own absmax → its own scale → its own dequant factor on the
    * linear path. Outliers in one channel don't compress the dynamic
    * range of the others. With FP8 E4M3 full range (448), per-channel
    * scaling on K=4096 LLM weights typically lands L2 < 1% vs FP32. */
-  float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
-  if (!h_scales) return make_error(env, "out_of_memory");
+    float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
+    if (!h_scales)
+        return make_error(env, "out_of_memory");
 
-  /* Pass 1: per-channel absmax + scale. Each output column gets its
+    /* Pass 1: per-channel absmax + scale. Each output column gets its
    * own dequant factor so an outlier in one channel doesn't shrink the
    * effective range of the others. With FP16 output cast still in
    * play, target is kept at the conservative T (matches the act path).
    * For higher precision, upgrade to FP32 output buffer + T=448. */
-  for (int n = 0; n < out_features; ++n) {
-    float absmax = 0.0f;
-    for (int k = 0; k < in_features; ++k) {
-      float a = fabsf(src[(size_t)k * out_features + n]);
-      if (a > absmax) absmax = a;
+    for (int n = 0; n < out_features; ++n) {
+        float absmax = 0.0f;
+        for (int k = 0; k < in_features; ++k) {
+            float a = fabsf(src[(size_t)k * out_features + n]);
+            if (a > absmax)
+                absmax = a;
+        }
+        h_scales[n] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
     }
-    h_scales[n] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-  }
 
-  /* Pass 2: quantize + transpose. Each column uses its own scale. */
-  uint8_t *h_packed = (uint8_t *)malloc(n_elems);
-  if (!h_packed) { free(h_scales); return make_error(env, "out_of_memory"); }
-
-  for (int n = 0; n < out_features; ++n) {
-    float inv_scale_n = 1.0f / h_scales[n];
-    for (int k = 0; k < in_features; ++k) {
-      float v = src[(size_t)k * out_features + n] * inv_scale_n;
-      h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+    /* Pass 2: quantize + transpose. Each column uses its own scale. */
+    uint8_t *h_packed = (uint8_t *)malloc(n_elems);
+    if (!h_packed) {
+        free(h_scales);
+        return make_error(env, "out_of_memory");
     }
-  }
-  /* Backwards-compat: still expose a single "scale" field on the resource
+
+    for (int n = 0; n < out_features; ++n) {
+        float inv_scale_n = 1.0f / h_scales[n];
+        for (int k = 0; k < in_features; ++k) {
+            float v = src[(size_t)k * out_features + n] * inv_scale_n;
+            h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+        }
+    }
+    /* Backwards-compat: still expose a single "scale" field on the resource
    * (using a representative absmax — the geometric mean is closer to the
    * old per-tensor scale's role). Real dequant uses the per-channel
    * d_scales buffer below. */
-  float scale = 0.0f;
-  for (int n = 0; n < out_features; ++n) scale += h_scales[n];
-  scale /= (float)out_features;
+    float scale = 0.0f;
+    for (int n = 0; n < out_features; ++n)
+        scale += h_scales[n];
+    scale /= (float)out_features;
 
-  /* Allocate the PackedWeight resource and its device buffers. */
-  PackedWeight *w = alloc_packed_weight();
-  if (!w) {
+    /* Allocate the PackedWeight resource and its device buffers. */
+    PackedWeight *w = alloc_packed_weight();
+    if (!w) {
+        free(h_packed);
+        return make_error(env, "resource_alloc_failed");
+    }
+
+    w->dtype = PW_FP8;
+    w->in_features = in_features;
+    w->out_features = out_features;
+    w->weight_bytes = n_elems;              /* FP8 = 1 byte/elem */
+    w->scales_count = (size_t)out_features; /* per-output-channel */
+
+    cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
+    if (err != cudaSuccess) {
+        free(h_packed);
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_malloc_weight_failed");
+    }
+    err = cudaMemcpy(w->d_weight, h_packed, w->weight_bytes, cudaMemcpyHostToDevice);
     free(h_packed);
-    return make_error(env, "resource_alloc_failed");
-  }
+    if (err != cudaSuccess) {
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_upload_weight_failed");
+    }
 
-  w->dtype = PW_FP8;
-  w->in_features = in_features;
-  w->out_features = out_features;
-  w->weight_bytes = n_elems;                /* FP8 = 1 byte/elem */
-  w->scales_count = (size_t)out_features;   /* per-output-channel */
-
-  cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
-  if (err != cudaSuccess) {
-    free(h_packed); free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_malloc_weight_failed");
-  }
-  err = cudaMemcpy(w->d_weight, h_packed, w->weight_bytes,
-                    cudaMemcpyHostToDevice);
-  free(h_packed);
-  if (err != cudaSuccess) {
+    size_t scales_bytes = (size_t)out_features * sizeof(float);
+    err = cudaMalloc(&w->d_scales, scales_bytes);
+    if (err != cudaSuccess) {
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_malloc_scale_failed");
+    }
+    err = cudaMemcpy(w->d_scales, h_scales, scales_bytes, cudaMemcpyHostToDevice);
     free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_upload_weight_failed");
-  }
+    if (err != cudaSuccess) {
+        enif_release_resource(w);
+        return make_error(env, "cuda_upload_scale_failed");
+    }
 
-  size_t scales_bytes = (size_t)out_features * sizeof(float);
-  err = cudaMalloc(&w->d_scales, scales_bytes);
-  if (err != cudaSuccess) {
-    free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_malloc_scale_failed");
-  }
-  err = cudaMemcpy(w->d_scales, h_scales, scales_bytes,
-                    cudaMemcpyHostToDevice);
-  free(h_scales);
-  if (err != cudaSuccess) {
-    enif_release_resource(w);
-    return make_error(env, "cuda_upload_scale_failed");
-  }
-
-  /* Return {ok, {Resource, InFeatures, OutFeatures, Scale}} so the
+    /* Return {ok, {Resource, InFeatures, OutFeatures, Scale}} so the
    * Gleam side can populate `PackedWeightFp8` without an extra NIF
    * round-trip for introspection. */
-  ERL_NIF_TERM res_term = make_packed_weight_term(env, w);
-  ERL_NIF_TERM tuple = enif_make_tuple4(
-      env,
-      res_term,
-      enif_make_int(env, in_features),
-      enif_make_int(env, out_features),
-      enif_make_double(env, (double)scale));
-  return make_ok(env, tuple);
+    ERL_NIF_TERM res_term = make_packed_weight_term(env, w);
+    ERL_NIF_TERM tuple =
+        enif_make_tuple4(env, res_term, enif_make_int(env, in_features),
+                         enif_make_int(env, out_features), enif_make_double(env, (double)scale));
+    return make_ok(env, tuple);
 #endif
 }
 
@@ -291,135 +291,134 @@ ERL_NIF_TERM nt_prepack_fp8(ErlNifEnv *env, int argc,
  *
  * Mirrors what TensorRT-LLM and vLLM call "K-axis block scales".
  * ========================================================================= */
-ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc,
-                                     const ERL_NIF_TERM argv[]) {
-  (void)argc;
+ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
 
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  return make_error(env, "cuda_not_available");
+    return make_error(env, "cuda_not_available");
 #else
-  ErlNifBinary weight_bin;
-  if (!enif_inspect_binary(env, argv[0], &weight_bin))
-    return make_error(env, "invalid_weight_binary");
+    ErlNifBinary weight_bin;
+    if (!enif_inspect_binary(env, argv[0], &weight_bin))
+        return make_error(env, "invalid_weight_binary");
 
-  unsigned shape_len = 0;
-  if (!enif_get_list_length(env, argv[1], &shape_len) || shape_len != 2)
-    return make_error(env, "invalid_shape_list");
+    unsigned shape_len = 0;
+    if (!enif_get_list_length(env, argv[1], &shape_len) || shape_len != 2)
+        return make_error(env, "invalid_shape_list");
 
-  int in_features = 0, out_features = 0;
-  ERL_NIF_TERM head, tail = argv[1];
-  if (!enif_get_list_cell(env, tail, &head, &tail) ||
-      !enif_get_int(env, head, &in_features))
-    return make_error(env, "invalid_in_features");
-  if (!enif_get_list_cell(env, tail, &head, &tail) ||
-      !enif_get_int(env, head, &out_features))
-    return make_error(env, "invalid_out_features");
+    int in_features = 0, out_features = 0;
+    ERL_NIF_TERM head, tail = argv[1];
+    if (!enif_get_list_cell(env, tail, &head, &tail) || !enif_get_int(env, head, &in_features))
+        return make_error(env, "invalid_in_features");
+    if (!enif_get_list_cell(env, tail, &head, &tail) || !enif_get_int(env, head, &out_features))
+        return make_error(env, "invalid_out_features");
 
-  int block_size = 0;
-  if (!enif_get_int(env, argv[2], &block_size))
-    return make_error(env, "invalid_block_size");
+    int block_size = 0;
+    if (!enif_get_int(env, argv[2], &block_size))
+        return make_error(env, "invalid_block_size");
 
-  if (in_features <= 0 || out_features <= 0)
-    return make_error(env, "invalid_dimensions");
-  if (block_size <= 0 || (in_features % block_size) != 0)
-    return make_error(env, "block_size_must_divide_in_features");
+    if (in_features <= 0 || out_features <= 0)
+        return make_error(env, "invalid_dimensions");
+    if (block_size <= 0 || (in_features % block_size) != 0)
+        return make_error(env, "block_size_must_divide_in_features");
 
-  size_t n_elems = (size_t)in_features * (size_t)out_features;
-  if (weight_bin.size != n_elems * sizeof(float))
-    return make_error(env, "weight_size_mismatch");
+    size_t n_elems = (size_t)in_features * (size_t)out_features;
+    if (weight_bin.size != n_elems * sizeof(float))
+        return make_error(env, "weight_size_mismatch");
 
-  const float *src = (const float *)weight_bin.data;
-  int num_blocks = in_features / block_size;
-  size_t total_scales = (size_t)out_features * (size_t)num_blocks;
+    const float *src = (const float *)weight_bin.data;
+    int num_blocks = in_features / block_size;
+    size_t total_scales = (size_t)out_features * (size_t)num_blocks;
 
-  /* Pass 1: per-(channel, block) absmax + scale.
+    /* Pass 1: per-(channel, block) absmax + scale.
    * scales[n*num_blocks + b] = absmax(W[b*B..(b+1)*B-1, n]) / 448 */
-  float *h_scales = (float *)malloc(total_scales * sizeof(float));
-  if (!h_scales) return make_error(env, "out_of_memory");
+    float *h_scales = (float *)malloc(total_scales * sizeof(float));
+    if (!h_scales)
+        return make_error(env, "out_of_memory");
 
-  for (int n = 0; n < out_features; ++n) {
-    for (int b = 0; b < num_blocks; ++b) {
-      float absmax = 0.0f;
-      for (int j = 0; j < block_size; ++j) {
-        int k = b * block_size + j;
-        float a = fabsf(src[(size_t)k * out_features + n]);
-        if (a > absmax) absmax = a;
-      }
-      h_scales[(size_t)n * num_blocks + b] =
-          (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+    for (int n = 0; n < out_features; ++n) {
+        for (int b = 0; b < num_blocks; ++b) {
+            float absmax = 0.0f;
+            for (int j = 0; j < block_size; ++j) {
+                int k = b * block_size + j;
+                float a = fabsf(src[(size_t)k * out_features + n]);
+                if (a > absmax)
+                    absmax = a;
+            }
+            h_scales[(size_t)n * num_blocks + b] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+        }
     }
-  }
 
-  /* Pass 2: quantize + transpose. Each (k, n) uses its own block scale. */
-  uint8_t *h_packed = (uint8_t *)malloc(n_elems);
-  if (!h_packed) { free(h_scales); return make_error(env, "out_of_memory"); }
-
-  for (int n = 0; n < out_features; ++n) {
-    for (int b = 0; b < num_blocks; ++b) {
-      float scale_nb = h_scales[(size_t)n * num_blocks + b];
-      float inv_scale = 1.0f / scale_nb;
-      for (int j = 0; j < block_size; ++j) {
-        int k = b * block_size + j;
-        float v = src[(size_t)k * out_features + n] * inv_scale;
-        h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
-      }
+    /* Pass 2: quantize + transpose. Each (k, n) uses its own block scale. */
+    uint8_t *h_packed = (uint8_t *)malloc(n_elems);
+    if (!h_packed) {
+        free(h_scales);
+        return make_error(env, "out_of_memory");
     }
-  }
 
-  float scale_mean = 0.0f;
-  for (size_t i = 0; i < total_scales; ++i) scale_mean += h_scales[i];
-  scale_mean /= (float)total_scales;
+    for (int n = 0; n < out_features; ++n) {
+        for (int b = 0; b < num_blocks; ++b) {
+            float scale_nb = h_scales[(size_t)n * num_blocks + b];
+            float inv_scale = 1.0f / scale_nb;
+            for (int j = 0; j < block_size; ++j) {
+                int k = b * block_size + j;
+                float v = src[(size_t)k * out_features + n] * inv_scale;
+                h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+            }
+        }
+    }
 
-  PackedWeight *w = alloc_packed_weight();
-  if (!w) {
-    free(h_packed); free(h_scales);
-    return make_error(env, "resource_alloc_failed");
-  }
+    float scale_mean = 0.0f;
+    for (size_t i = 0; i < total_scales; ++i)
+        scale_mean += h_scales[i];
+    scale_mean /= (float)total_scales;
 
-  w->dtype = PW_FP8;
-  w->in_features = in_features;
-  w->out_features = out_features;
-  w->block_size = block_size;
-  w->weight_bytes = n_elems;
-  w->scales_count = total_scales;
+    PackedWeight *w = alloc_packed_weight();
+    if (!w) {
+        free(h_packed);
+        free(h_scales);
+        return make_error(env, "resource_alloc_failed");
+    }
 
-  cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
-  if (err != cudaSuccess) {
-    free(h_packed); free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_malloc_weight_failed");
-  }
-  err = cudaMemcpy(w->d_weight, h_packed, w->weight_bytes,
-                    cudaMemcpyHostToDevice);
-  free(h_packed);
-  if (err != cudaSuccess) {
+    w->dtype = PW_FP8;
+    w->in_features = in_features;
+    w->out_features = out_features;
+    w->block_size = block_size;
+    w->weight_bytes = n_elems;
+    w->scales_count = total_scales;
+
+    cudaError_t err = cudaMalloc(&w->d_weight, w->weight_bytes);
+    if (err != cudaSuccess) {
+        free(h_packed);
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_malloc_weight_failed");
+    }
+    err = cudaMemcpy(w->d_weight, h_packed, w->weight_bytes, cudaMemcpyHostToDevice);
+    free(h_packed);
+    if (err != cudaSuccess) {
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_upload_weight_failed");
+    }
+
+    size_t scales_bytes = total_scales * sizeof(float);
+    err = cudaMalloc(&w->d_scales, scales_bytes);
+    if (err != cudaSuccess) {
+        free(h_scales);
+        enif_release_resource(w);
+        return make_error(env, "cuda_malloc_scale_failed");
+    }
+    err = cudaMemcpy(w->d_scales, h_scales, scales_bytes, cudaMemcpyHostToDevice);
     free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_upload_weight_failed");
-  }
+    if (err != cudaSuccess) {
+        enif_release_resource(w);
+        return make_error(env, "cuda_upload_scale_failed");
+    }
 
-  size_t scales_bytes = total_scales * sizeof(float);
-  err = cudaMalloc(&w->d_scales, scales_bytes);
-  if (err != cudaSuccess) {
-    free(h_scales);
-    enif_release_resource(w);
-    return make_error(env, "cuda_malloc_scale_failed");
-  }
-  err = cudaMemcpy(w->d_scales, h_scales, scales_bytes,
-                    cudaMemcpyHostToDevice);
-  free(h_scales);
-  if (err != cudaSuccess) {
-    enif_release_resource(w);
-    return make_error(env, "cuda_upload_scale_failed");
-  }
-
-  ERL_NIF_TERM res_term = make_packed_weight_term(env, w);
-  ERL_NIF_TERM tuple = enif_make_tuple4(
-      env,
-      res_term,
-      enif_make_int(env, in_features),
-      enif_make_int(env, out_features),
-      enif_make_double(env, (double)scale_mean));
-  return make_ok(env, tuple);
+    ERL_NIF_TERM res_term = make_packed_weight_term(env, w);
+    ERL_NIF_TERM tuple = enif_make_tuple4(env, res_term, enif_make_int(env, in_features),
+                                          enif_make_int(env, out_features),
+                                          enif_make_double(env, (double)scale_mean));
+    return make_ok(env, tuple);
 #endif
 }

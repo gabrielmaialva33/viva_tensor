@@ -22,148 +22,153 @@
  * ========================================================================= */
 
 static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
-  (void)priv;
-  (void)info;
+    (void)priv;
+    (void)info;
 
-  /* Detect CPU topology once at NIF load (MKL-style runtime init) */
-  detect_cpu_topology();
+    /* Detect CPU topology once at NIF load (MKL-style runtime init) */
+    detect_cpu_topology();
 
 #ifdef _WIN32
-  /* Windows: Configure MKL threads for maximum performance */
-  {
-    SYSTEM_INFO sysinfo;
-    GetSystemInfo(&sysinfo);
-    int ncpus = sysinfo.dwNumberOfProcessors;
-    mkl_set_num_threads(ncpus > 0 ? ncpus : 16);
-    fprintf(stderr, "[viva_tensor] Intel MKL (Windows), %d threads\n", ncpus > 0 ? ncpus : 16);
-  }
+    /* Windows: Configure MKL threads for maximum performance */
+    {
+        SYSTEM_INFO sysinfo;
+        GetSystemInfo(&sysinfo);
+        int ncpus = sysinfo.dwNumberOfProcessors;
+        mkl_set_num_threads(ncpus > 0 ? ncpus : 16);
+        fprintf(stderr, "[viva_tensor] Intel MKL (Windows), %d threads\n", ncpus > 0 ? ncpus : 16);
+    }
 #elif !defined(USE_MKL_DIRECT)
-  /* Linux without direct MKL: detect best BLAS backend dynamically */
-  detect_blas_backend();
+    /* Linux without direct MKL: detect best BLAS backend dynamically */
+    detect_blas_backend();
 
-  /* Auto-tune thread count based on matrix size heuristics */
-  if (g_set_threads && g_cpu_info.optimal_threads > 0) {
-    blas_set_threads(g_cpu_info.optimal_threads);
-  }
+    /* Auto-tune thread count based on matrix size heuristics */
+    if (g_set_threads && g_cpu_info.optimal_threads > 0) {
+        blas_set_threads(g_cpu_info.optimal_threads);
+    }
 #else
-  /* Linux with MKL directly linked — maximum performance tuning */
-  {
-    int phys = g_cpu_info.physical_cores;
-    int logical = sysconf(_SC_NPROCESSORS_ONLN);
-    int threads = phys > 0 ? phys : (logical > 0 ? logical : 16);
+    /* Linux with MKL directly linked — maximum performance tuning */
+    {
+        int phys = g_cpu_info.physical_cores;
+        int logical = sysconf(_SC_NPROCESSORS_ONLN);
+        int threads = phys > 0 ? phys : (logical > 0 ? logical : 16);
 
-    /* 1. Set thread count to physical cores (HT hurts BLAS) */
-    mkl_set_num_threads(threads);
+        /* 1. Set thread count to physical cores (HT hurts BLAS) */
+        mkl_set_num_threads(threads);
 
-    /* 2. Disable MKL_DYNAMIC — don't let MKL reduce thread count */
-    mkl_set_dynamic(0);
+        /* 2. Disable MKL_DYNAMIC — don't let MKL reduce thread count */
+        mkl_set_dynamic(0);
 
-    /* 3. Set env for thread affinity if not already set.
+        /* 3. Set env for thread affinity if not already set.
      *    compact = pack threads on same socket, reduces cross-NUMA traffic.
      *    granularity=fine = bind to logical CPU, no migration. */
-    if (!getenv("KMP_AFFINITY")) {
-      setenv("KMP_AFFINITY", "granularity=fine,compact,1,0", 0);
-    }
+        if (!getenv("KMP_AFFINITY")) {
+            setenv("KMP_AFFINITY", "granularity=fine,compact,1,0", 0);
+        }
 
-    /* 4. Flush denormals to zero (DAZ+FTZ) — avoids 100x penalty on subnormals.
+/* 4. Flush denormals to zero (DAZ+FTZ) — avoids 100x penalty on subnormals.
      *    Standard practice for BLAS/ML workloads. (Verified via bisect that
      *    this is NOT the cause of the 50% FP8-output-zero pattern.) */
-    #if defined(__x86_64__) || defined(_M_X64)
-    {
-      unsigned int mxcsr = __builtin_ia32_stmxcsr();
-      mxcsr |= (1 << 6)  /* DAZ - Denormals Are Zero */
-             | (1 << 15); /* FTZ - Flush To Zero */
-      __builtin_ia32_ldmxcsr(mxcsr);
-    }
-    #endif
-
-    fprintf(stderr, "[viva_tensor] Intel MKL direct, %d threads (%d physical cores), compact affinity, DAZ+FTZ\n", threads, phys);
-  }
+#if defined(__x86_64__) || defined(_M_X64)
+        {
+            unsigned int mxcsr = __builtin_ia32_stmxcsr();
+            mxcsr |= (1 << 6)     /* DAZ - Denormals Are Zero */
+                     | (1 << 15); /* FTZ - Flush To Zero */
+            __builtin_ia32_ldmxcsr(mxcsr);
+        }
 #endif
 
-  TENSOR_RESOURCE = enif_open_resource_type(
-      env, NULL, "NativeTensor", tensor_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!TENSOR_RESOURCE)
-    return -1;
+        fprintf(stderr,
+                "[viva_tensor] Intel MKL direct, %d threads (%d physical cores), compact affinity, "
+                "DAZ+FTZ\n",
+                threads, phys);
+    }
+#endif
 
-  LNS_RESOURCE = enif_open_resource_type(env, NULL, "LnsTensor", lns_destructor,
-                                         ERL_NIF_RT_CREATE, NULL);
-  if (!LNS_RESOURCE)
-    return -1;
+    TENSOR_RESOURCE = enif_open_resource_type(env, NULL, "NativeTensor", tensor_destructor,
+                                              ERL_NIF_RT_CREATE, NULL);
+    if (!TENSOR_RESOURCE)
+        return -1;
 
-  HORDE_RESOURCE = enif_open_resource_type(env, NULL, "Horde", horde_destructor,
-                                           ERL_NIF_RT_CREATE, NULL);
-  if (!HORDE_RESOURCE)
-    return -1;
+    LNS_RESOURCE =
+        enif_open_resource_type(env, NULL, "LnsTensor", lns_destructor, ERL_NIF_RT_CREATE, NULL);
+    if (!LNS_RESOURCE)
+        return -1;
 
-  /* QuantInt8Tensor — INT8 quantized (4x compression) */
-  QINT8_RESOURCE = enif_open_resource_type(env, NULL, "QuantInt8Tensor",
-                                            qint8_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!QINT8_RESOURCE)
-    return -1;
+    HORDE_RESOURCE =
+        enif_open_resource_type(env, NULL, "Horde", horde_destructor, ERL_NIF_RT_CREATE, NULL);
+    if (!HORDE_RESOURCE)
+        return -1;
 
-  /* QuantNF4Tensor — NF4 quantized (8x compression) */
-  QNF4_RESOURCE = enif_open_resource_type(env, NULL, "QuantNF4Tensor",
-                                           qnf4_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!QNF4_RESOURCE)
-    return -1;
+    /* QuantInt8Tensor — INT8 quantized (4x compression) */
+    QINT8_RESOURCE = enif_open_resource_type(env, NULL, "QuantInt8Tensor", qint8_destructor,
+                                             ERL_NIF_RT_CREATE, NULL);
+    if (!QINT8_RESOURCE)
+        return -1;
 
-  HDC_RESOURCE = enif_open_resource_type(env, NULL, "HdcVector", hdc_destructor,
-                                         ERL_NIF_RT_CREATE, NULL);
-  if (!HDC_RESOURCE)
-    return -1;
+    /* QuantNF4Tensor — NF4 quantized (8x compression) */
+    QNF4_RESOURCE = enif_open_resource_type(env, NULL, "QuantNF4Tensor", qnf4_destructor,
+                                            ERL_NIF_RT_CREATE, NULL);
+    if (!QNF4_RESOURCE)
+        return -1;
+
+    HDC_RESOURCE =
+        enif_open_resource_type(env, NULL, "HdcVector", hdc_destructor, ERL_NIF_RT_CREATE, NULL);
+    if (!HDC_RESOURCE)
+        return -1;
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
-  /* CudaTensor — persistent FP32 GPU memory */
-  CUDA_TENSOR_RESOURCE = enif_open_resource_type(
-      env, NULL, "CudaTensor", cuda_tensor_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!CUDA_TENSOR_RESOURCE)
-    return -1;
+    /* CudaTensor — persistent FP32 GPU memory */
+    CUDA_TENSOR_RESOURCE = enif_open_resource_type(env, NULL, "CudaTensor", cuda_tensor_destructor,
+                                                   ERL_NIF_RT_CREATE, NULL);
+    if (!CUDA_TENSOR_RESOURCE)
+        return -1;
 
-  /* CudaTensor16 — persistent FP16 GPU memory (Tensor Cores) */
-  CUDA_TENSOR16_RESOURCE = enif_open_resource_type(
-      env, NULL, "CudaTensor16", cuda_tensor16_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!CUDA_TENSOR16_RESOURCE)
-    return -1;
+    /* CudaTensor16 — persistent FP16 GPU memory (Tensor Cores) */
+    CUDA_TENSOR16_RESOURCE =
+        enif_open_resource_type(env, NULL, "CudaTensor16", cuda_tensor16_destructor,
+                                ERL_NIF_RT_CREATE, NULL);
+    if (!CUDA_TENSOR16_RESOURCE)
+        return -1;
 
-  /* CudaInt8Tensor — persistent INT8 GPU memory (IMMA Tensor Cores) */
-  CUDA_INT8_TENSOR_RESOURCE = enif_open_resource_type(
-      env, NULL, "CudaInt8Tensor", cuda_int8_tensor_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!CUDA_INT8_TENSOR_RESOURCE)
-    return -1;
+    /* CudaInt8Tensor — persistent INT8 GPU memory (IMMA Tensor Cores) */
+    CUDA_INT8_TENSOR_RESOURCE =
+        enif_open_resource_type(env, NULL, "CudaInt8Tensor", cuda_int8_tensor_destructor,
+                                ERL_NIF_RT_CREATE, NULL);
+    if (!CUDA_INT8_TENSOR_RESOURCE)
+        return -1;
 
-  /* SparseTensor — 2:4 structured sparsity (cuSPARSELt) */
-  SPARSE_TENSOR_RESOURCE = enif_open_resource_type(
-      env, NULL, "SparseTensor", sparse_tensor_destructor, ERL_NIF_RT_CREATE, NULL);
-  if (!SPARSE_TENSOR_RESOURCE)
-    return -1;
+    /* SparseTensor — 2:4 structured sparsity (cuSPARSELt) */
+    SPARSE_TENSOR_RESOURCE =
+        enif_open_resource_type(env, NULL, "SparseTensor", sparse_tensor_destructor,
+                                ERL_NIF_RT_CREATE, NULL);
+    if (!SPARSE_TENSOR_RESOURCE)
+        return -1;
 
-  /* PackedWeight — FP8/INT8/INT4 prepacked weights for the stable
+    /* PackedWeight — FP8/INT8/INT4 prepacked weights for the stable
    * inference API. Shared across nif_prepack_fp8/_int_sparse and
    * nif_linear_fp8/_int_sparse/_swiglu_fp8. */
-  if (register_packed_weight_resource(env) != 0)
-    return -1;
-  if (register_embedding_table_resource(env) != 0)
-    return -1;
-  if (register_block_kv_cache_resource(env) != 0)
-    return -1;
-  if (register_block_state_resource(env) != 0)
-    return -1;
+    if (register_packed_weight_resource(env) != 0)
+        return -1;
+    if (register_embedding_table_resource(env) != 0)
+        return -1;
+    if (register_block_kv_cache_resource(env) != 0)
+        return -1;
+    if (register_block_state_resource(env) != 0)
+        return -1;
 #endif
 
-  return 0;
+    return 0;
 }
 
 /* Reports whether this NIF was built with CUDA backends linked in.
  * Returns false when compiled with -DVIVA_NO_CUDA (CPU-only build). */
-static ERL_NIF_TERM nif_cuda_available(ErlNifEnv *env, int argc,
-                                       const ERL_NIF_TERM argv[]) {
-  (void)argc;
-  (void)argv;
+static ERL_NIF_TERM nif_cuda_available(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
 #if defined(VIVA_NO_CUDA) || defined(_WIN32)
-  return enif_make_atom(env, "false");
+    return enif_make_atom(env, "false");
 #else
-  return enif_make_atom(env, "true");
+    return enif_make_atom(env, "true");
 #endif
 }
 
@@ -257,10 +262,8 @@ static ErlNifFunc nif_funcs[] = {
 
     /* Retro / fused kernels */
     {"nt_saturn_blend", 3, nt_saturn_blend, ERL_NIF_DIRTY_JOB_CPU_BOUND},
-    {"nt_fused_linear_relu", 6, nt_fused_linear_relu_nif,
-     ERL_NIF_DIRTY_JOB_CPU_BOUND},
-    {"nt_fused_linear_relu_into", 7, nt_fused_linear_relu_into,
-     ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_fused_linear_relu", 6, nt_fused_linear_relu_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_fused_linear_relu_into", 7, nt_fused_linear_relu_into, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 
     /* Resonance kernels — LNS f64 */
     {"nt_resonance_mul", 2, nt_resonance_mul, ERL_NIF_DIRTY_JOB_CPU_BOUND},
@@ -324,8 +327,10 @@ static ErlNifFunc nif_funcs[] = {
     {"ct16_matmul_fused_gelu", 6, ct16_matmul_fused_gelu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_linear_relu", 7, ct16_linear_relu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_linear_gelu", 7, ct16_linear_gelu_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"ct16_matmul_fused_relu_bench", 7, ct16_matmul_fused_relu_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"ct16_matmul_fused_gelu_bench", 7, ct16_matmul_fused_gelu_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_matmul_fused_relu_bench", 7, ct16_matmul_fused_relu_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_matmul_fused_gelu_bench", 7, ct16_matmul_fused_gelu_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_matmul_batched_bench", 5, ct16_matmul_batched_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"fp8_matmul_lt_tn_bench", 4, fp8_matmul_lt_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_fp8_f16acc_bench", 4, cutlass_fp8_f16acc_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -337,13 +342,16 @@ static ErlNifFunc nif_funcs[] = {
     {"cublaslt_fp16_fused_bench", 5, cublaslt_fp16_fused_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nvfp4_dequant_bench", 2, nvfp4_dequant_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_fp8_serial_bench", 4, cutlass_fp8_serial_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"cutlass_fp8_concurrent_bench", 4, cutlass_fp8_concurrent_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cutlass_fp8_concurrent_bench", 4, cutlass_fp8_concurrent_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cublaslt_fp16_algo_sweep", 5, cublaslt_fp16_algo_sweep_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nvfp4_fused_gemm_bench", 4, nvfp4_fused_gemm_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cublaslt_fp8_algo_sweep", 5, cublaslt_fp8_algo_sweep_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int8_sparse_bench", 5, cutlass_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cutlass_int8_sparse_bench_ex", 6, cutlass_int8_sparse_bench_ex_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cusparselt_int8_sparse_bench", 5, cusparselt_int8_sparse_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cusparselt_fp8_sparse_bench", 4, cusparselt_fp8_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     /* Inference API — PackedWeight + prepack + linear forward + SwiGLU */
     {"nt_prepack_fp8", 2, nt_prepack_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
@@ -366,11 +374,14 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_forward_decode_step_topk", 10, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step", 8, nt_forward_decode_step, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_forward_decode_step_topk", 9, nt_forward_decode_step_topk, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"cusparselt_fp16_sparse_bench", 4, cusparselt_fp16_sparse_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"cutlass_int4_sparse_bench", 6, cutlass_int4_sparse_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"marlin_w4a16_bench", 5, viva_marlin_w4a16_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
-    {"ct16_matmul_fused_gelu_tn_bench", 7, ct16_matmul_fused_gelu_tn_bench_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_matmul_fused_relu_tn_bench", 7, ct16_matmul_fused_relu_tn_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
+    {"ct16_matmul_fused_gelu_tn_bench", 7, ct16_matmul_fused_gelu_tn_bench_nif,
+     ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"ct16_available", 0, ct16_available, 0},
 
     /* Async CUDA */

@@ -37,17 +37,17 @@ __device__ __forceinline__ float fp4_decode_to_float(uint8_t nibble) {
 /* One thread per output element. A is FP4 packed (M × K/2 bytes),
  * B is FP16 (K × N), C is FP16 (M × N). */
 __global__ static void nvfp4_fused_gemm_kernel(
-    const uint8_t* __restrict__ A_packed,   /* M × K/2 bytes */
-    const __half*  __restrict__ B,          /* K × N */
-    __half*        __restrict__ C,          /* M × N */
-    int M, int N, int K)
-{
+    const uint8_t *__restrict__ A_packed, /* M × K/2 bytes */
+    const __half *__restrict__ B,         /* K × N */
+    __half *__restrict__ C,               /* M × N */
+    int M, int N, int K) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row >= M || col >= N) return;
+    if (row >= M || col >= N)
+        return;
 
     float acc = 0.0f;
-    int row_stride = K / 2;  /* packed nibbles per row */
+    int row_stride = K / 2; /* packed nibbles per row */
 
     /* Walk K in steps of 2 (one byte = 2 FP4 values). */
     for (int k = 0; k < K; k += 2) {
@@ -63,23 +63,28 @@ __global__ static void nvfp4_fused_gemm_kernel(
 /** Fused dequant + GEMM bench. M, N, K all multiples of 16.
  * Returns elapsed µs (kernel-only). */
 int nvfp4_fused_gemm_bench(int M, int N, int K, int iters) {
-    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0 || (K & 1)) return -10;
+    if (M <= 0 || N <= 0 || K <= 0 || iters <= 0 || (K & 1))
+        return -10;
 
-    size_t bytes_A = (size_t)M * (K / 2);    /* packed FP4 */
-    size_t bytes_B = (size_t)K * N * 2;       /* FP16 */
-    size_t bytes_C = (size_t)M * N * 2;       /* FP16 */
+    size_t bytes_A = (size_t)M * (K / 2); /* packed FP4 */
+    size_t bytes_B = (size_t)K * N * 2;   /* FP16 */
+    size_t bytes_C = (size_t)M * N * 2;   /* FP16 */
 
     uint8_t *d_A = nullptr;
-    __half  *d_B = nullptr, *d_C = nullptr;
-    if (cudaMalloc((void**)&d_A, bytes_A) != cudaSuccess) return -11;
-    if (cudaMalloc((void**)&d_B, bytes_B) != cudaSuccess) {
-        cudaFree(d_A); return -12;
+    __half *d_B = nullptr, *d_C = nullptr;
+    if (cudaMalloc((void **)&d_A, bytes_A) != cudaSuccess)
+        return -11;
+    if (cudaMalloc((void **)&d_B, bytes_B) != cudaSuccess) {
+        cudaFree(d_A);
+        return -12;
     }
-    if (cudaMalloc((void**)&d_C, bytes_C) != cudaSuccess) {
-        cudaFree(d_A); cudaFree(d_B); return -13;
+    if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        return -13;
     }
-    cudaMemset(d_A, 0x22, bytes_A);  /* alternating FP4 codes ≈ ±1.0 */
-    cudaMemset(d_B, 0x38, bytes_B);  /* FP16 ≈ 0.5 */
+    cudaMemset(d_A, 0x22, bytes_A); /* alternating FP4 codes ≈ ±1.0 */
+    cudaMemset(d_B, 0x38, bytes_B); /* FP16 ≈ 0.5 */
     cudaMemset(d_C, 0, bytes_C);
 
     dim3 block(16, 16);
@@ -105,8 +110,10 @@ int nvfp4_fused_gemm_bench(int M, int N, int K, int iters) {
     cudaEventDestroy(start_ev);
     cudaEventDestroy(stop_ev);
 
-    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
     return (int)(elapsed_ms * 1000.0f);
 }
 
-}  /* extern "C" */
+} /* extern "C" */

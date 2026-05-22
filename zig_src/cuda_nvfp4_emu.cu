@@ -50,27 +50,25 @@ extern "C" {
 /* Stored as uint16_t (FP16 bit pattern) since __constant__ __half can't be
  * dynamically initialized. Reinterpret as __half at use site. */
 __constant__ uint16_t kNVFP4_DEQUANT_BITS[16] = {
-    /*  0: +0   */ 0x0000,  /*  1: +0.5 */ 0x3800,
-    /*  2: +1   */ 0x3C00,  /*  3: +1.5 */ 0x3E00,
-    /*  4: +2   */ 0x4000,  /*  5: +3   */ 0x4200,
-    /*  6: +4   */ 0x4400,  /*  7: +6   */ 0x4600,
-    /*  8: -0   */ 0x8000,  /*  9: -0.5 */ 0xB800,
-    /* 10: -1   */ 0xBC00,  /* 11: -1.5 */ 0xBE00,
-    /* 12: -2   */ 0xC000,  /* 13: -3   */ 0xC200,
-    /* 14: -4   */ 0xC400,  /* 15: -6   */ 0xC600,
+    /*  0: +0   */ 0x0000, /*  1: +0.5 */ 0x3800,
+    /*  2: +1   */ 0x3C00, /*  3: +1.5 */ 0x3E00,
+    /*  4: +2   */ 0x4000, /*  5: +3   */ 0x4200,
+    /*  6: +4   */ 0x4400, /*  7: +6   */ 0x4600,
+    /*  8: -0   */ 0x8000, /*  9: -0.5 */ 0xB800,
+    /* 10: -1   */ 0xBC00, /* 11: -1.5 */ 0xBE00,
+    /* 12: -2   */ 0xC000, /* 13: -3   */ 0xC200,
+    /* 14: -4   */ 0xC400, /* 15: -6   */ 0xC600,
 };
 
 /* Dequantize: packed[i] holds 2 × FP4 values, scales[i/16] is the per-16
  * block scale stored as FP8 E4M3 (1 byte, decoded as half via lookup table
  * in production — we use a flat 1.0 scale in this PoC for clarity). */
-__global__ static void nvfp4_dequant_kernel(
-    const uint8_t* __restrict__ packed,
-    const uint8_t* __restrict__ scales,
-    __half* __restrict__ out,
-    int n_values)
-{
+__global__ static void nvfp4_dequant_kernel(const uint8_t *__restrict__ packed,
+                                            const uint8_t *__restrict__ scales,
+                                            __half *__restrict__ out, int n_values) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i * 2 + 1 >= n_values) return;
+    if (i * 2 + 1 >= n_values)
+        return;
 
     uint8_t byte = packed[i];
     uint8_t lo = byte & 0xF;
@@ -79,7 +77,7 @@ __global__ static void nvfp4_dequant_kernel(
     /* Per-16 block scale (PoC: ignore actual scale value, assume 1.0) */
     (void)scales;
 
-    out[i * 2]     = __ushort_as_half(kNVFP4_DEQUANT_BITS[lo]);
+    out[i * 2] = __ushort_as_half(kNVFP4_DEQUANT_BITS[lo]);
     out[i * 2 + 1] = __ushort_as_half(kNVFP4_DEQUANT_BITS[hi]);
 }
 
@@ -87,23 +85,28 @@ __global__ static void nvfp4_dequant_kernel(
  * Pre-allocates packed + scales + output, runs `iters` dequants, returns
  * kernel-only time via CUDA events. */
 int nvfp4_dequant_bench(int n_values, int iters) {
-    if (n_values <= 0 || iters <= 0 || (n_values & 1)) return -10;
+    if (n_values <= 0 || iters <= 0 || (n_values & 1))
+        return -10;
 
     size_t packed_bytes = (size_t)n_values / 2;
     size_t scales_bytes = (size_t)n_values / 16;
-    size_t out_bytes    = (size_t)n_values * 2;
+    size_t out_bytes = (size_t)n_values * 2;
 
     uint8_t *d_packed = nullptr, *d_scales = nullptr;
-    __half  *d_out    = nullptr;
-    if (cudaMalloc((void**)&d_packed, packed_bytes) != cudaSuccess) return -11;
-    if (cudaMalloc((void**)&d_scales, scales_bytes) != cudaSuccess) {
-        cudaFree(d_packed); return -12;
+    __half *d_out = nullptr;
+    if (cudaMalloc((void **)&d_packed, packed_bytes) != cudaSuccess)
+        return -11;
+    if (cudaMalloc((void **)&d_scales, scales_bytes) != cudaSuccess) {
+        cudaFree(d_packed);
+        return -12;
     }
-    if (cudaMalloc((void**)&d_out, out_bytes) != cudaSuccess) {
-        cudaFree(d_packed); cudaFree(d_scales); return -13;
+    if (cudaMalloc((void **)&d_out, out_bytes) != cudaSuccess) {
+        cudaFree(d_packed);
+        cudaFree(d_scales);
+        return -13;
     }
-    cudaMemset(d_packed, 0x55, packed_bytes);  /* alternating FP4 codes */
-    cudaMemset(d_scales, 0x38, scales_bytes);  /* FP8 ~0.5 */
+    cudaMemset(d_packed, 0x55, packed_bytes); /* alternating FP4 codes */
+    cudaMemset(d_scales, 0x38, scales_bytes); /* FP8 ~0.5 */
 
     int block = 256;
     int grid = (int)((packed_bytes + block - 1) / block);
@@ -132,7 +135,7 @@ int nvfp4_dequant_bench(int n_values, int iters) {
     cudaFree(d_scales);
     cudaFree(d_out);
 
-    return (int)(elapsed_ms * 1000.0f);  /* microseconds */
+    return (int)(elapsed_ms * 1000.0f); /* microseconds */
 }
 
-}  /* extern "C" */
+} /* extern "C" */

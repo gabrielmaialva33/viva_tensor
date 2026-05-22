@@ -61,51 +61,55 @@
  * routine — kept here to avoid an extra header file. If the math is
  * ever revised it MUST stay in sync with nif_prepack_fp8.c. */
 static inline uint8_t lin_float_to_fp8_e4m3(float val) {
-  if (val == 0.0f) return 0x00;
-  if (val != val) return 0x7F;
+    if (val == 0.0f)
+        return 0x00;
+    if (val != val)
+        return 0x7F;
 
-  uint32_t bits;
-  memcpy(&bits, &val, sizeof(bits));
-  uint32_t sign = (bits >> 31) & 0x1;
-  int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
-  uint32_t f32_mant = bits & 0x7FFFFF;
+    uint32_t bits;
+    memcpy(&bits, &val, sizeof(bits));
+    uint32_t sign = (bits >> 31) & 0x1;
+    int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
+    uint32_t f32_mant = bits & 0x7FFFFF;
 
-  if (f32_exp >= 8) return (uint8_t)((sign << 7) | 0x7E);
-  if (f32_exp < -9) return (uint8_t)(sign << 7);
+    if (f32_exp >= 8)
+        return (uint8_t)((sign << 7) | 0x7E);
+    if (f32_exp < -9)
+        return (uint8_t)(sign << 7);
 
-  int32_t e_exp;
-  uint32_t e_mant;
-  if (f32_exp >= -6) {
-    e_exp = f32_exp + 7;
-    uint32_t round_bit = (f32_mant >> 19) & 0x1;
-    uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
-    e_mant = (f32_mant >> 20) & 0x7;
-    if (round_bit && (sticky || (e_mant & 0x1))) {
-      e_mant += 1;
-      if (e_mant == 8) {
-        e_mant = 0;
-        e_exp += 1;
-      }
+    int32_t e_exp;
+    uint32_t e_mant;
+    if (f32_exp >= -6) {
+        e_exp = f32_exp + 7;
+        uint32_t round_bit = (f32_mant >> 19) & 0x1;
+        uint32_t sticky = (f32_mant & 0x7FFFF) != 0;
+        e_mant = (f32_mant >> 20) & 0x7;
+        if (round_bit && (sticky || (e_mant & 0x1))) {
+            e_mant += 1;
+            if (e_mant == 8) {
+                e_mant = 0;
+                e_exp += 1;
+            }
+        }
+        if (e_exp >= 15)
+            return (uint8_t)((sign << 7) | 0x7E);
+    } else {
+        int32_t shift = -6 - f32_exp;
+        uint32_t mant_with_implicit = f32_mant | 0x800000;
+        e_exp = 0;
+        uint32_t total_shift = 20 + shift;
+        uint32_t round_bit = (mant_with_implicit >> (total_shift - 1)) & 0x1;
+        uint32_t sticky = (mant_with_implicit & ((1u << (total_shift - 1)) - 1)) != 0;
+        e_mant = (mant_with_implicit >> total_shift) & 0x7;
+        if (round_bit && (sticky || (e_mant & 0x1))) {
+            e_mant += 1;
+            if (e_mant == 8) {
+                e_mant = 0;
+                e_exp = 1;
+            }
+        }
     }
-    if (e_exp >= 15) return (uint8_t)((sign << 7) | 0x7E);
-  } else {
-    int32_t shift = -6 - f32_exp;
-    uint32_t mant_with_implicit = f32_mant | 0x800000;
-    e_exp = 0;
-    uint32_t total_shift = 20 + shift;
-    uint32_t round_bit = (mant_with_implicit >> (total_shift - 1)) & 0x1;
-    uint32_t sticky =
-        (mant_with_implicit & ((1u << (total_shift - 1)) - 1)) != 0;
-    e_mant = (mant_with_implicit >> total_shift) & 0x7;
-    if (round_bit && (sticky || (e_mant & 0x1))) {
-      e_mant += 1;
-      if (e_mant == 8) {
-        e_mant = 0;
-        e_exp = 1;
-      }
-    }
-  }
-  return (uint8_t)((sign << 7) | ((uint32_t)e_exp << 3) | e_mant);
+    return (uint8_t)((sign << 7) | ((uint32_t)e_exp << 3) | e_mant);
 }
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
@@ -129,21 +133,25 @@ static const size_t g_lt_workspace_size = 32 * 1024 * 1024;
  *   g_d_outC     : FP32 GEMM output buffer (largest: 5632 * sizeof(float) = ~22 KB)
  *   g_d_bias     : FP16 bias buffer (typically nil; small)
  */
-static void   *g_d_input = NULL;     static size_t g_d_input_cap = 0;
-static void   *g_d_weight16 = NULL;  static size_t g_d_weight16_cap = 0;
-static float  *g_d_outC = NULL;      static size_t g_d_outC_cap = 0;
-static void   *g_d_bias = NULL;      static size_t g_d_bias_cap = 0;
+static void *g_d_input = NULL;
+static size_t g_d_input_cap = 0;
+static void *g_d_weight16 = NULL;
+static size_t g_d_weight16_cap = 0;
+static float *g_d_outC = NULL;
+static size_t g_d_outC_cap = 0;
+static void *g_d_bias = NULL;
+static size_t g_d_bias_cap = 0;
 
 typedef struct {
-  int in_features;
-  int out_features;
-  int batch;
-  cudaDataType_t weight_type;
-  cublasLtMatmulDesc_t desc;
-  cublasLtMatrixLayout_t layout_bt;
-  cublasLtMatrixLayout_t layout_a;
-  cublasLtMatrixLayout_t layout_c;
-  cublasLtMatmulHeuristicResult_t heur;
+    int in_features;
+    int out_features;
+    int batch;
+    cudaDataType_t weight_type;
+    cublasLtMatmulDesc_t desc;
+    cublasLtMatrixLayout_t layout_bt;
+    cublasLtMatrixLayout_t layout_a;
+    cublasLtMatrixLayout_t layout_c;
+    cublasLtMatmulHeuristicResult_t heur;
 } LinearLtPlan;
 
 #define LINEAR_LT_PLAN_MAX 32
@@ -151,77 +159,88 @@ static LinearLtPlan g_linear_lt_plans[LINEAR_LT_PLAN_MAX];
 static int g_linear_lt_plan_count = 0;
 
 static int ensure_cached_buf(void **ptr, size_t *cap, size_t needed) {
-  if (*cap >= needed) return 0;
-  /* Grow with hysteresis (1.5×) to avoid frequent reallocs as shapes climb. */
-  size_t new_cap = needed + (needed >> 1);
-  void *old = *ptr;
-  void *fresh = NULL;
-  if (cudaMalloc(&fresh, new_cap) != cudaSuccess) return -1;
-  if (old) cudaFree(old);
-  *ptr = fresh;
-  *cap = new_cap;
-  return 0;
+    if (*cap >= needed)
+        return 0;
+    /* Grow with hysteresis (1.5×) to avoid frequent reallocs as shapes climb. */
+    size_t new_cap = needed + (needed >> 1);
+    void *old = *ptr;
+    void *fresh = NULL;
+    if (cudaMalloc(&fresh, new_cap) != cudaSuccess)
+        return -1;
+    if (old)
+        cudaFree(old);
+    *ptr = fresh;
+    *cap = new_cap;
+    return 0;
 }
 
 static int ensure_lt_ctx(void) {
-  if (g_lt_ctx) return 0;
-  if (cublasLtCreate(&g_lt_ctx) != CUBLAS_STATUS_SUCCESS) return -1;
-  if (cudaMalloc(&g_lt_workspace, g_lt_workspace_size) != cudaSuccess) {
-    cublasLtDestroy(g_lt_ctx);
-    g_lt_ctx = NULL;
-    return -2;
-  }
-  return 0;
+    if (g_lt_ctx)
+        return 0;
+    if (cublasLtCreate(&g_lt_ctx) != CUBLAS_STATUS_SUCCESS)
+        return -1;
+    if (cudaMalloc(&g_lt_workspace, g_lt_workspace_size) != cudaSuccess) {
+        cublasLtDestroy(g_lt_ctx);
+        g_lt_ctx = NULL;
+        return -2;
+    }
+    return 0;
 }
 
-static int get_linear_lt_plan(const PackedWeight *w, cudaDataType_t weight_type,
-                              int batch, LinearLtPlan **out_plan) {
-  for (int i = 0; i < g_linear_lt_plan_count; ++i) {
-    LinearLtPlan *p = &g_linear_lt_plans[i];
-    if (p->in_features == w->in_features && p->out_features == w->out_features &&
-        p->batch == batch && p->weight_type == weight_type) {
-      *out_plan = p;
-      return 0;
+static int get_linear_lt_plan(const PackedWeight *w, cudaDataType_t weight_type, int batch,
+                              LinearLtPlan **out_plan) {
+    for (int i = 0; i < g_linear_lt_plan_count; ++i) {
+        LinearLtPlan *p = &g_linear_lt_plans[i];
+        if (p->in_features == w->in_features && p->out_features == w->out_features &&
+            p->batch == batch && p->weight_type == weight_type) {
+            *out_plan = p;
+            return 0;
+        }
     }
-  }
-  if (g_linear_lt_plan_count >= LINEAR_LT_PLAN_MAX) return -1;
+    if (g_linear_lt_plan_count >= LINEAR_LT_PLAN_MAX)
+        return -1;
 
-  LinearLtPlan *p = &g_linear_lt_plans[g_linear_lt_plan_count];
-  memset(p, 0, sizeof(*p));
-  p->in_features = w->in_features;
-  p->out_features = w->out_features;
-  p->batch = batch;
-  p->weight_type = weight_type;
+    LinearLtPlan *p = &g_linear_lt_plans[g_linear_lt_plan_count];
+    memset(p, 0, sizeof(*p));
+    p->in_features = w->in_features;
+    p->out_features = w->out_features;
+    p->batch = batch;
+    p->weight_type = weight_type;
 
-  if (cublasLtMatmulDescCreate(&p->desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS)
-    return -2;
-  cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
-  cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t, sizeof(op_t));
-  cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n, sizeof(op_n));
+    if (cublasLtMatmulDescCreate(&p->desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS)
+        return -2;
+    cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+    cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t, sizeof(op_t));
+    cublasLtMatmulDescSetAttribute(p->desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n, sizeof(op_n));
 
-  cublasStatus_t st = cublasLtMatrixLayoutCreate(&p->layout_bt, weight_type,
-      (uint64_t)w->in_features, (uint64_t)w->out_features, (int64_t)w->in_features);
-  if (st != CUBLAS_STATUS_SUCCESS) return -3;
-  st = cublasLtMatrixLayoutCreate(&p->layout_a, CUDA_R_16F,
-      (uint64_t)w->in_features, (uint64_t)batch, (int64_t)w->in_features);
-  if (st != CUBLAS_STATUS_SUCCESS) return -4;
-  st = cublasLtMatrixLayoutCreate(&p->layout_c, CUDA_R_32F,
-      (uint64_t)w->out_features, (uint64_t)batch, (int64_t)w->out_features);
-  if (st != CUBLAS_STATUS_SUCCESS) return -5;
+    cublasStatus_t st =
+        cublasLtMatrixLayoutCreate(&p->layout_bt, weight_type, (uint64_t)w->in_features,
+                                   (uint64_t)w->out_features, (int64_t)w->in_features);
+    if (st != CUBLAS_STATUS_SUCCESS)
+        return -3;
+    st = cublasLtMatrixLayoutCreate(&p->layout_a, CUDA_R_16F, (uint64_t)w->in_features,
+                                    (uint64_t)batch, (int64_t)w->in_features);
+    if (st != CUBLAS_STATUS_SUCCESS)
+        return -4;
+    st = cublasLtMatrixLayoutCreate(&p->layout_c, CUDA_R_32F, (uint64_t)w->out_features,
+                                    (uint64_t)batch, (int64_t)w->out_features);
+    if (st != CUBLAS_STATUS_SUCCESS)
+        return -5;
 
-  cublasLtMatmulPreference_t pref;
-  cublasLtMatmulPreferenceCreate(&pref);
-  cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                       &g_lt_workspace_size, sizeof(g_lt_workspace_size));
-  int returned = 0;
-  st = cublasLtMatmulAlgoGetHeuristic(g_lt_ctx, p->desc, p->layout_bt, p->layout_a,
-                                      p->layout_c, p->layout_c, pref, 1, &p->heur, &returned);
-  cublasLtMatmulPreferenceDestroy(pref);
-  if (st != CUBLAS_STATUS_SUCCESS || returned == 0) return -6;
+    cublasLtMatmulPreference_t pref;
+    cublasLtMatmulPreferenceCreate(&pref);
+    cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                         &g_lt_workspace_size, sizeof(g_lt_workspace_size));
+    int returned = 0;
+    st = cublasLtMatmulAlgoGetHeuristic(g_lt_ctx, p->desc, p->layout_bt, p->layout_a, p->layout_c,
+                                        p->layout_c, pref, 1, &p->heur, &returned);
+    cublasLtMatmulPreferenceDestroy(pref);
+    if (st != CUBLAS_STATUS_SUCCESS || returned == 0)
+        return -6;
 
-  g_linear_lt_plan_count++;
-  *out_plan = p;
-  return 0;
+    g_linear_lt_plan_count++;
+    *out_plan = p;
+    return 0;
 }
 
 /* =========================================================================
@@ -240,58 +259,64 @@ static int get_linear_lt_plan(const PackedWeight *w, cudaDataType_t weight_type,
  * Caller is responsible for cudaFree on both device buffers (or NULL on
  * failure).
  * ========================================================================= */
-static int upload_input_fp8(const ErlNifBinary *bin, int batch,
-                             int in_features, uint8_t **out_d_input,
-                             float **out_row_scales) {
-  *out_d_input = NULL;
-  *out_row_scales = NULL;
+static int upload_input_fp8(const ErlNifBinary *bin, int batch, int in_features,
+                            uint8_t **out_d_input, float **out_row_scales) {
+    *out_d_input = NULL;
+    *out_row_scales = NULL;
 
-  size_t n = (size_t)batch * (size_t)in_features;
-  if (bin->size != n * sizeof(uint16_t)) return -1;
+    size_t n = (size_t)batch * (size_t)in_features;
+    if (bin->size != n * sizeof(uint16_t))
+        return -1;
 
-  const uint16_t *src_half = (const uint16_t *)bin->data;
+    const uint16_t *src_half = (const uint16_t *)bin->data;
 
-  /* Per-row activation quantization (ggml-style block_q8_0 with block ==
+    /* Per-row activation quantization (ggml-style block_q8_0 with block ==
    * row): each input batch row gets its own absmax + scale. Outliers in
    * one row don't compress the dynamic range of the others — important
    * for attention scores where one sequence position can dominate. */
-  float *row_scales = (float *)malloc((size_t)batch * sizeof(float));
-  if (!row_scales) return -2;
+    float *row_scales = (float *)malloc((size_t)batch * sizeof(float));
+    if (!row_scales)
+        return -2;
 
-  for (int b = 0; b < batch; ++b) {
-    float absmax = 0.0f;
-    for (int k = 0; k < in_features; ++k) {
-      float a = fabsf(f16_to_f32(src_half[(size_t)b * in_features + k]));
-      if (a > absmax) absmax = a;
+    for (int b = 0; b < batch; ++b) {
+        float absmax = 0.0f;
+        for (int k = 0; k < in_features; ++k) {
+            float a = fabsf(f16_to_f32(src_half[(size_t)b * in_features + k]));
+            if (a > absmax)
+                absmax = a;
+        }
+        row_scales[b] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
     }
-    row_scales[b] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-  }
 
-  uint8_t *h_packed = (uint8_t *)malloc(n);
-  if (!h_packed) { free(row_scales); return -2; }
-  for (int b = 0; b < batch; ++b) {
-    float inv = 1.0f / row_scales[b];
-    for (int k = 0; k < in_features; ++k) {
-      float v = f16_to_f32(src_half[(size_t)b * in_features + k]) * inv;
-      h_packed[(size_t)b * in_features + k] = lin_float_to_fp8_e4m3(v);
+    uint8_t *h_packed = (uint8_t *)malloc(n);
+    if (!h_packed) {
+        free(row_scales);
+        return -2;
     }
-  }
+    for (int b = 0; b < batch; ++b) {
+        float inv = 1.0f / row_scales[b];
+        for (int k = 0; k < in_features; ++k) {
+            float v = f16_to_f32(src_half[(size_t)b * in_features + k]) * inv;
+            h_packed[(size_t)b * in_features + k] = lin_float_to_fp8_e4m3(v);
+        }
+    }
 
-  uint8_t *d_input = NULL;
-  if (cudaMalloc((void **)&d_input, n) != cudaSuccess) {
-    free(h_packed); free(row_scales);
-    return -3;
-  }
-  if (cudaMemcpy(d_input, h_packed, n, cudaMemcpyHostToDevice) !=
-      cudaSuccess) {
-    free(h_packed); free(row_scales);
-    cudaFree(d_input);
-    return -4;
-  }
-  free(h_packed);
-  *out_d_input = d_input;
-  *out_row_scales = row_scales;
-  return 0;
+    uint8_t *d_input = NULL;
+    if (cudaMalloc((void **)&d_input, n) != cudaSuccess) {
+        free(h_packed);
+        free(row_scales);
+        return -3;
+    }
+    if (cudaMemcpy(d_input, h_packed, n, cudaMemcpyHostToDevice) != cudaSuccess) {
+        free(h_packed);
+        free(row_scales);
+        cudaFree(d_input);
+        return -4;
+    }
+    free(h_packed);
+    *out_d_input = d_input;
+    *out_row_scales = row_scales;
+    return 0;
 }
 
 /* Pull the per-tensor weight scale (1 FP32) back from device memory.
@@ -301,39 +326,42 @@ static int upload_input_fp8(const ErlNifBinary *bin, int batch,
  * uses `read_weight_scales_per_channel` below to do per-channel dequant
  * on the host. */
 static int read_weight_scale(const PackedWeight *w, float *out_scale) {
-  if (!w->d_scales) return -1;
-  size_t count = w->scales_count > 0 ? w->scales_count : 1;
-  float *tmp = (float *)malloc(count * sizeof(float));
-  if (!tmp) return -2;
-  if (cudaMemcpy(tmp, w->d_scales, count * sizeof(float),
-                 cudaMemcpyDeviceToHost) != cudaSuccess) {
+    if (!w->d_scales)
+        return -1;
+    size_t count = w->scales_count > 0 ? w->scales_count : 1;
+    float *tmp = (float *)malloc(count * sizeof(float));
+    if (!tmp)
+        return -2;
+    if (cudaMemcpy(tmp, w->d_scales, count * sizeof(float), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+        free(tmp);
+        return -3;
+    }
+    float avg = 0.0f;
+    for (size_t i = 0; i < count; ++i)
+        avg += tmp[i];
+    *out_scale = (count > 0) ? (avg / (float)count) : 1.0f;
     free(tmp);
-    return -3;
-  }
-  float avg = 0.0f;
-  for (size_t i = 0; i < count; ++i) avg += tmp[i];
-  *out_scale = (count > 0) ? (avg / (float)count) : 1.0f;
-  free(tmp);
-  return 0;
+    return 0;
 }
 
 /* Allocate + populate a host array with the per-output-channel scales. */
-static int read_weight_scales_per_channel(const PackedWeight *w,
-                                            float **out_arr,
-                                            size_t *out_count) {
-  if (!w->d_scales || w->scales_count == 0) return -1;
-  float *arr = (float *)malloc(w->scales_count * sizeof(float));
-  if (!arr) return -2;
-  if (cudaMemcpy(arr, w->d_scales, w->scales_count * sizeof(float),
-                 cudaMemcpyDeviceToHost) != cudaSuccess) {
-    free(arr);
-    return -3;
-  }
-  *out_arr = arr;
-  *out_count = w->scales_count;
-  return 0;
+static int read_weight_scales_per_channel(const PackedWeight *w, float **out_arr,
+                                          size_t *out_count) {
+    if (!w->d_scales || w->scales_count == 0)
+        return -1;
+    float *arr = (float *)malloc(w->scales_count * sizeof(float));
+    if (!arr)
+        return -2;
+    if (cudaMemcpy(arr, w->d_scales, w->scales_count * sizeof(float), cudaMemcpyDeviceToHost) !=
+        cudaSuccess) {
+        free(arr);
+        return -3;
+    }
+    *out_arr = arr;
+    *out_count = w->scales_count;
+    return 0;
 }
-
 
 /* =========================================================================
  * Path A: CUTLASS FP8 GEMM (no bias, no activation, 660 TOPS on Ada).
@@ -347,30 +375,28 @@ static int read_weight_scales_per_channel(const PackedWeight *w,
  * compensate with `output_fp32 = c_fp16 * (act_scale * weight_scale)`
  * applied during the FP16 -> output binary conversion step.
  * ========================================================================= */
-static int run_cutlass_path(const PackedWeight *w,
-                             const uint8_t *d_input,
-                             int batch,
-                             float **out_d_C) {
-  /* FP32 output buffer eliminates the FP16 cast saturation that
+static int run_cutlass_path(const PackedWeight *w, const uint8_t *d_input, int batch,
+                            float **out_d_C) {
+    /* FP32 output buffer eliminates the FP16 cast saturation that
    * previously capped end-to-end precision at L2 ~13% on K=4096.
    * Caller applies per-row × per-channel dequant on the FP32 values
    * before the final FP16 binary encode on the host. */
-  float *d_C = NULL;
-  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
-  if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -1;
-  if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
-    cudaFree(d_C);
-    return -2;
-  }
-  int rc = cutlass_fp8_gemm_f32acc_out_f32(
-      batch, w->out_features, w->in_features,
-      (const void *)d_input, (const void *)w->d_weight, d_C);
-  if (rc != 0) {
-    cudaFree(d_C);
-    return -100 + rc;
-  }
-  *out_d_C = d_C;
-  return 0;
+    float *d_C = NULL;
+    size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
+    if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess)
+        return -1;
+    if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
+        cudaFree(d_C);
+        return -2;
+    }
+    int rc = cutlass_fp8_gemm_f32acc_out_f32(batch, w->out_features, w->in_features,
+                                             (const void *)d_input, (const void *)w->d_weight, d_C);
+    if (rc != 0) {
+        cudaFree(d_C);
+        return -100 + rc;
+    }
+    *out_d_C = d_C;
+    return 0;
 }
 
 /* =========================================================================
@@ -393,281 +419,243 @@ static int run_cutlass_path(const PackedWeight *w,
  * descriptors). To match the descriptors used by `cublaslt_fp8_algo_sweep`
  * we keep the same TN swap (m_lt=N, n_lt=M, k_lt=K).
  * ========================================================================= */
-static int run_cublaslt_path(const PackedWeight *w,
-                               const uint8_t *d_input,
-                               int batch,
-                               const uint16_t *d_bias /* may be NULL */,
-                              int epilogue,
-                              float **out_d_C) {
-  if (ensure_lt_ctx() != 0) return -1;
+static int run_cublaslt_path(const PackedWeight *w, const uint8_t *d_input, int batch,
+                             const uint16_t *d_bias /* may be NULL */, int epilogue,
+                             float **out_d_C) {
+    if (ensure_lt_ctx() != 0)
+        return -1;
 
-  /* FP32 output buffer eliminates the FP16 cast saturation that the
+    /* FP32 output buffer eliminates the FP16 cast saturation that the
    * previous FP16-output path suffered at large K — same fix already
    * applied to the CUTLASS f32acc_out_f32 path. Per-row × per-channel
    * dequant runs on FP32 host afterwards. */
-  float *d_C = NULL;
-  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
-  if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess) return -2;
-  if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
-    cudaFree(d_C);
-    return -3;
-  }
+    float *d_C = NULL;
+    size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
+    if (cudaMalloc((void **)&d_C, bytes_C) != cudaSuccess)
+        return -2;
+    if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
+        cudaFree(d_C);
+        return -3;
+    }
 
-  cublasLtMatmulDesc_t desc;
-  if (cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) !=
-      CUBLAS_STATUS_SUCCESS) {
-    cudaFree(d_C);
-    return -4;
-  }
-  cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
-  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t,
-                                  sizeof(op_t));
-  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n,
-                                  sizeof(op_n));
-  cublasLtEpilogue_t ep = (cublasLtEpilogue_t)epilogue;
-  cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &ep,
-                                  sizeof(ep));
-  if (d_bias && (epilogue == CUBLASLT_EPILOGUE_BIAS ||
-                  epilogue == CUBLASLT_EPILOGUE_RELU_BIAS ||
-                  epilogue == CUBLASLT_EPILOGUE_GELU_BIAS)) {
-    cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER,
-                                    &d_bias, sizeof(d_bias));
-  }
+    cublasLtMatmulDesc_t desc;
+    if (cublasLtMatmulDescCreate(&desc, CUBLAS_COMPUTE_32F, CUDA_R_32F) != CUBLAS_STATUS_SUCCESS) {
+        cudaFree(d_C);
+        return -4;
+    }
+    cublasOperation_t op_t = CUBLAS_OP_T, op_n = CUBLAS_OP_N;
+    cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSA, &op_t, sizeof(op_t));
+    cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_TRANSB, &op_n, sizeof(op_n));
+    cublasLtEpilogue_t ep = (cublasLtEpilogue_t)epilogue;
+    cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_EPILOGUE, &ep, sizeof(ep));
+    if (d_bias && (epilogue == CUBLASLT_EPILOGUE_BIAS || epilogue == CUBLASLT_EPILOGUE_RELU_BIAS ||
+                   epilogue == CUBLASLT_EPILOGUE_GELU_BIAS)) {
+        cublasLtMatmulDescSetAttribute(desc, CUBLASLT_MATMUL_DESC_BIAS_POINTER, &d_bias,
+                                       sizeof(d_bias));
+    }
 
-  cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
-  cublasLtMatrixLayoutCreate(&layout_bt, CUDA_R_8F_E4M3,
-                              (uint64_t)w->in_features,
-                              (uint64_t)w->out_features,
-                              (int64_t)w->in_features);
-  cublasLtMatrixLayoutCreate(&layout_a, CUDA_R_8F_E4M3,
-                              (uint64_t)w->in_features,
-                              (uint64_t)batch,
-                              (int64_t)w->in_features);
-  cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F,
-                              (uint64_t)w->out_features,
-                              (uint64_t)batch,
-                              (int64_t)w->out_features);
+    cublasLtMatrixLayout_t layout_bt, layout_a, layout_c;
+    cublasLtMatrixLayoutCreate(&layout_bt, CUDA_R_8F_E4M3, (uint64_t)w->in_features,
+                               (uint64_t)w->out_features, (int64_t)w->in_features);
+    cublasLtMatrixLayoutCreate(&layout_a, CUDA_R_8F_E4M3, (uint64_t)w->in_features, (uint64_t)batch,
+                               (int64_t)w->in_features);
+    cublasLtMatrixLayoutCreate(&layout_c, CUDA_R_32F, (uint64_t)w->out_features, (uint64_t)batch,
+                               (int64_t)w->out_features);
 
-  cublasLtMatmulPreference_t pref;
-  cublasLtMatmulPreferenceCreate(&pref);
-  cublasLtMatmulPreferenceSetAttribute(pref,
-                                        CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
-                                        &g_lt_workspace_size,
-                                        sizeof(g_lt_workspace_size));
+    cublasLtMatmulPreference_t pref;
+    cublasLtMatmulPreferenceCreate(&pref);
+    cublasLtMatmulPreferenceSetAttribute(pref, CUBLASLT_MATMUL_PREF_MAX_WORKSPACE_BYTES,
+                                         &g_lt_workspace_size, sizeof(g_lt_workspace_size));
 
-  cublasLtMatmulHeuristicResult_t heur;
-  int returned = 0;
-  cublasStatus_t st = cublasLtMatmulAlgoGetHeuristic(
-      g_lt_ctx, desc, layout_bt, layout_a, layout_c, layout_c, pref, 1, &heur,
-      &returned);
-  if (st != CUBLAS_STATUS_SUCCESS || returned == 0) {
+    cublasLtMatmulHeuristicResult_t heur;
+    int returned = 0;
+    cublasStatus_t st =
+        cublasLtMatmulAlgoGetHeuristic(g_lt_ctx, desc, layout_bt, layout_a, layout_c, layout_c,
+                                       pref, 1, &heur, &returned);
+    if (st != CUBLAS_STATUS_SUCCESS || returned == 0) {
+        cublasLtMatmulPreferenceDestroy(pref);
+        cublasLtMatrixLayoutDestroy(layout_bt);
+        cublasLtMatrixLayoutDestroy(layout_a);
+        cublasLtMatrixLayoutDestroy(layout_c);
+        cublasLtMatmulDescDestroy(desc);
+        cudaFree(d_C);
+        return -5;
+    }
+
+    float alpha = 1.0f, beta = 0.0f;
+    st = cublasLtMatmul(g_lt_ctx, desc, &alpha, w->d_weight, layout_bt, d_input, layout_a, &beta,
+                        d_C, layout_c, d_C, layout_c, &heur.algo, g_lt_workspace,
+                        g_lt_workspace_size, (cudaStream_t)0);
+
     cublasLtMatmulPreferenceDestroy(pref);
     cublasLtMatrixLayoutDestroy(layout_bt);
     cublasLtMatrixLayoutDestroy(layout_a);
     cublasLtMatrixLayoutDestroy(layout_c);
     cublasLtMatmulDescDestroy(desc);
-    cudaFree(d_C);
-    return -5;
-  }
 
-  float alpha = 1.0f, beta = 0.0f;
-  st = cublasLtMatmul(g_lt_ctx, desc, &alpha,
-                       w->d_weight, layout_bt,
-                       d_input,     layout_a,
-                       &beta,
-                       d_C, layout_c, d_C, layout_c,
-                       &heur.algo, g_lt_workspace, g_lt_workspace_size,
-                       (cudaStream_t)0);
-
-  cublasLtMatmulPreferenceDestroy(pref);
-  cublasLtMatrixLayoutDestroy(layout_bt);
-  cublasLtMatrixLayoutDestroy(layout_a);
-  cublasLtMatrixLayoutDestroy(layout_c);
-  cublasLtMatmulDescDestroy(desc);
-
-  if (st != CUBLAS_STATUS_SUCCESS) {
-    cudaFree(d_C);
-    return -1000 - (int)st;
-  }
-  *out_d_C = d_C;
-  return 0;
+    if (st != CUBLAS_STATUS_SUCCESS) {
+        cudaFree(d_C);
+        return -1000 - (int)st;
+    }
+    *out_d_C = d_C;
+    return 0;
 }
 
-static int run_w8a16_cublaslt_impl(const PackedWeight *w,
-                                    const void *d_weight,
-                                    cudaDataType_t weight_type,
-                                    const uint16_t *d_input,
-                                    int batch,
+static int run_w8a16_cublaslt_impl(const PackedWeight *w, const void *d_weight,
+                                   cudaDataType_t weight_type, const uint16_t *d_input, int batch,
+                                   float **out_d_C) {
+    if (ensure_lt_ctx() != 0)
+        return -1;
+
+    size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
+    /* Reuse a persistent device output buffer instead of malloc/free per call. */
+    if (ensure_cached_buf((void **)&g_d_outC, &g_d_outC_cap, bytes_C) != 0)
+        return -2;
+    float *d_C = g_d_outC;
+    if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
+        return -3;
+    }
+
+    LinearLtPlan *plan = NULL;
+    int plan_rc = get_linear_lt_plan(w, weight_type, batch, &plan);
+    if (plan_rc != 0)
+        return -8 + plan_rc;
+
+    float alpha = 1.0f, beta = 0.0f;
+    cublasStatus_t st =
+        cublasLtMatmul(g_lt_ctx, plan->desc, &alpha, d_weight, plan->layout_bt, d_input,
+                       plan->layout_a, &beta, d_C, plan->layout_c, d_C, plan->layout_c,
+                       &plan->heur.algo, g_lt_workspace, g_lt_workspace_size, (cudaStream_t)0);
+
+    if (st != CUBLAS_STATUS_SUCCESS) {
+        return -1000 - (int)st;
+    }
+    *out_d_C = d_C;
+    return 0;
+}
+
+static int run_w8a16_cublaslt_mixed(const PackedWeight *w, const uint16_t *d_input, int batch,
                                     float **out_d_C) {
-  if (ensure_lt_ctx() != 0) return -1;
-
-  size_t bytes_C = (size_t)batch * (size_t)w->out_features * sizeof(float);
-  /* Reuse a persistent device output buffer instead of malloc/free per call. */
-  if (ensure_cached_buf((void **)&g_d_outC, &g_d_outC_cap, bytes_C) != 0)
-    return -2;
-  float *d_C = g_d_outC;
-  if (cudaMemset(d_C, 0, bytes_C) != cudaSuccess) {
-    return -3;
-  }
-
-  LinearLtPlan *plan = NULL;
-  int plan_rc = get_linear_lt_plan(w, weight_type, batch, &plan);
-  if (plan_rc != 0) return -8 + plan_rc;
-
-  float alpha = 1.0f, beta = 0.0f;
-  cublasStatus_t st = cublasLtMatmul(g_lt_ctx, plan->desc, &alpha,
-                       d_weight, plan->layout_bt,
-                       d_input,  plan->layout_a,
-                        &beta,
-                       d_C, plan->layout_c, d_C, plan->layout_c,
-                       &plan->heur.algo, g_lt_workspace, g_lt_workspace_size,
-                        (cudaStream_t)0);
-
-  if (st != CUBLAS_STATUS_SUCCESS) {
-    return -1000 - (int)st;
-  }
-  *out_d_C = d_C;
-  return 0;
+    return run_w8a16_cublaslt_impl(w, w->d_weight, CUDA_R_8F_E4M3, d_input, batch, out_d_C);
 }
 
-static int run_w8a16_cublaslt_mixed(const PackedWeight *w,
-                                     const uint16_t *d_input,
-                                     int batch,
-                                     float **out_d_C) {
-  return run_w8a16_cublaslt_impl(w, w->d_weight, CUDA_R_8F_E4M3, d_input,
-                                  batch, out_d_C);
-}
+static int run_w8a16_dequant_cublaslt(const PackedWeight *w, const uint16_t *d_input, int batch,
+                                      float **out_d_C) {
+    size_t bytes = (size_t)w->in_features * (size_t)w->out_features * sizeof(uint16_t);
+    PackedWeight *mw = (PackedWeight *)w;
+    if (mw->d_fp16_cache && mw->fp16_cache_ready && mw->fp16_cache_bytes == bytes) {
+        return run_w8a16_cublaslt_impl(w, mw->d_fp16_cache, CUDA_R_16F, d_input, batch, out_d_C);
+    }
+    if (mw->d_fp16_cache && mw->fp16_cache_bytes != bytes) {
+        cudaFree(mw->d_fp16_cache);
+        mw->d_fp16_cache = NULL;
+        mw->fp16_cache_bytes = 0;
+        mw->fp16_cache_ready = 0;
+    }
+    if (!mw->d_fp16_cache) {
+        if (cudaMalloc(&mw->d_fp16_cache, bytes) != cudaSuccess)
+            return -20;
+        mw->fp16_cache_bytes = bytes;
+    }
+    uint16_t *d_weight_fp16 = (uint16_t *)mw->d_fp16_cache;
 
-static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
-                                       const uint16_t *d_input,
-                                       int batch,
-                                       float **out_d_C) {
-  size_t bytes = (size_t)w->in_features * (size_t)w->out_features *
-                 sizeof(uint16_t);
-  PackedWeight *mw = (PackedWeight *)w;
-  if (mw->d_fp16_cache && mw->fp16_cache_ready && mw->fp16_cache_bytes == bytes) {
-    return run_w8a16_cublaslt_impl(w, mw->d_fp16_cache, CUDA_R_16F, d_input,
-                                   batch, out_d_C);
-  }
-  if (mw->d_fp16_cache && mw->fp16_cache_bytes != bytes) {
-    cudaFree(mw->d_fp16_cache);
-    mw->d_fp16_cache = NULL;
-    mw->fp16_cache_bytes = 0;
-    mw->fp16_cache_ready = 0;
-  }
-  if (!mw->d_fp16_cache) {
-    if (cudaMalloc(&mw->d_fp16_cache, bytes) != cudaSuccess) return -20;
-    mw->fp16_cache_bytes = bytes;
-  }
-  uint16_t *d_weight_fp16 = (uint16_t *)mw->d_fp16_cache;
+    int rc;
+    if (w->block_size > 0) {
+        rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight, (const float *)w->d_scales,
+                                                       d_weight_fp16, w->in_features,
+                                                       w->out_features, w->block_size, NULL);
+    } else {
+        rc =
+            cuda_fp8_colmajor_dequant_to_fp16(w->d_weight, (const float *)w->d_scales,
+                                              d_weight_fp16, w->in_features, w->out_features, NULL);
+    }
+    if (rc != 0) {
+        return -30 + rc;
+    }
+    mw->fp16_cache_ready = 1;
 
-  int rc;
-  if (w->block_size > 0) {
-    rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight,
-                                                    (const float *)w->d_scales,
-                                                     d_weight_fp16,
-                                                     w->in_features,
-                                                     w->out_features,
-                                                     w->block_size,
-                                                     NULL);
-  } else {
-    rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight,
-                                             (const float *)w->d_scales,
-                                             d_weight_fp16,
-                                             w->in_features,
-                                             w->out_features,
-                                             NULL);
-  }
-  if (rc != 0) {
-    return -30 + rc;
-  }
-  mw->fp16_cache_ready = 1;
-
-  rc = run_w8a16_cublaslt_impl(w, d_weight_fp16, CUDA_R_16F, d_input, batch,
-                                 out_d_C);
-  return (rc == 0) ? 0 : (-40 + rc);
+    rc = run_w8a16_cublaslt_impl(w, d_weight_fp16, CUDA_R_16F, d_input, batch, out_d_C);
+    return (rc == 0) ? 0 : (-40 + rc);
 }
 
 /* Download an FP32 device buffer (output of the CUTLASS f32acc_out_f32
  * GEMM), apply per-row × per-channel dequant on FP32, cast to FP16, and
  * emit a FP16 binary. The FP32 accumulator skips the cast saturation
  * that the older FP16-output path suffered at large K. */
-static int download_fp32_and_make_binary(ErlNifEnv *env, float *d_C, int batch,
-                                          int out_features,
-                                          const float *act_scales,
-                                          const float *weight_scales,
-                                          ERL_NIF_TERM *out_term) {
-  size_t n = (size_t)batch * (size_t)out_features;
-  size_t in_bytes = n * sizeof(float);
-  size_t out_bytes = n * sizeof(uint16_t);
-  float *h_C = (float *)malloc(in_bytes);
-  if (!h_C) return -1;
-  if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
-    free(h_C);
-    return -2;
-  }
-
-  ErlNifBinary outbin;
-  if (!enif_alloc_binary(out_bytes, &outbin)) {
-    free(h_C);
-    return -3;
-  }
-  uint16_t *dst = (uint16_t *)outbin.data;
-
-  for (int b = 0; b < batch; ++b) {
-    float a = act_scales ? act_scales[b] : 1.0f;
-    for (int c = 0; c < out_features; ++c) {
-      size_t i = (size_t)b * (size_t)out_features + (size_t)c;
-      float wsc = weight_scales ? weight_scales[c] : 1.0f;
-      dst[i] = float_to_half(h_C[i] * a * wsc);
+static int download_fp32_and_make_binary(ErlNifEnv *env, float *d_C, int batch, int out_features,
+                                         const float *act_scales, const float *weight_scales,
+                                         ERL_NIF_TERM *out_term) {
+    size_t n = (size_t)batch * (size_t)out_features;
+    size_t in_bytes = n * sizeof(float);
+    size_t out_bytes = n * sizeof(uint16_t);
+    float *h_C = (float *)malloc(in_bytes);
+    if (!h_C)
+        return -1;
+    if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        free(h_C);
+        return -2;
     }
-  }
-  free(h_C);
 
-  *out_term = enif_make_binary(env, &outbin);
-  return 0;
+    ErlNifBinary outbin;
+    if (!enif_alloc_binary(out_bytes, &outbin)) {
+        free(h_C);
+        return -3;
+    }
+    uint16_t *dst = (uint16_t *)outbin.data;
+
+    for (int b = 0; b < batch; ++b) {
+        float a = act_scales ? act_scales[b] : 1.0f;
+        for (int c = 0; c < out_features; ++c) {
+            size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+            float wsc = weight_scales ? weight_scales[c] : 1.0f;
+            dst[i] = float_to_half(h_C[i] * a * wsc);
+        }
+    }
+    free(h_C);
+
+    *out_term = enif_make_binary(env, &outbin);
+    return 0;
 }
 
-static int download_fp32_scaled_bias_and_make_binary(ErlNifEnv *env,
-                                                      float *d_C,
-                                                      int batch,
-                                                      int out_features,
-                                                      const float *act_scales,
-                                                      const float *weight_scales,
-                                                      const ErlNifBinary *bias,
-                                                      ERL_NIF_TERM *out_term) {
-  size_t n = (size_t)batch * (size_t)out_features;
-  size_t in_bytes = n * sizeof(float);
-  size_t out_bytes = n * sizeof(uint16_t);
-  float *h_C = (float *)malloc(in_bytes);
-  if (!h_C) return -1;
-  if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
-    free(h_C);
-    return -2;
-  }
-
-  ErlNifBinary outbin;
-  if (!enif_alloc_binary(out_bytes, &outbin)) {
-    free(h_C);
-    return -3;
-  }
-  uint16_t *dst = (uint16_t *)outbin.data;
-  const uint16_t *bias_fp16 = bias ? (const uint16_t *)bias->data : NULL;
-
-  for (int b = 0; b < batch; ++b) {
-    float a = act_scales ? act_scales[b] : 1.0f;
-    for (int c = 0; c < out_features; ++c) {
-      size_t i = (size_t)b * (size_t)out_features + (size_t)c;
-      float wsc = weight_scales ? weight_scales[c] : 1.0f;
-      float v = h_C[i] * a * wsc;
-      if (bias_fp16) v += f16_to_f32(bias_fp16[c]);
-      dst[i] = float_to_half(v);
+static int download_fp32_scaled_bias_and_make_binary(ErlNifEnv *env, float *d_C, int batch,
+                                                     int out_features, const float *act_scales,
+                                                     const float *weight_scales,
+                                                     const ErlNifBinary *bias,
+                                                     ERL_NIF_TERM *out_term) {
+    size_t n = (size_t)batch * (size_t)out_features;
+    size_t in_bytes = n * sizeof(float);
+    size_t out_bytes = n * sizeof(uint16_t);
+    float *h_C = (float *)malloc(in_bytes);
+    if (!h_C)
+        return -1;
+    if (cudaMemcpy(h_C, d_C, in_bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        free(h_C);
+        return -2;
     }
-  }
-  free(h_C);
 
-  *out_term = enif_make_binary(env, &outbin);
-  return 0;
+    ErlNifBinary outbin;
+    if (!enif_alloc_binary(out_bytes, &outbin)) {
+        free(h_C);
+        return -3;
+    }
+    uint16_t *dst = (uint16_t *)outbin.data;
+    const uint16_t *bias_fp16 = bias ? (const uint16_t *)bias->data : NULL;
+
+    for (int b = 0; b < batch; ++b) {
+        float a = act_scales ? act_scales[b] : 1.0f;
+        for (int c = 0; c < out_features; ++c) {
+            size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+            float wsc = weight_scales ? weight_scales[c] : 1.0f;
+            float v = h_C[i] * a * wsc;
+            if (bias_fp16)
+                v += f16_to_f32(bias_fp16[c]);
+            dst[i] = float_to_half(v);
+        }
+    }
+    free(h_C);
+
+    *out_term = enif_make_binary(env, &outbin);
+    return 0;
 }
 
 /* Download the FP16 device buffer (legacy / cublasLt epilogue path),
@@ -675,49 +663,47 @@ static int download_fp32_scaled_bias_and_make_binary(ErlNifEnv *env,
  * `act_scales` may be NULL (single scalar fallback in
  * `legacy_combined_scale`). `weight_scales` may be NULL when only the
  * legacy path is needed. */
-static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
-                                     int out_features,
-                                     const float *act_scales,
-                                     const float *weight_scales,
-                                     float legacy_combined_scale,
-                                     ERL_NIF_TERM *out_term) {
-  size_t n = (size_t)batch * (size_t)out_features;
-  size_t bytes = n * sizeof(uint16_t);
-  uint16_t *h_C = (uint16_t *)malloc(bytes);
-  if (!h_C) return -1;
-  if (cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
-    free(h_C);
-    return -2;
-  }
-
-  ErlNifBinary outbin;
-  if (!enif_alloc_binary(bytes, &outbin)) {
-    free(h_C);
-    return -3;
-  }
-  uint16_t *dst = (uint16_t *)outbin.data;
-
-  if (weight_scales != NULL && act_scales != NULL) {
-    /* Full per-row × per-channel dequant. */
-    for (int b = 0; b < batch; ++b) {
-      float a = act_scales[b];
-      for (int c = 0; c < out_features; ++c) {
-        size_t i = (size_t)b * (size_t)out_features + (size_t)c;
-        float v = f16_to_f32(h_C[i]) * a * weight_scales[c];
-        dst[i] = float_to_half(v);
-      }
+static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch, int out_features,
+                                    const float *act_scales, const float *weight_scales,
+                                    float legacy_combined_scale, ERL_NIF_TERM *out_term) {
+    size_t n = (size_t)batch * (size_t)out_features;
+    size_t bytes = n * sizeof(uint16_t);
+    uint16_t *h_C = (uint16_t *)malloc(bytes);
+    if (!h_C)
+        return -1;
+    if (cudaMemcpy(h_C, d_C, bytes, cudaMemcpyDeviceToHost) != cudaSuccess) {
+        free(h_C);
+        return -2;
     }
-  } else {
-    /* Legacy single combined scale path. */
-    for (size_t i = 0; i < n; ++i) {
-      float v = f16_to_f32(h_C[i]) * legacy_combined_scale;
-      dst[i] = float_to_half(v);
-    }
-  }
-  free(h_C);
 
-  *out_term = enif_make_binary(env, &outbin);
-  return 0;
+    ErlNifBinary outbin;
+    if (!enif_alloc_binary(bytes, &outbin)) {
+        free(h_C);
+        return -3;
+    }
+    uint16_t *dst = (uint16_t *)outbin.data;
+
+    if (weight_scales != NULL && act_scales != NULL) {
+        /* Full per-row × per-channel dequant. */
+        for (int b = 0; b < batch; ++b) {
+            float a = act_scales[b];
+            for (int c = 0; c < out_features; ++c) {
+                size_t i = (size_t)b * (size_t)out_features + (size_t)c;
+                float v = f16_to_f32(h_C[i]) * a * weight_scales[c];
+                dst[i] = float_to_half(v);
+            }
+        }
+    } else {
+        /* Legacy single combined scale path. */
+        for (size_t i = 0; i < n; ++i) {
+            float v = f16_to_f32(h_C[i]) * legacy_combined_scale;
+            dst[i] = float_to_half(v);
+        }
+    }
+    free(h_C);
+
+    *out_term = enif_make_binary(env, &outbin);
+    return 0;
 }
 
 #endif /* !_WIN32 && !VIVA_NO_CUDA */
@@ -725,99 +711,108 @@ static int download_and_make_binary(ErlNifEnv *env, uint16_t *d_C, int batch,
 /* =========================================================================
  * NIF entry: nt_linear_fp8(InputBin, PackedWeight, BiasOrNil, Epilogue)
  * ========================================================================= */
-ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
-                             const ERL_NIF_TERM argv[]) {
-  (void)argc;
+ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  return make_error(env, "cuda_not_available");
+    return make_error(env, "cuda_not_available");
 #else
-  ErlNifBinary input_bin;
-  if (!enif_inspect_binary(env, argv[0], &input_bin))
-    return make_error(env, "invalid_input_binary");
+    ErlNifBinary input_bin;
+    if (!enif_inspect_binary(env, argv[0], &input_bin))
+        return make_error(env, "invalid_input_binary");
 
-  PackedWeight *w = get_packed_weight(env, argv[1]);
-  if (!w) return make_error(env, "invalid_packed_weight");
-  if (w->dtype != PW_FP8) return make_error(env, "weight_not_fp8");
+    PackedWeight *w = get_packed_weight(env, argv[1]);
+    if (!w)
+        return make_error(env, "invalid_packed_weight");
+    if (w->dtype != PW_FP8)
+        return make_error(env, "weight_not_fp8");
 
-  /* Derive batch from binary size: batch = bytes / (in_features * 2). */
-  size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
-  if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
-    return make_error(env, "input_size_mismatch");
-  int batch = (int)(input_bin.size / expected_per_row);
-  if (batch <= 0) return make_error(env, "input_batch_zero");
+    /* Derive batch from binary size: batch = bytes / (in_features * 2). */
+    size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
+    if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
+        return make_error(env, "input_size_mismatch");
+    int batch = (int)(input_bin.size / expected_per_row);
+    if (batch <= 0)
+        return make_error(env, "input_batch_zero");
 
-  /* Bias: nil | binary (FP16). For now only binary is consumed. */
-  ErlNifBinary bias_bin;
-  int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
-  if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
-    return make_error(env, "bias_size_mismatch");
+    /* Bias: nil | binary (FP16). For now only binary is consumed. */
+    ErlNifBinary bias_bin;
+    int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
+    if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
+        return make_error(env, "bias_size_mismatch");
 
-  int epilogue = 1;
-  if (!enif_get_int(env, argv[3], &epilogue))
-    return make_error(env, "invalid_epilogue");
+    int epilogue = 1;
+    if (!enif_get_int(env, argv[3], &epilogue))
+        return make_error(env, "invalid_epilogue");
 
-  /* Quantize + upload input. */
-  uint8_t *d_input = NULL;
-  float *act_scales = NULL;
-  int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input,
-                            &act_scales);
-  if (rc != 0) return make_error(env, "input_upload_failed");
+    /* Quantize + upload input. */
+    uint8_t *d_input = NULL;
+    float *act_scales = NULL;
+    int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input, &act_scales);
+    if (rc != 0)
+        return make_error(env, "input_upload_failed");
 
-  /* Upload bias if present. */
-  uint16_t *d_bias = NULL;
-  if (has_bias) {
-    if (cudaMalloc((void **)&d_bias, bias_bin.size) != cudaSuccess) {
-      cudaFree(d_input);
-      return make_error(env, "cuda_malloc_bias_failed");
+    /* Upload bias if present. */
+    uint16_t *d_bias = NULL;
+    if (has_bias) {
+        if (cudaMalloc((void **)&d_bias, bias_bin.size) != cudaSuccess) {
+            cudaFree(d_input);
+            return make_error(env, "cuda_malloc_bias_failed");
+        }
+        if (cudaMemcpy(d_bias, bias_bin.data, bias_bin.size, cudaMemcpyHostToDevice) !=
+            cudaSuccess) {
+            cudaFree(d_bias);
+            cudaFree(d_input);
+            return make_error(env, "cuda_upload_bias_failed");
+        }
     }
-    if (cudaMemcpy(d_bias, bias_bin.data, bias_bin.size,
-                    cudaMemcpyHostToDevice) != cudaSuccess) {
-      cudaFree(d_bias);
-      cudaFree(d_input);
-      return make_error(env, "cuda_upload_bias_failed");
-    }
-  }
 
-  /* Both CUTLASS and cublasLt now produce FP32 output buffers — the
+    /* Both CUTLASS and cublasLt now produce FP32 output buffers — the
    * dequant + FP16 cast happens uniformly on host afterwards. */
-  float *d_C_fp32 = NULL;
-  int use_cublaslt = has_bias || (epilogue != 1);
-  if (use_cublaslt) {
-    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C_fp32);
-  } else {
-    rc = run_cutlass_path(w, d_input, batch, &d_C_fp32);
-  }
-  cudaFree(d_input);
-  if (rc != 0) {
-    if (d_bias) cudaFree(d_bias);
-    if (d_C_fp32) cudaFree(d_C_fp32);
-    char err[64];
-    snprintf(err, sizeof(err), "gemm_failed_%d", rc);
-    return make_error(env, err);
-  }
+    float *d_C_fp32 = NULL;
+    int use_cublaslt = has_bias || (epilogue != 1);
+    if (use_cublaslt) {
+        rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C_fp32);
+    } else {
+        rc = run_cutlass_path(w, d_input, batch, &d_C_fp32);
+    }
+    cudaFree(d_input);
+    if (rc != 0) {
+        if (d_bias)
+            cudaFree(d_bias);
+        if (d_C_fp32)
+            cudaFree(d_C_fp32);
+        char err[64];
+        snprintf(err, sizeof(err), "gemm_failed_%d", rc);
+        return make_error(env, err);
+    }
 
-  /* Per-output-channel dequant. */
-  float *w_scales = NULL;
-  size_t w_scales_count = 0;
-  if (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0
-      || w_scales_count != (size_t)w->out_features) {
-    if (d_bias) cudaFree(d_bias);
-    if (d_C_fp32) cudaFree(d_C_fp32);
-    if (w_scales) free(w_scales);
-    return make_error(env, "weight_scale_read_failed");
-  }
+    /* Per-output-channel dequant. */
+    float *w_scales = NULL;
+    size_t w_scales_count = 0;
+    if (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0 ||
+        w_scales_count != (size_t)w->out_features) {
+        if (d_bias)
+            cudaFree(d_bias);
+        if (d_C_fp32)
+            cudaFree(d_C_fp32);
+        if (w_scales)
+            free(w_scales);
+        return make_error(env, "weight_scale_read_failed");
+    }
 
+    ERL_NIF_TERM out_term;
+    rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features, act_scales, w_scales,
+                                       &out_term);
+    free(act_scales);
+    free(w_scales);
+    if (d_bias)
+        cudaFree(d_bias);
+    if (d_C_fp32)
+        cudaFree(d_C_fp32);
+    if (rc != 0)
+        return make_error(env, "output_download_failed");
 
-  ERL_NIF_TERM out_term;
-  rc = download_fp32_and_make_binary(env, d_C_fp32, batch, w->out_features,
-                                      act_scales, w_scales, &out_term);
-  free(act_scales);
-  free(w_scales);
-  if (d_bias) cudaFree(d_bias);
-  if (d_C_fp32) cudaFree(d_C_fp32);
-  if (rc != 0) return make_error(env, "output_download_failed");
-
-  return make_ok(env, out_term);
+    return make_ok(env, out_term);
 #endif
 }
 
@@ -828,70 +823,74 @@ ERL_NIF_TERM nt_linear_fp8(ErlNifEnv *env, int argc,
  * avoids the activation-side FP8 quantization noise that causes cancellation
  * on Llama-scale K while preserving the existing PackedWeight format.
  * ========================================================================= */
-ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
-                                  const ERL_NIF_TERM argv[]) {
-  (void)argc;
+ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  return make_error(env, "cuda_not_available");
+    return make_error(env, "cuda_not_available");
 #else
-  ErlNifBinary input_bin;
-  if (!enif_inspect_binary(env, argv[0], &input_bin))
-    return make_error(env, "invalid_input_binary");
+    ErlNifBinary input_bin;
+    if (!enif_inspect_binary(env, argv[0], &input_bin))
+        return make_error(env, "invalid_input_binary");
 
-  PackedWeight *w = get_packed_weight(env, argv[1]);
-  if (!w) return make_error(env, "invalid_packed_weight");
-  if (w->dtype != PW_FP8) return make_error(env, "weight_not_fp8");
+    PackedWeight *w = get_packed_weight(env, argv[1]);
+    if (!w)
+        return make_error(env, "invalid_packed_weight");
+    if (w->dtype != PW_FP8)
+        return make_error(env, "weight_not_fp8");
 
-  size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
-  if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
-    return make_error(env, "input_size_mismatch");
-  int batch = (int)(input_bin.size / expected_per_row);
-  if (batch <= 0) return make_error(env, "input_batch_zero");
+    size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
+    if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
+        return make_error(env, "input_size_mismatch");
+    int batch = (int)(input_bin.size / expected_per_row);
+    if (batch <= 0)
+        return make_error(env, "input_batch_zero");
 
-  ErlNifBinary bias_bin;
-  int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
-  if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
-    return make_error(env, "bias_size_mismatch");
+    ErlNifBinary bias_bin;
+    int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
+    if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
+        return make_error(env, "bias_size_mismatch");
 
-  /* Cached input buffer — avoids cudaMalloc/Free per call. */
-  if (ensure_cached_buf(&g_d_input, &g_d_input_cap, input_bin.size) != 0)
-    return make_error(env, "cuda_malloc_input_failed");
-  uint16_t *d_input = (uint16_t *)g_d_input;
-  if (cudaMemcpy(d_input, input_bin.data, input_bin.size,
-                  cudaMemcpyHostToDevice) != cudaSuccess) {
-    return make_error(env, "cuda_upload_input_failed");
-  }
+    /* Cached input buffer — avoids cudaMalloc/Free per call. */
+    if (ensure_cached_buf(&g_d_input, &g_d_input_cap, input_bin.size) != 0)
+        return make_error(env, "cuda_malloc_input_failed");
+    uint16_t *d_input = (uint16_t *)g_d_input;
+    if (cudaMemcpy(d_input, input_bin.data, input_bin.size, cudaMemcpyHostToDevice) !=
+        cudaSuccess) {
+        return make_error(env, "cuda_upload_input_failed");
+    }
 
-  /* run_w8a16_*_cublaslt now writes into the cached g_d_outC buffer. */
-  float *d_C = NULL;
-  int rc = run_w8a16_cublaslt_mixed(w, d_input, batch, &d_C);
-  int used_mixed = (rc == 0);
-  if (rc != 0) {
-    rc = run_w8a16_dequant_cublaslt(w, d_input, batch, &d_C);
-  }
-  if (rc != 0) {
-    char err[64];
-    snprintf(err, sizeof(err), "w8a16_gemm_failed_%d", rc);
-    return make_error(env, err);
-  }
+    /* run_w8a16_*_cublaslt now writes into the cached g_d_outC buffer. */
+    float *d_C = NULL;
+    int rc = run_w8a16_cublaslt_mixed(w, d_input, batch, &d_C);
+    int used_mixed = (rc == 0);
+    if (rc != 0) {
+        rc = run_w8a16_dequant_cublaslt(w, d_input, batch, &d_C);
+    }
+    if (rc != 0) {
+        char err[64];
+        snprintf(err, sizeof(err), "w8a16_gemm_failed_%d", rc);
+        return make_error(env, err);
+    }
 
-  float *w_scales = NULL;
-  size_t w_scales_count = 0;
-  if (used_mixed &&
-      (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0 ||
-       w_scales_count != (size_t)w->out_features)) {
-    if (w_scales) free(w_scales);
-    return make_error(env, "weight_scale_read_failed");
-  }
+    float *w_scales = NULL;
+    size_t w_scales_count = 0;
+    if (used_mixed && (read_weight_scales_per_channel(w, &w_scales, &w_scales_count) != 0 ||
+                       w_scales_count != (size_t)w->out_features)) {
+        if (w_scales)
+            free(w_scales);
+        return make_error(env, "weight_scale_read_failed");
+    }
 
-  ERL_NIF_TERM out_term;
-  rc = download_fp32_scaled_bias_and_make_binary(
-      env, d_C, batch, w->out_features, NULL, used_mixed ? w_scales : NULL,
-      has_bias ? &bias_bin : NULL, &out_term);
-  if (w_scales) free(w_scales);
-  if (rc != 0) return make_error(env, "output_download_failed");
+    ERL_NIF_TERM out_term;
+    rc = download_fp32_scaled_bias_and_make_binary(env, d_C, batch, w->out_features, NULL,
+                                                   used_mixed ? w_scales : NULL,
+                                                   has_bias ? &bias_bin : NULL, &out_term);
+    if (w_scales)
+        free(w_scales);
+    if (rc != 0)
+        return make_error(env, "output_download_failed");
 
-  return make_ok(env, out_term);
+    return make_ok(env, out_term);
 #endif
 }
 
@@ -901,84 +900,91 @@ ERL_NIF_TERM nt_linear_fp8_w8a16(ErlNifEnv *env, int argc,
  * Always routes through cublasLt with BIAS+GELU (36) or GELU (32). The
  * 4th argument is ignored, kept for arity parity with `nt_linear_fp8`.
  * ========================================================================= */
-ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc,
-                                 const ERL_NIF_TERM argv[]) {
-  (void)argc;
+ERL_NIF_TERM nt_linear_gelu_fp8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
 #if defined(_WIN32) || defined(VIVA_NO_CUDA)
-  return make_error(env, "cuda_not_available");
+    return make_error(env, "cuda_not_available");
 #else
-  ErlNifBinary input_bin;
-  if (!enif_inspect_binary(env, argv[0], &input_bin))
-    return make_error(env, "invalid_input_binary");
+    ErlNifBinary input_bin;
+    if (!enif_inspect_binary(env, argv[0], &input_bin))
+        return make_error(env, "invalid_input_binary");
 
-  PackedWeight *w = get_packed_weight(env, argv[1]);
-  if (!w) return make_error(env, "invalid_packed_weight");
-  if (w->dtype != PW_FP8) return make_error(env, "weight_not_fp8");
+    PackedWeight *w = get_packed_weight(env, argv[1]);
+    if (!w)
+        return make_error(env, "invalid_packed_weight");
+    if (w->dtype != PW_FP8)
+        return make_error(env, "weight_not_fp8");
 
-  size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
-  if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
-    return make_error(env, "input_size_mismatch");
-  int batch = (int)(input_bin.size / expected_per_row);
-  if (batch <= 0) return make_error(env, "input_batch_zero");
+    size_t expected_per_row = (size_t)w->in_features * sizeof(uint16_t);
+    if (expected_per_row == 0 || input_bin.size % expected_per_row != 0)
+        return make_error(env, "input_size_mismatch");
+    int batch = (int)(input_bin.size / expected_per_row);
+    if (batch <= 0)
+        return make_error(env, "input_batch_zero");
 
-  ErlNifBinary bias_bin;
-  int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
-  if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
-    return make_error(env, "bias_size_mismatch");
+    ErlNifBinary bias_bin;
+    int has_bias = enif_inspect_binary(env, argv[2], &bias_bin);
+    if (has_bias && bias_bin.size != (size_t)w->out_features * sizeof(uint16_t))
+        return make_error(env, "bias_size_mismatch");
 
-  uint8_t *d_input = NULL;
-  float *act_scales = NULL;
-  int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input,
-                            &act_scales);
-  if (rc != 0) return make_error(env, "input_upload_failed");
+    uint8_t *d_input = NULL;
+    float *act_scales = NULL;
+    int rc = upload_input_fp8(&input_bin, batch, w->in_features, &d_input, &act_scales);
+    if (rc != 0)
+        return make_error(env, "input_upload_failed");
 
-  uint16_t *d_bias = NULL;
-  if (has_bias) {
-    if (cudaMalloc((void **)&d_bias, bias_bin.size) != cudaSuccess) {
-      cudaFree(d_input);
-      return make_error(env, "cuda_malloc_bias_failed");
+    uint16_t *d_bias = NULL;
+    if (has_bias) {
+        if (cudaMalloc((void **)&d_bias, bias_bin.size) != cudaSuccess) {
+            cudaFree(d_input);
+            return make_error(env, "cuda_malloc_bias_failed");
+        }
+        if (cudaMemcpy(d_bias, bias_bin.data, bias_bin.size, cudaMemcpyHostToDevice) !=
+            cudaSuccess) {
+            cudaFree(d_bias);
+            cudaFree(d_input);
+            return make_error(env, "cuda_upload_bias_failed");
+        }
     }
-    if (cudaMemcpy(d_bias, bias_bin.data, bias_bin.size,
-                    cudaMemcpyHostToDevice) != cudaSuccess) {
-      cudaFree(d_bias);
-      cudaFree(d_input);
-      return make_error(env, "cuda_upload_bias_failed");
+
+    int epilogue = has_bias ? CUBLASLT_EPILOGUE_GELU_BIAS : CUBLASLT_EPILOGUE_GELU;
+    float *d_C = NULL;
+    rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C);
+    cudaFree(d_input);
+    if (rc != 0) {
+        if (d_bias)
+            cudaFree(d_bias);
+        if (d_C)
+            cudaFree(d_C);
+        char err[64];
+        snprintf(err, sizeof(err), "gelu_gemm_failed_%d", rc);
+        return make_error(env, err);
     }
-  }
 
-  int epilogue = has_bias ? CUBLASLT_EPILOGUE_GELU_BIAS
-                          : CUBLASLT_EPILOGUE_GELU;
-  float *d_C = NULL;
-  rc = run_cublaslt_path(w, d_input, batch, d_bias, epilogue, &d_C);
-  cudaFree(d_input);
-  if (rc != 0) {
-    if (d_bias) cudaFree(d_bias);
-    if (d_C) cudaFree(d_C);
-    char err[64];
-    snprintf(err, sizeof(err), "gelu_gemm_failed_%d", rc);
-    return make_error(env, err);
-  }
+    /* FP32 output buffer; per-row × per-channel dequant happens on host. */
+    float *w_scales2 = NULL;
+    size_t w_scales2_count = 0;
+    if (read_weight_scales_per_channel(w, &w_scales2, &w_scales2_count) != 0 ||
+        w_scales2_count != (size_t)w->out_features) {
+        if (d_bias)
+            cudaFree(d_bias);
+        cudaFree(d_C);
+        if (w_scales2)
+            free(w_scales2);
+        return make_error(env, "weight_scale_read_failed");
+    }
 
-  /* FP32 output buffer; per-row × per-channel dequant happens on host. */
-  float *w_scales2 = NULL;
-  size_t w_scales2_count = 0;
-  if (read_weight_scales_per_channel(w, &w_scales2, &w_scales2_count) != 0
-      || w_scales2_count != (size_t)w->out_features) {
-    if (d_bias) cudaFree(d_bias);
+    ERL_NIF_TERM out_term;
+    rc = download_fp32_and_make_binary(env, d_C, batch, w->out_features, act_scales, w_scales2,
+                                       &out_term);
+    free(act_scales);
+    free(w_scales2);
+    if (d_bias)
+        cudaFree(d_bias);
     cudaFree(d_C);
-    if (w_scales2) free(w_scales2);
-    return make_error(env, "weight_scale_read_failed");
-  }
+    if (rc != 0)
+        return make_error(env, "output_download_failed");
 
-  ERL_NIF_TERM out_term;
-  rc = download_fp32_and_make_binary(env, d_C, batch, w->out_features,
-                                      act_scales, w_scales2, &out_term);
-  free(act_scales);
-  free(w_scales2);
-  if (d_bias) cudaFree(d_bias);
-  cudaFree(d_C);
-  if (rc != 0) return make_error(env, "output_download_failed");
-
-  return make_ok(env, out_term);
+    return make_ok(env, out_term);
 #endif
 }

@@ -33,9 +33,9 @@
 #include <cuda_runtime.h>
 
 /* Common types for INT8 sparse */
-using ElementA   = int8_t;
-using ElementB   = int8_t;
-using ElementC   = int32_t;
+using ElementA = int8_t;
+using ElementB = int8_t;
+using ElementC = int32_t;
 using ElementAcc = int32_t;
 
 using LayoutA = cutlass::layout::RowMajor;
@@ -43,11 +43,8 @@ using LayoutB = cutlass::layout::ColumnMajor;
 using LayoutC = cutlass::layout::RowMajor;
 
 using EpilogueOp = cutlass::epilogue::thread::LinearCombination<
-    ElementC,
-    128 / cutlass::sizeof_bits<ElementC>::value,  /* = 4 elements per access */
-    ElementAcc,
-    ElementAcc
->;
+    ElementC, 128 / cutlass::sizeof_bits<ElementC>::value, /* = 4 elements per access */
+    ElementAcc, ElementAcc>;
 
 using Swizzle = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
 
@@ -65,73 +62,49 @@ using Swizzle = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<>;
  *   A: 128*64=8KB, B: 128*128=16KB → 24KB/stage → 72KB for 3 stages */
 using SparseGemm_0 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 3, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    3, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 1: 128×128×256, warp 64×64×128, 2 stages
  *   A: 128*128=16KB, B: 256*128=32KB → 48KB/stage → 96KB for 2 stages */
 using SparseGemm_1 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 256>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 256>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 2: 128×256×128, warp 64×64×128, 2 stages
  *   A: 128*64=8KB, B: 128*256=32KB → 40KB/stage → 80KB for 2 stages */
 using SparseGemm_2 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 256, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 256, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 3: 256×128×128, warp 64×64×128, 2 stages
  *   A: 256*64=16KB, B: 128*128=16KB → 32KB/stage → 64KB for 2 stages */
 using SparseGemm_3 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 4: 64×128×128, warp 32×64×128, 3 stages (more CTAs per SM)
  *   A: 64*64=4KB, B: 128*128=16KB → 20KB/stage → 60KB for 3 stages */
 using SparseGemm_4 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<64, 128, 128>,
-    cutlass::gemm::GemmShape<32, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 3, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<64, 128, 128>,
+    cutlass::gemm::GemmShape<32, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    3, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 5: 128×128×128, warp 64×64×128, 4 stages (deeper pipeline)
  *   24KB/stage → 96KB for 4 stages */
 using SparseGemm_5 = cutlass::gemm::device::SparseGemm<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 4, 16, 16, false,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    4, 16, 16, false, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* =========================================================================
  * FAMILY 2: GemmSparseUniversal — configs 10-15
@@ -142,58 +115,38 @@ using SparseGemm_5 = cutlass::gemm::device::SparseGemm<
 /* Config 10: Universal 128×128×128, 3 stages */
 using SparseUniv_0 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 3, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    3, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 11: Universal 128×128×256, 2 stages */
 using SparseUniv_1 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 256>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 256>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 12: Universal 256×128×128, 2 stages */
 using SparseUniv_2 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 13: Universal 128×256×128, 2 stages */
 using SparseUniv_3 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 256, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 256, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 14: Universal 256×128×128, 3 stages
  *   A: 256*64=16KB, B: 128*128=16KB → 32KB/stage → 96KB for 3 stages */
 using SparseUniv_4 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 3, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    3, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 15: REMOVED — 4-stage 128x128 has cp_async alignment issues */
 
@@ -206,57 +159,37 @@ using Swizzle8 = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<8>;
 /* Config 20: Universal 256×128×128, 2stg, S8 */
 using SparseUnivS8_0 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle8, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle8, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 21: Universal 128×128×256, 2stg, S8 */
 using SparseUnivS8_1 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 256>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle8, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 256>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle8, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 22: Universal 128×256×128, 2stg, S8 */
 using SparseUnivS8_2 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 256, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle8, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 256, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle8, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 23: Universal 128×128×128, 3stg, S8 */
 using SparseUnivS8_3 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle8, 3, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle8, 3, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 24: Universal 256×128×128, 3stg, S8 (deep pipeline + swizzle) */
 using SparseUnivS8_4 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle8, 3, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle8, 3, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* =========================================================================
  * NOTE: FAMILY 4 (AlignmentA=32) REMOVED — cp.async max is 16 bytes.
@@ -269,46 +202,30 @@ using Swizzle4 = cutlass::gemm::threadblock::GemmIdentityThreadblockSwizzle<4>;
 /* Config 25: Universal 256×128×128, 2stg, A16, Swizzle<4> */
 using SparseUnivS4_0 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle4, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle4, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 26: Universal 128×128×256, 2stg, A16, Swizzle<4> */
 using SparseUnivS4_1 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 128, 256>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle4, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 128, 256>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle4, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 27: Universal 128×256×128, 2stg, A16, Swizzle<4> */
 using SparseUnivS4_2 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<128, 256, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle4, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<128, 256, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp,
+    Swizzle4, 2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* Config 28: Universal 256×128×128, 2stg, A16, no swizzle — baseline */
 using SparseUnivNS_0 = cutlass::gemm::device::GemmSparseUniversal<
     ElementA, LayoutA, ElementB, LayoutB, ElementC, LayoutC, ElementAcc,
-    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80,
-    cutlass::gemm::GemmShape<256, 128, 128>,
-    cutlass::gemm::GemmShape<64, 64, 128>,
-    cutlass::gemm::GemmShape<16, 8, 64>,
-    EpilogueOp, Swizzle, 2, 16, 16,
-    cutlass::arch::OpMultiplyAddSaturate
->;
+    cutlass::arch::OpClassTensorOp, cutlass::arch::Sm80, cutlass::gemm::GemmShape<256, 128, 128>,
+    cutlass::gemm::GemmShape<64, 64, 128>, cutlass::gemm::GemmShape<16, 8, 64>, EpilogueOp, Swizzle,
+    2, 16, 16, cutlass::arch::OpMultiplyAddSaturate>;
 
 /* =========================================================================
  * Templated benchmark function — basic SparseGemm (legacy)
@@ -326,16 +243,33 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     size_t metaK = K / kSparse / kElemsPerE;
     size_t sizeE = (size_t)M * metaK;
 
-    int8_t   *d_A = nullptr;
-    int8_t   *d_B = nullptr;
-    int32_t  *d_C = nullptr;
+    int8_t *d_A = nullptr;
+    int8_t *d_B = nullptr;
+    int32_t *d_C = nullptr;
     ElementE *d_E = nullptr;
 
     cudaError_t err;
-    err = cudaMalloc(&d_A, sizeA); if (err != cudaSuccess) return -10;
-    err = cudaMalloc(&d_B, sizeB); if (err != cudaSuccess) { cudaFree(d_A); return -11; }
-    err = cudaMalloc(&d_C, sizeC * sizeof(int32_t)); if (err != cudaSuccess) { cudaFree(d_A); cudaFree(d_B); return -12; }
-    err = cudaMalloc(&d_E, sizeE * sizeof(ElementE)); if (err != cudaSuccess) { cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); return -13; }
+    err = cudaMalloc(&d_A, sizeA);
+    if (err != cudaSuccess)
+        return -10;
+    err = cudaMalloc(&d_B, sizeB);
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        return -11;
+    }
+    err = cudaMalloc(&d_C, sizeC * sizeof(int32_t));
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        return -12;
+    }
+    err = cudaMalloc(&d_E, sizeE * sizeof(ElementE));
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        return -13;
+    }
 
     cudaMemset(d_E, 0, sizeE * sizeof(ElementE));
     cudaMemset(d_C, 0, sizeC * sizeof(int32_t));
@@ -348,15 +282,15 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     int ldC = N;
     int ldE = metaK;
 
-    typename SparseGemm::Arguments args(
-        {M, N, K},
-        {d_A, ldA}, {d_B, ldB}, {d_C, ldC}, {d_C, ldC},
-        {d_E, ldE}, {alpha, beta}, split_k_slices
-    );
+    typename SparseGemm::Arguments args({M, N, K}, {d_A, ldA}, {d_B, ldB}, {d_C, ldC}, {d_C, ldC},
+                                        {d_E, ldE}, {alpha, beta}, split_k_slices);
 
     cutlass::Status status = gemm_op.can_implement(args);
     if (status != cutlass::Status::kSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_E);
         return -1;
     }
 
@@ -365,23 +299,34 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     if (workspace_size > 0) {
         err = cudaMalloc(&workspace, workspace_size);
         if (err != cudaSuccess) {
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
+            cudaFree(d_A);
+            cudaFree(d_B);
+            cudaFree(d_C);
+            cudaFree(d_E);
             return -2;
         }
     }
 
     status = gemm_op.initialize(args, workspace);
     if (status != cutlass::Status::kSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
-        if (workspace) cudaFree(workspace);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_E);
+        if (workspace)
+            cudaFree(workspace);
         return -3;
     }
 
     /* Warmup */
     status = gemm_op();
     if (status != cutlass::Status::kSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
-        if (workspace) cudaFree(workspace);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_E);
+        if (workspace)
+            cudaFree(workspace);
         return -4;
     }
     cudaDeviceSynchronize();
@@ -395,9 +340,14 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     for (int i = 0; i < iters; i++) {
         status = gemm_op();
         if (status != cutlass::Status::kSuccess) {
-            cudaEventDestroy(start_ev); cudaEventDestroy(stop_ev);
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
-            if (workspace) cudaFree(workspace);
+            cudaEventDestroy(start_ev);
+            cudaEventDestroy(stop_ev);
+            cudaFree(d_A);
+            cudaFree(d_B);
+            cudaFree(d_C);
+            cudaFree(d_E);
+            if (workspace)
+                cudaFree(workspace);
             return -5;
         }
     }
@@ -409,8 +359,12 @@ static int run_sparse_bench(int M, int N, int K, int iters, int split_k_slices) 
     cudaEventDestroy(start_ev);
     cudaEventDestroy(stop_ev);
 
-    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_E);
-    if (workspace) cudaFree(workspace);
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+    cudaFree(d_E);
+    if (workspace)
+        cudaFree(workspace);
     return (int)(elapsed_ms * 1000.0f);
 }
 
@@ -433,21 +387,40 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     size_t metaK = K / kSparse / kElemsPerE;
     size_t sizeE = (size_t)M * metaK;
 
-    int8_t   *d_A = nullptr, *d_B = nullptr;
-    int32_t  *d_C = nullptr, *d_D = nullptr;
+    int8_t *d_A = nullptr, *d_B = nullptr;
+    int32_t *d_C = nullptr, *d_D = nullptr;
     ElementE *d_E = nullptr;
 
     cudaError_t err;
     err = cudaMalloc(&d_A, sizeA);
-    if (err != cudaSuccess) return -10;
+    if (err != cudaSuccess)
+        return -10;
     err = cudaMalloc(&d_B, sizeB);
-    if (err != cudaSuccess) { cudaFree(d_A); return -11; }
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        return -11;
+    }
     err = cudaMalloc(&d_C, sizeC * sizeof(int32_t));
-    if (err != cudaSuccess) { cudaFree(d_A); cudaFree(d_B); return -12; }
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        return -12;
+    }
     err = cudaMalloc(&d_D, sizeC * sizeof(int32_t));
-    if (err != cudaSuccess) { cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); return -12; }
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        return -12;
+    }
     err = cudaMalloc(&d_E, sizeE * sizeof(ElementE));
-    if (err != cudaSuccess) { cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); return -13; }
+    if (err != cudaSuccess) {
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_D);
+        return -13;
+    }
 
     cudaMemset(d_A, 0x11, sizeA);
     cudaMemset(d_B, 0x11, sizeB);
@@ -464,25 +437,21 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     int ldD = N;
     int ldE = (int)metaK;
 
-    typename SparseUniv::Arguments args(
-        cutlass::gemm::GemmUniversalMode::kGemm,
-        {M, N, K},
-        split_k_slices,
-        {alpha, beta},
-        (void const *)d_A,
-        (void const *)d_B,
-        (void const *)d_C,
-        (void *)d_D,
-        (void const *)d_E,
-        int64_t(0), int64_t(0), int64_t(0), int64_t(0), int64_t(0),
-        ldA, ldB, ldC, ldD, ldE
-    );
+    typename SparseUniv::Arguments args(cutlass::gemm::GemmUniversalMode::kGemm, {M, N, K},
+                                        split_k_slices, {alpha, beta}, (void const *)d_A,
+                                        (void const *)d_B, (void const *)d_C, (void *)d_D,
+                                        (void const *)d_E, int64_t(0), int64_t(0), int64_t(0),
+                                        int64_t(0), int64_t(0), ldA, ldB, ldC, ldD, ldE);
 
     cutlass::Status status = gemm_op.can_implement(args);
     if (status != cutlass::Status::kSuccess) {
-        fprintf(stderr, "INT8 univ: can_implement failed (%d) for %dx%dx%d sk=%d\n",
-                (int)status, M, N, K, split_k_slices);
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
+        fprintf(stderr, "INT8 univ: can_implement failed (%d) for %dx%dx%d sk=%d\n", (int)status, M,
+                N, K, split_k_slices);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_D);
+        cudaFree(d_E);
         return -1;
     }
 
@@ -491,23 +460,37 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     if (workspace_size > 0) {
         err = cudaMalloc(&workspace, workspace_size);
         if (err != cudaSuccess) {
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
+            cudaFree(d_A);
+            cudaFree(d_B);
+            cudaFree(d_C);
+            cudaFree(d_D);
+            cudaFree(d_E);
             return -2;
         }
     }
 
     status = gemm_op.initialize(args, workspace);
     if (status != cutlass::Status::kSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
-        if (workspace) cudaFree(workspace);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_D);
+        cudaFree(d_E);
+        if (workspace)
+            cudaFree(workspace);
         return -3;
     }
 
     /* Warmup */
     status = gemm_op();
     if (status != cutlass::Status::kSuccess) {
-        cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
-        if (workspace) cudaFree(workspace);
+        cudaFree(d_A);
+        cudaFree(d_B);
+        cudaFree(d_C);
+        cudaFree(d_D);
+        cudaFree(d_E);
+        if (workspace)
+            cudaFree(workspace);
         return -4;
     }
     cudaDeviceSynchronize();
@@ -521,9 +504,15 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     for (int i = 0; i < iters; i++) {
         status = gemm_op();
         if (status != cutlass::Status::kSuccess) {
-            cudaEventDestroy(start_ev); cudaEventDestroy(stop_ev);
-            cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
-            if (workspace) cudaFree(workspace);
+            cudaEventDestroy(start_ev);
+            cudaEventDestroy(stop_ev);
+            cudaFree(d_A);
+            cudaFree(d_B);
+            cudaFree(d_C);
+            cudaFree(d_D);
+            cudaFree(d_E);
+            if (workspace)
+                cudaFree(workspace);
             return -5;
         }
     }
@@ -535,9 +524,14 @@ static int run_int8_sparse_universal_bench(int M, int N, int K, int iters, int s
     cudaEventDestroy(start_ev);
     cudaEventDestroy(stop_ev);
 
-    cudaFree(d_A); cudaFree(d_B); cudaFree(d_C); cudaFree(d_D); cudaFree(d_E);
-    if (workspace) cudaFree(workspace);
-    return (int)(elapsed_ms * 1000.0f);  /* microseconds */
+    cudaFree(d_A);
+    cudaFree(d_B);
+    cudaFree(d_C);
+    cudaFree(d_D);
+    cudaFree(d_E);
+    if (workspace)
+        cudaFree(workspace);
+    return (int)(elapsed_ms * 1000.0f); /* microseconds */
 }
 
 /* =========================================================================
@@ -547,36 +541,57 @@ extern "C" {
 
 int cutlass_int8_sparse_gemm_bench_ex(int M, int N, int K, int iters, int config, int split_k) {
     switch (config) {
-        /* FAMILY 1: Basic SparseGemm (legacy) */
-        case 0: return run_sparse_bench<SparseGemm_0>(M, N, K, iters, split_k);
-        case 1: return run_sparse_bench<SparseGemm_1>(M, N, K, iters, split_k);
-        case 2: return run_sparse_bench<SparseGemm_2>(M, N, K, iters, split_k);
-        case 3: return run_sparse_bench<SparseGemm_3>(M, N, K, iters, split_k);
-        case 4: return run_sparse_bench<SparseGemm_4>(M, N, K, iters, split_k);
-        case 5: return run_sparse_bench<SparseGemm_5>(M, N, K, iters, split_k);
+    /* FAMILY 1: Basic SparseGemm (legacy) */
+    case 0:
+        return run_sparse_bench<SparseGemm_0>(M, N, K, iters, split_k);
+    case 1:
+        return run_sparse_bench<SparseGemm_1>(M, N, K, iters, split_k);
+    case 2:
+        return run_sparse_bench<SparseGemm_2>(M, N, K, iters, split_k);
+    case 3:
+        return run_sparse_bench<SparseGemm_3>(M, N, K, iters, split_k);
+    case 4:
+        return run_sparse_bench<SparseGemm_4>(M, N, K, iters, split_k);
+    case 5:
+        return run_sparse_bench<SparseGemm_5>(M, N, K, iters, split_k);
 
-        /* FAMILY 2: Universal (basic alignment) */
-        case 10: return run_int8_sparse_universal_bench<SparseUniv_0>(M, N, K, iters, split_k);
-        case 11: return run_int8_sparse_universal_bench<SparseUniv_1>(M, N, K, iters, split_k);
-        case 12: return run_int8_sparse_universal_bench<SparseUniv_2>(M, N, K, iters, split_k);
-        case 13: return run_int8_sparse_universal_bench<SparseUniv_3>(M, N, K, iters, split_k);
-        case 14: return run_int8_sparse_universal_bench<SparseUniv_4>(M, N, K, iters, split_k);
-        /* 15: removed — 4-stage cp_async alignment issue */
+    /* FAMILY 2: Universal (basic alignment) */
+    case 10:
+        return run_int8_sparse_universal_bench<SparseUniv_0>(M, N, K, iters, split_k);
+    case 11:
+        return run_int8_sparse_universal_bench<SparseUniv_1>(M, N, K, iters, split_k);
+    case 12:
+        return run_int8_sparse_universal_bench<SparseUniv_2>(M, N, K, iters, split_k);
+    case 13:
+        return run_int8_sparse_universal_bench<SparseUniv_3>(M, N, K, iters, split_k);
+    case 14:
+        return run_int8_sparse_universal_bench<SparseUniv_4>(M, N, K, iters, split_k);
+    /* 15: removed — 4-stage cp_async alignment issue */
 
-        /* FAMILY 3: Universal + Swizzle<8> */
-        case 20: return run_int8_sparse_universal_bench<SparseUnivS8_0>(M, N, K, iters, split_k);
-        case 21: return run_int8_sparse_universal_bench<SparseUnivS8_1>(M, N, K, iters, split_k);
-        case 22: return run_int8_sparse_universal_bench<SparseUnivS8_2>(M, N, K, iters, split_k);
-        case 23: return run_int8_sparse_universal_bench<SparseUnivS8_3>(M, N, K, iters, split_k);
-        case 24: return run_int8_sparse_universal_bench<SparseUnivS8_4>(M, N, K, iters, split_k);
+    /* FAMILY 3: Universal + Swizzle<8> */
+    case 20:
+        return run_int8_sparse_universal_bench<SparseUnivS8_0>(M, N, K, iters, split_k);
+    case 21:
+        return run_int8_sparse_universal_bench<SparseUnivS8_1>(M, N, K, iters, split_k);
+    case 22:
+        return run_int8_sparse_universal_bench<SparseUnivS8_2>(M, N, K, iters, split_k);
+    case 23:
+        return run_int8_sparse_universal_bench<SparseUnivS8_3>(M, N, K, iters, split_k);
+    case 24:
+        return run_int8_sparse_universal_bench<SparseUnivS8_4>(M, N, K, iters, split_k);
 
-        /* FAMILY 4: Universal + Swizzle<4> and no-swizzle variants */
-        case 25: return run_int8_sparse_universal_bench<SparseUnivS4_0>(M, N, K, iters, split_k);
-        case 26: return run_int8_sparse_universal_bench<SparseUnivS4_1>(M, N, K, iters, split_k);
-        case 27: return run_int8_sparse_universal_bench<SparseUnivS4_2>(M, N, K, iters, split_k);
-        case 28: return run_int8_sparse_universal_bench<SparseUnivNS_0>(M, N, K, iters, split_k);
+    /* FAMILY 4: Universal + Swizzle<4> and no-swizzle variants */
+    case 25:
+        return run_int8_sparse_universal_bench<SparseUnivS4_0>(M, N, K, iters, split_k);
+    case 26:
+        return run_int8_sparse_universal_bench<SparseUnivS4_1>(M, N, K, iters, split_k);
+    case 27:
+        return run_int8_sparse_universal_bench<SparseUnivS4_2>(M, N, K, iters, split_k);
+    case 28:
+        return run_int8_sparse_universal_bench<SparseUnivNS_0>(M, N, K, iters, split_k);
 
-        default: return -100;
+    default:
+        return -100;
     }
 }
 
@@ -600,4 +615,4 @@ void cutlass_int8_sparse_info(int *out_sparse, int *out_elements_per_e, int *out
     *out_sizeof_e = (int)sizeof(typename SparseGemm_0::ElementE);
 }
 
-}  /* extern "C" */
+} /* extern "C" */

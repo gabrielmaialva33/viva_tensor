@@ -25,7 +25,8 @@ extern "C" {
 
 __global__ static void axpy_kernel(float *y, const float *x, float a, int n) {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
-    if (i < n) y[i] = a * x[i] + y[i];
+    if (i < n)
+        y[i] = a * x[i] + y[i];
 }
 
 static int launch_axpy(cudaStream_t stream, float *d_y, const float *d_x, int n) {
@@ -38,19 +39,24 @@ static int launch_axpy(cudaStream_t stream, float *d_y, const float *d_x, int n)
 /** Path 1: N kernel launches as N separate stream submits.
  *  Returns elapsed microseconds (kernel-only via CUDA events). */
 int cuda_axpy_loop_bench(int n, int iters) {
-    if (n <= 0 || iters <= 0) return -10;
+    if (n <= 0 || iters <= 0)
+        return -10;
 
     float *d_x = nullptr, *d_y = nullptr;
-    if (cudaMalloc((void**)&d_x, n * sizeof(float)) != cudaSuccess) return -11;
-    if (cudaMalloc((void**)&d_y, n * sizeof(float)) != cudaSuccess) {
-        cudaFree(d_x); return -12;
+    if (cudaMalloc((void **)&d_x, n * sizeof(float)) != cudaSuccess)
+        return -11;
+    if (cudaMalloc((void **)&d_y, n * sizeof(float)) != cudaSuccess) {
+        cudaFree(d_x);
+        return -12;
     }
-    cudaMemset(d_x, 0x3F, n * sizeof(float));  /* fill with ~0.74 */
+    cudaMemset(d_x, 0x3F, n * sizeof(float)); /* fill with ~0.74 */
     cudaMemset(d_y, 0, n * sizeof(float));
 
     cudaStream_t stream;
     if (cudaStreamCreate(&stream) != cudaSuccess) {
-        cudaFree(d_x); cudaFree(d_y); return -13;
+        cudaFree(d_x);
+        cudaFree(d_y);
+        return -13;
     }
 
     /* Warmup */
@@ -82,19 +88,24 @@ int cuda_axpy_loop_bench(int n, int iters) {
 
 /** Path 2: N kernel launches captured into a cudaGraph + replayed. */
 int cuda_axpy_graph_bench(int n, int iters) {
-    if (n <= 0 || iters <= 0) return -10;
+    if (n <= 0 || iters <= 0)
+        return -10;
 
     float *d_x = nullptr, *d_y = nullptr;
-    if (cudaMalloc((void**)&d_x, n * sizeof(float)) != cudaSuccess) return -11;
-    if (cudaMalloc((void**)&d_y, n * sizeof(float)) != cudaSuccess) {
-        cudaFree(d_x); return -12;
+    if (cudaMalloc((void **)&d_x, n * sizeof(float)) != cudaSuccess)
+        return -11;
+    if (cudaMalloc((void **)&d_y, n * sizeof(float)) != cudaSuccess) {
+        cudaFree(d_x);
+        return -12;
     }
     cudaMemset(d_x, 0x3F, n * sizeof(float));
     cudaMemset(d_y, 0, n * sizeof(float));
 
     cudaStream_t stream;
     if (cudaStreamCreate(&stream) != cudaSuccess) {
-        cudaFree(d_x); cudaFree(d_y); return -13;
+        cudaFree(d_x);
+        cudaFree(d_y);
+        return -13;
     }
 
     /* Warmup */
@@ -104,20 +115,26 @@ int cuda_axpy_graph_bench(int n, int iters) {
     /* Capture one launch and replay it `iters` times. */
     cudaGraph_t graph;
     if (cudaStreamBeginCapture(stream, cudaStreamCaptureModeGlobal) != cudaSuccess) {
-        cudaStreamDestroy(stream); cudaFree(d_x); cudaFree(d_y);
+        cudaStreamDestroy(stream);
+        cudaFree(d_x);
+        cudaFree(d_y);
         return -16;
     }
     launch_axpy(stream, d_y, d_x, n);
     cudaError_t end_err = cudaStreamEndCapture(stream, &graph);
     if (end_err != cudaSuccess) {
-        cudaStreamDestroy(stream); cudaFree(d_x); cudaFree(d_y);
+        cudaStreamDestroy(stream);
+        cudaFree(d_x);
+        cudaFree(d_y);
         return -1700 - (int)end_err;
     }
 
     cudaGraphExec_t exec;
     if (cudaGraphInstantiate(&exec, graph, nullptr, nullptr, 0) != cudaSuccess) {
-        cudaGraphDestroy(graph); cudaStreamDestroy(stream);
-        cudaFree(d_x); cudaFree(d_y);
+        cudaGraphDestroy(graph);
+        cudaStreamDestroy(stream);
+        cudaFree(d_x);
+        cudaFree(d_y);
         return -18;
     }
 
@@ -150,4 +167,4 @@ int cuda_axpy_graph_bench(int n, int iters) {
     return (int)(elapsed_ms * 1000.0f);
 }
 
-}  /* extern "C" */
+} /* extern "C" */

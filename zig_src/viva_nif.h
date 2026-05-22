@@ -55,30 +55,34 @@ extern "C" {
 
 #ifdef _WIN32
 static inline void *aligned_tensor_alloc(size_t size) {
-  return _aligned_malloc(size, TENSOR_ALIGN);
+    return _aligned_malloc(size, TENSOR_ALIGN);
 }
-static inline void aligned_tensor_free(void *ptr) { _aligned_free(ptr); }
+static inline void aligned_tensor_free(void *ptr) {
+    _aligned_free(ptr);
+}
 #else
 #define HUGEPAGE_THRESHOLD (2 * 1024 * 1024)
 #define PREFAULT_THRESHOLD (256 * 1024)
 static inline void *aligned_tensor_alloc(size_t size) {
-  size_t aligned_size = (size + TENSOR_ALIGN - 1) & ~(TENSOR_ALIGN - 1);
-  void *ptr = aligned_alloc(TENSOR_ALIGN, aligned_size);
-  if (ptr && aligned_size >= PREFAULT_THRESHOLD) {
-    if (aligned_size >= HUGEPAGE_THRESHOLD) {
+    size_t aligned_size = (size + TENSOR_ALIGN - 1) & ~(TENSOR_ALIGN - 1);
+    void *ptr = aligned_alloc(TENSOR_ALIGN, aligned_size);
+    if (ptr && aligned_size >= PREFAULT_THRESHOLD) {
+        if (aligned_size >= HUGEPAGE_THRESHOLD) {
 #ifdef MADV_HUGEPAGE
-      madvise(ptr, aligned_size, MADV_HUGEPAGE);
+            madvise(ptr, aligned_size, MADV_HUGEPAGE);
+#endif
+        }
+#ifdef MADV_POPULATE_WRITE
+        madvise(ptr, aligned_size, MADV_POPULATE_WRITE);
+#else
+        memset(ptr, 0, aligned_size);
 #endif
     }
-#ifdef MADV_POPULATE_WRITE
-    madvise(ptr, aligned_size, MADV_POPULATE_WRITE);
-#else
-    memset(ptr, 0, aligned_size);
-#endif
-  }
-  return ptr;
+    return ptr;
 }
-static inline void aligned_tensor_free(void *ptr) { free(ptr); }
+static inline void aligned_tensor_free(void *ptr) {
+    free(ptr);
+}
 #endif
 
 /* =========================================================================
@@ -87,17 +91,16 @@ static inline void aligned_tensor_free(void *ptr) { free(ptr); }
 
 #ifndef _WIN32
 typedef enum {
-  BLAS_MKL = 1,
-  BLAS_OPENBLAS_TUNED = 2,
-  BLAS_OPENBLAS = 3,
-  BLAS_ZIG_GEMM = 4
+    BLAS_MKL = 1,
+    BLAS_OPENBLAS_TUNED = 2,
+    BLAS_OPENBLAS = 3,
+    BLAS_ZIG_GEMM = 4
 } BlasBackend;
 
-typedef void (*dgemm_fn)(const int Order, const int TransA, const int TransB,
-                         const int M, const int N, const int K,
-                         const double alpha, const double *A, const int lda,
-                         const double *B, const int ldb,
-                         const double beta, double *C, const int ldc);
+typedef void (*dgemm_fn)(const int Order, const int TransA, const int TransB, const int M,
+                         const int N, const int K, const double alpha, const double *A,
+                         const int lda, const double *B, const int ldb, const double beta,
+                         double *C, const int ldc);
 typedef void (*set_threads_fn)(int);
 
 /* Defined in nif_platform.c */
@@ -114,19 +117,19 @@ extern int g_blas_detected;
  * ========================================================================= */
 
 typedef struct {
-  int logical_cpus;
-  int physical_cores;
-  int sockets;
-  int l1_cache_kb;
-  int l2_cache_kb;
-  int l3_cache_kb;
-  int has_avx2;
-  int has_avx512;
-  int has_hybrid;
-  int p_cores;
-  int e_cores;
-  int threads_per_core;
-  int optimal_threads;
+    int logical_cpus;
+    int physical_cores;
+    int sockets;
+    int l1_cache_kb;
+    int l2_cache_kb;
+    int l3_cache_kb;
+    int has_avx2;
+    int has_avx512;
+    int has_hybrid;
+    int p_cores;
+    int e_cores;
+    int threads_per_core;
+    int optimal_threads;
 } CpuTopology;
 
 /* Defined in nif_platform.c */
@@ -136,10 +139,8 @@ extern int g_cpu_detected;
 /* Platform detection functions (nif_platform.c) */
 void detect_cpu_topology(void);
 void detect_blas_backend(void);
-void blas_dgemm(int M, int N, int K, double alpha,
-                const double *A, int lda,
-                const double *B, int ldb,
-                double beta, double *C, int ldc);
+void blas_dgemm(int M, int N, int K, double alpha, const double *A, int lda, const double *B,
+                int ldb, double beta, double *C, int ldc);
 void blas_set_threads(int n);
 
 /* Exported to Zig (nif_platform.c) */
@@ -152,7 +153,7 @@ int vt_is_hybrid_cpu(void);
 int vt_has_avx512(void);
 
 #ifdef _WIN32
-int vt_set_thread_affinity(void* thread_handle, int core_id);
+int vt_set_thread_affinity(void *thread_handle, int core_id);
 #else
 int vt_set_thread_affinity_self(int core_id);
 #endif
@@ -162,14 +163,14 @@ int vt_set_thread_affinity_self(int core_id);
  * ========================================================================= */
 
 typedef struct NativeTensor {
-  double *data;
-  int *shape;
-  int *strides;
-  int ndim;
-  int size;
-  int offset;
-  int owns_data;
-  struct NativeTensor *owner;
+    double *data;
+    int *shape;
+    int *strides;
+    int ndim;
+    int size;
+    int offset;
+    int owns_data;
+    struct NativeTensor *owner;
 } NativeTensor;
 
 extern ErlNifResourceType *TENSOR_RESOURCE;
@@ -178,8 +179,7 @@ extern ErlNifResourceType *TENSOR_RESOURCE;
 void tensor_destructor(ErlNifEnv *env, void *obj);
 NativeTensor *alloc_tensor(int ndim, const int *shape);
 NativeTensor *alloc_tensor_uninit(int ndim, const int *shape);
-NativeTensor *alloc_tensor_view(NativeTensor *base, int ndim, const int *shape,
-                                const int *strides);
+NativeTensor *alloc_tensor_view(NativeTensor *base, int ndim, const int *shape, const int *strides);
 NativeTensor *get_tensor(ErlNifEnv *env, ERL_NIF_TERM term);
 ERL_NIF_TERM make_tensor_term(ErlNifEnv *env, NativeTensor *t);
 int tensor_is_contiguous(const NativeTensor *t);
@@ -191,11 +191,11 @@ double tensor_get_flat(const NativeTensor *t, int logical_index);
  * ========================================================================= */
 
 typedef struct {
-  int8_t *data;
-  double scale;
-  int *shape;
-  int ndim;
-  int size;
+    int8_t *data;
+    double scale;
+    int *shape;
+    int ndim;
+    int size;
 } QuantInt8Tensor;
 
 extern ErlNifResourceType *QINT8_RESOURCE;
@@ -209,14 +209,14 @@ ERL_NIF_TERM make_qint8_term(ErlNifEnv *env, QuantInt8Tensor *t);
  * ========================================================================= */
 
 typedef struct {
-  uint8_t *indices;
-  double *scales;
-  int *shape;
-  int ndim;
-  int size;
-  int block_size;
-  int num_blocks;
-  int packed_size;
+    uint8_t *indices;
+    double *scales;
+    int *shape;
+    int ndim;
+    int size;
+    int block_size;
+    int num_blocks;
+    int packed_size;
 } QuantNF4Tensor;
 
 extern ErlNifResourceType *QNF4_RESOURCE;
@@ -230,10 +230,10 @@ ERL_NIF_TERM make_qnf4_term(ErlNifEnv *env, QuantNF4Tensor *t);
  * ========================================================================= */
 
 typedef struct {
-  float *data;
-  int *shape;
-  int ndim;
-  int size;
+    float *data;
+    int *shape;
+    int ndim;
+    int size;
 } LnsTensor;
 
 extern ErlNifResourceType *LNS_RESOURCE;
@@ -247,11 +247,11 @@ LnsTensor *get_lns(ErlNifEnv *env, ERL_NIF_TERM term);
  * ========================================================================= */
 
 typedef struct {
-  double *positions;
-  double *velocities;
-  double *accelerations;
-  int entity_count;
-  int dims;
+    double *positions;
+    double *velocities;
+    double *accelerations;
+    int entity_count;
+    int dims;
 } Horde;
 
 extern ErlNifResourceType *HORDE_RESOURCE;
@@ -264,9 +264,9 @@ Horde *get_horde(ErlNifEnv *env, ERL_NIF_TERM term);
  * ========================================================================= */
 
 typedef struct {
-  uint64_t *data;
-  int words;
-  int dim;
+    uint64_t *data;
+    int words;
+    int dim;
 } HdcVector;
 
 extern ErlNifResourceType *HDC_RESOURCE;
@@ -281,10 +281,10 @@ HdcVector *get_hdc(ErlNifEnv *env, ERL_NIF_TERM term);
 #ifndef _WIN32
 
 typedef struct {
-  float *d_data;
-  int *shape;
-  int ndim;
-  int size;
+    float *d_data;
+    int *shape;
+    int ndim;
+    int size;
 } CudaTensor;
 
 extern ErlNifResourceType *CUDA_TENSOR_RESOURCE;
@@ -295,12 +295,12 @@ CudaTensor *get_cuda_tensor(ErlNifEnv *env, ERL_NIF_TERM term);
 ERL_NIF_TERM make_cuda_tensor_term(ErlNifEnv *env, CudaTensor *t);
 
 typedef struct {
-  uint16_t *d_data;
-  uint16_t *d_data_t;
-  float *d_acc;
-  int *shape;
-  int ndim;
-  int size;
+    uint16_t *d_data;
+    uint16_t *d_data_t;
+    float *d_acc;
+    int *shape;
+    int ndim;
+    int size;
 } CudaTensor16;
 
 extern ErlNifResourceType *CUDA_TENSOR16_RESOURCE;
@@ -311,12 +311,12 @@ CudaTensor16 *get_cuda_tensor16(ErlNifEnv *env, ERL_NIF_TERM term);
 ERL_NIF_TERM make_cuda_tensor16_term(ErlNifEnv *env, CudaTensor16 *t);
 
 typedef struct {
-  int8_t *d_data;
-  int8_t *d_data_t;
-  int32_t *d_acc;
-  int *shape;
-  int ndim;
-  int size;
+    int8_t *d_data;
+    int8_t *d_data_t;
+    int32_t *d_acc;
+    int *shape;
+    int ndim;
+    int size;
 } CudaInt8Tensor;
 
 extern ErlNifResourceType *CUDA_INT8_TENSOR_RESOURCE;
@@ -328,17 +328,17 @@ ERL_NIF_TERM make_cuda_int8_tensor_term(ErlNifEnv *env, CudaInt8Tensor *t);
 
 /* SparseTensor - 2:4 Structured Sparsity */
 typedef struct {
-  void* d_compressed;
-  void* d_workspace;
-  size_t compressed_size;
-  size_t workspace_size;
-  int64_t rows;
-  int64_t cols;
-  int dtype;
-  char mat_descr_storage[1024];
-  char matmul_descr_storage[1024];
-  char alg_sel_storage[1024];
-  char plan_storage[1024];
+    void *d_compressed;
+    void *d_workspace;
+    size_t compressed_size;
+    size_t workspace_size;
+    int64_t rows;
+    int64_t cols;
+    int dtype;
+    char mat_descr_storage[1024];
+    char matmul_descr_storage[1024];
+    char alg_sel_storage[1024];
+    char plan_storage[1024];
 } SparseTensorInternal;
 
 extern ErlNifResourceType *SPARSE_TENSOR_RESOURCE;
@@ -392,8 +392,8 @@ extern void vt_simd_negate_mut(double *a, size_t len);
 extern void vt_simd_relu_mut(double *a, size_t len);
 
 /* Retro/fused kernels */
-extern void vt_saturn_blend(const double *texture, const double *shade,
-                            double bias, double *result, size_t len);
+extern void vt_saturn_blend(const double *texture, const double *shade, double bias, double *result,
+                            size_t len);
 extern void vt_resonance_mul(const double *a, const double *b, double *result, size_t len);
 extern void vt_resonance_power(const double *data, double exponent, double *result, size_t len);
 
@@ -405,9 +405,11 @@ extern void vt_lns_sqrt_f32(const float *data, float *result, size_t len);
 extern void vt_lns_rsqrt_f32(const float *data, float *result, size_t len);
 
 /* Horde SoA Physics */
-extern void vt_horde_integrate(double *positions, const double *velocities, double dt, size_t count);
+extern void vt_horde_integrate(double *positions, const double *velocities, double dt,
+                               size_t count);
 extern void vt_horde_dampen(double *velocities, double friction, size_t count);
-extern void vt_horde_accelerate(double *velocities, const double *accelerations, double dt, size_t count);
+extern void vt_horde_accelerate(double *velocities, const double *accelerations, double dt,
+                                size_t count);
 extern void vt_horde_wrap(double *positions, double max_bound, size_t count);
 extern void vt_horde_gravity_2d(double *accelerations, double gravity, size_t entity_count);
 extern double vt_horde_kinetic_energy(const double *velocities, size_t count);
@@ -419,21 +421,19 @@ extern double vt_hdc_similarity(const uint64_t *a, const uint64_t *b, size_t len
 extern void vt_hdc_bundle(const uint64_t *inputs, size_t n_vectors, size_t words, uint64_t *result);
 extern void vt_hdc_permute(const uint64_t *input, uint64_t *output, size_t words, size_t shift);
 extern void vt_hdc_random(uint64_t *output, size_t words, uint64_t seed);
-extern void vt_hdc_weighted_bundle(const uint64_t *inputs, const double *weights,
-                                   size_t n_vectors, size_t words, uint64_t *result);
+extern void vt_hdc_weighted_bundle(const uint64_t *inputs, const double *weights, size_t n_vectors,
+                                   size_t words, uint64_t *result);
 
 /* Fused Quantized Matmul */
-extern void vt_matmul_int8(const double *a, const int8_t *b_quant, double b_scale,
-                           size_t m, size_t n, size_t k, double *c);
-extern void vt_matmul_int8_blocked(const double *a, const int8_t *b_quant,
-                                    const double *b_scales, size_t m, size_t n,
-                                    size_t k, size_t block_size, double *c);
-extern void vt_matmul_nf4(const double *a, const uint8_t *b_indices,
-                           const double *b_scales, size_t m, size_t n, size_t k,
-                           size_t block_size, double *c);
+extern void vt_matmul_int8(const double *a, const int8_t *b_quant, double b_scale, size_t m,
+                           size_t n, size_t k, double *c);
+extern void vt_matmul_int8_blocked(const double *a, const int8_t *b_quant, const double *b_scales,
+                                   size_t m, size_t n, size_t k, size_t block_size, double *c);
+extern void vt_matmul_nf4(const double *a, const uint8_t *b_indices, const double *b_scales,
+                          size_t m, size_t n, size_t k, size_t block_size, double *c);
 extern double vt_quantize_int8(const double *data, int8_t *output, size_t len);
-extern void vt_quantize_nf4(const double *data, uint8_t *output, double *scales,
-                            size_t len, size_t block_size);
+extern void vt_quantize_nf4(const double *data, uint8_t *output, double *scales, size_t len,
+                            size_t block_size);
 
 /* =========================================================================
  * CUDA Extern Declarations (from cuda_gemm.c, cuda_sparselt.c, cuda_sage.c)
@@ -444,89 +444,81 @@ extern void vt_quantize_nf4(const double *data, uint8_t *output, double *scales,
 /* cuda_gemm.c - Core CUDA operations */
 extern int cuda_init(void);
 extern int cuda_available(void);
-extern int cuda_dgemm(int M, int N, int K, double alpha, const double *A, int lda,
-                      const double *B, int ldb, double beta, double *C, int ldc);
-extern int cuda_sgemm(int M, int N, int K, float alpha, const float *A, int lda,
-                      const float *B, int ldb, float beta, float *C, int ldc);
+extern int cuda_dgemm(int M, int N, int K, double alpha, const double *A, int lda, const double *B,
+                      int ldb, double beta, double *C, int ldc);
+extern int cuda_sgemm(int M, int N, int K, float alpha, const float *A, int lda, const float *B,
+                      int ldb, float beta, float *C, int ldc);
 extern void cuda_cleanup(void);
 
 /* CudaTensor GPU memory */
-extern float* cuda_tensor_alloc(size_t num_elements);
+extern float *cuda_tensor_alloc(size_t num_elements);
 extern void cuda_tensor_free(void *d_ptr);
 extern int cuda_tensor_upload(float *d_dst, const float *h_src, size_t num_elements);
 extern int cuda_tensor_download(float *h_dst, const float *d_src, size_t num_elements);
 extern int cuda_sgemm_gpu(int M, int N, int K, float alpha, const float *d_A, int lda,
                           const float *d_B, int ldb, float beta, float *d_C, int ldc);
 extern int cuda_sgemm_gpu_inplace(int M, int N, int K, float alpha, const float *d_A, int lda,
-                                   const float *d_B, int ldb, float beta, float *d_C, int ldc);
+                                  const float *d_B, int ldb, float beta, float *d_C, int ldc);
 
 /* INT8 Tensor Cores */
 extern int cuda_int8_available(void);
 extern int cuda_fp16_available(void);
-extern int8_t* cuda_tensor_alloc_int8(size_t num_elements);
-extern int32_t* cuda_tensor_alloc_int32(size_t num_elements);
+extern int8_t *cuda_tensor_alloc_int8(size_t num_elements);
+extern int32_t *cuda_tensor_alloc_int32(size_t num_elements);
 extern int cuda_tensor_upload_int8(int8_t *d_dst, const int8_t *h_src, size_t num_elements);
 extern int cuda_tensor_download_int32(int32_t *h_dst, const int32_t *d_src, size_t num_elements);
-extern int cuda_igemm(int M, int N, int K, int32_t alpha, const int8_t *A, int lda,
-                      const int8_t *B, int ldb, int32_t beta, int32_t *C, int ldc);
+extern int cuda_igemm(int M, int N, int K, int32_t alpha, const int8_t *A, int lda, const int8_t *B,
+                      int ldb, int32_t beta, int32_t *C, int ldc);
 extern int cuda_igemm_gpu(int M, int N, int K, int32_t alpha, const int8_t *d_A, int lda,
                           const int8_t *d_B, int ldb, int32_t beta, int32_t *d_C, int ldc);
 
 /* FP16 Tensor Cores */
-extern uint16_t* cuda_tensor_alloc_fp16(size_t num_elements);
+extern uint16_t *cuda_tensor_alloc_fp16(size_t num_elements);
 extern int cuda_tensor_upload_fp16(uint16_t *d_dst, const uint16_t *h_src, size_t num_elements);
 extern int cuda_tensor_download_fp16(uint16_t *h_dst, const uint16_t *d_src, size_t num_elements);
 extern int cuda_hgemm(int M, int N, int K, float alpha, const uint16_t *A, int lda,
                       const uint16_t *B, int ldb, float beta, float *C, int ldc);
 extern int cuda_hgemm_gpu(int M, int N, int K, float alpha, const uint16_t *d_A, int lda,
                           const uint16_t *d_B, int ldb, float beta, float *d_C, int ldc);
-extern int cuda_hgemm_gpu_pure16(int M, int N, int K,
-                                  const uint16_t *d_A, int lda,
-                                  const uint16_t *d_B, int ldb,
-                                  uint16_t *d_C, int ldc);
-extern int cuda_hgemm_gpu_pure16_async(int M, int N, int K,
-                                        const uint16_t *d_A, int lda,
-                                        const uint16_t *d_B, int ldb,
-                                        uint16_t *d_C, int ldc);
-extern int cuda_hgemm_lt_gpu_tn(int M, int N, int K,
-                                  const uint16_t *d_A,
-                                  const uint16_t *d_B_T,
-                                  uint16_t *d_C);
+extern int cuda_hgemm_gpu_pure16(int M, int N, int K, const uint16_t *d_A, int lda,
+                                 const uint16_t *d_B, int ldb, uint16_t *d_C, int ldc);
+extern int cuda_hgemm_gpu_pure16_async(int M, int N, int K, const uint16_t *d_A, int lda,
+                                       const uint16_t *d_B, int ldb, uint16_t *d_C, int ldc);
+extern int cuda_hgemm_lt_gpu_tn(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B_T,
+                                uint16_t *d_C);
 
 /* cublasLt */
 extern int cuda_int8_lt_available(void);
 extern int cublaslt_init(void);
 extern int cuda_igemm_lt(int M, int N, int K, float alpha, const int8_t *A, int lda,
                          const int8_t *B, int ldb, float beta, int32_t *C, int ldc);
-extern int cuda_igemm_lt_gpu(int M, int N, int K, const int8_t *d_A, int lda,
-                              const int8_t *d_B, int ldb, int32_t *d_C, int ldc);
-extern int cuda_igemm_lt_gpu_tn(int M, int N, int K, const int8_t *d_A,
-                                 const int8_t *d_B_T, int32_t *d_C);
+extern int cuda_igemm_lt_gpu(int M, int N, int K, const int8_t *d_A, int lda, const int8_t *d_B,
+                             int ldb, int32_t *d_C, int ldc);
+extern int cuda_igemm_lt_gpu_tn(int M, int N, int K, const int8_t *d_A, const int8_t *d_B_T,
+                                int32_t *d_C);
 extern int cuda_igemm_lt_gpu_async(int M, int N, int K, const int8_t *d_A, int lda,
-                                    const int8_t *d_B, int ldb, int32_t *d_C, int ldc);
-extern int cuda_hgemm_lt_32f(int M, int N, int K,
-                              const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
-extern int cuda_hgemm_fused_relu(int M, int N, int K,
-                                  const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
-extern int cuda_hgemm_fused_gelu(int M, int N, int K,
-                                  const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
-extern int cuda_hgemm_fused_relu_bias(int M, int N, int K,
-                                      const uint16_t *d_A, const uint16_t *d_B,
+                                   const int8_t *d_B, int ldb, int32_t *d_C, int ldc);
+extern int cuda_hgemm_lt_32f(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B,
+                             uint16_t *d_C);
+extern int cuda_hgemm_fused_relu(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B,
+                                 uint16_t *d_C);
+extern int cuda_hgemm_fused_gelu(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B,
+                                 uint16_t *d_C);
+extern int cuda_hgemm_fused_relu_bias(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B,
                                       const uint16_t *d_bias, uint16_t *d_C);
-extern int cuda_hgemm_fused_gelu_bias(int M, int N, int K,
-                                      const uint16_t *d_A, const uint16_t *d_B,
+extern int cuda_hgemm_fused_gelu_bias(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B,
                                       const uint16_t *d_bias, uint16_t *d_C);
-extern int cuda_hgemm_fused_relu_tn(int M, int N, int K,
-                                     const uint16_t *d_A, const uint16_t *d_B_T, uint16_t *d_C);
-extern int cuda_hgemm_fused_gelu_tn(int M, int N, int K,
-                                     const uint16_t *d_A, const uint16_t *d_B_T, uint16_t *d_C);
-extern int cuda_hgemm_batched(int M, int N, int K, int batch_count,
-                               const uint16_t *d_A, const uint16_t *d_B, uint16_t *d_C);
-extern int cuda_fp8gemm_lt_gpu_tn(int M, int N, int K,
-                                   const uint8_t *d_A, const uint8_t *d_B_T, uint16_t *d_C);
+extern int cuda_hgemm_fused_relu_tn(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B_T,
+                                    uint16_t *d_C);
+extern int cuda_hgemm_fused_gelu_tn(int M, int N, int K, const uint16_t *d_A, const uint16_t *d_B_T,
+                                    uint16_t *d_C);
+extern int cuda_hgemm_batched(int M, int N, int K, int batch_count, const uint16_t *d_A,
+                              const uint16_t *d_B, uint16_t *d_C);
+extern int cuda_fp8gemm_lt_gpu_tn(int M, int N, int K, const uint8_t *d_A, const uint8_t *d_B_T,
+                                  uint16_t *d_C);
 
 /* FP8 */
-extern uint8_t* cuda_tensor_alloc_fp8(size_t num_elements);
+extern uint8_t *cuda_tensor_alloc_fp8(size_t num_elements);
 extern int cuda_tensor_upload_fp8(uint8_t *d_dst, const uint8_t *h_src, size_t num_elements);
 extern int cuda_tensor_download_fp8(uint8_t *h_dst, const uint8_t *d_src, size_t num_elements);
 extern int cuda_fp8gemm_gpu(int M, int N, int K, float alpha, const uint8_t *d_A, int lda,
@@ -537,33 +529,23 @@ extern void float_to_fp8_e4m3_batch(uint8_t *dst, const float *src, size_t n);
 extern void fp8_e4m3_to_float_batch(float *dst, const uint8_t *src, size_t n);
 
 /* CUTLASS */
-extern int cutlass_fp8_gemm_f16acc(int M, int N, int K,
-                                    const void *d_A, const void *d_B, void *d_C);
-extern int cutlass_fp8_gemm_f32acc(int M, int N, int K,
-                                    const void *d_A, const void *d_B, void *d_C);
+extern int cutlass_fp8_gemm_f16acc(int M, int N, int K, const void *d_A, const void *d_B,
+                                   void *d_C);
+extern int cutlass_fp8_gemm_f32acc(int M, int N, int K, const void *d_A, const void *d_B,
+                                   void *d_C);
 /* Self-contained bench: allocs A/B/C device memory, runs `iters` GEMMs, returns
  * elapsed microseconds (kernel-only via CUDA events). mode: 0 = FP16 accum
  * (660 TOPS), 1 = FP32 accum (330 TOPS). */
 extern int cutlass_fp8_bench(int M, int N, int K, int iters, int mode);
 /* Inference path: FP8 GEMM with FP32 output buffer (caller-allocated). */
-extern int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K,
-                                             const void *d_A, const void *d_B,
-                                             float *d_C);
-extern int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
-                                             const float *d_scales,
-                                             void *d_fp16,
-                                             int K,
-                                             int N,
-                                             void *stream);
-extern int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
-                                                     const float *d_scales,
-                                                     void *d_fp16,
-                                                     int K,
-                                                     int N,
-                                                     int block_size,
+extern int cutlass_fp8_gemm_f32acc_out_f32(int M, int N, int K, const void *d_A, const void *d_B,
+                                           float *d_C);
+extern int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8, const float *d_scales, void *d_fp16,
+                                             int K, int N, void *stream);
+extern int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8, const float *d_scales,
+                                                     void *d_fp16, int K, int N, int block_size,
                                                      void *stream);
-extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx,
-                                  void *stream);
+extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx, void *stream);
 /* cublasLt FP16 GEMM with COMPUTE_16F (full-rate Tensor Core ~165 TFLOPS). */
 extern int cublaslt_fp16_bench(int M, int N, int K, int iters);
 /* N axpy kernels as N stream launches (baseline). */
@@ -587,7 +569,8 @@ extern int cutlass_int8_sparse_gemm_bench(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_b(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_c(int M, int N, int K, int iters);
 extern int cutlass_int8_sparse_gemm_bench_d(int M, int N, int K, int iters);
-extern int cutlass_int8_sparse_gemm_bench_ex(int M, int N, int K, int iters, int config, int split_k);
+extern int cutlass_int8_sparse_gemm_bench_ex(int M, int N, int K, int iters, int config,
+                                             int split_k);
 extern void cutlass_int8_sparse_info(int *out_sparse, int *out_elements_per_e, int *out_sizeof_e);
 extern int cutlass_int4_sparse_gemm_bench(int M, int N, int K, int iters, int config, int split_k);
 extern void cutlass_int4_sparse_info(int *out_sparse, int *out_elements_per_e, int *out_sizeof_e);
@@ -600,39 +583,42 @@ extern int cusparselt_fp16_sparse_bench(int M, int N, int K, int iters);
 
 /* cuSPARSELt tensor operations (cuda_sparselt.c) */
 extern int cusparselt_available(void);
-extern int sparse_tensor_create_fp16(const uint16_t* d_dense, int64_t rows, int64_t cols,
-                                      SparseTensorInternal* out_sparse);
-extern int sparse_tensor_create_int8(const int8_t* d_dense, int64_t rows, int64_t cols,
-                                      SparseTensorInternal* out_sparse);
-extern void sparse_tensor_free(SparseTensorInternal* sparse);
-extern int sparse_matmul_fp16(SparseTensorInternal* sparse, const uint16_t* d_B,
-                               uint16_t* d_C, int64_t N, float alpha, float beta);
-extern int sparse_matmul_fp16_bench(SparseTensorInternal* sparse, const uint16_t* d_B,
-                                     uint16_t* d_C, int64_t N, int iters);
-extern int sparse_matmul_fp16_bench_tn(SparseTensorInternal* sparse, const uint16_t* d_B,
-                                        uint16_t* d_C, int64_t N, int iters);
-extern int sparse_matmul_int8(SparseTensorInternal* sparse, const int8_t* d_B,
-                               int8_t* d_C, int64_t N, float alpha, float beta);
-extern int sparse_matmul_int8_bench(SparseTensorInternal* sparse, const int8_t* d_B,
-                                     int8_t* d_C, int64_t N, int iters);
+extern int sparse_tensor_create_fp16(const uint16_t *d_dense, int64_t rows, int64_t cols,
+                                     SparseTensorInternal *out_sparse);
+extern int sparse_tensor_create_int8(const int8_t *d_dense, int64_t rows, int64_t cols,
+                                     SparseTensorInternal *out_sparse);
+extern void sparse_tensor_free(SparseTensorInternal *sparse);
+extern int sparse_matmul_fp16(SparseTensorInternal *sparse, const uint16_t *d_B, uint16_t *d_C,
+                              int64_t N, float alpha, float beta);
+extern int sparse_matmul_fp16_bench(SparseTensorInternal *sparse, const uint16_t *d_B,
+                                    uint16_t *d_C, int64_t N, int iters);
+extern int sparse_matmul_fp16_bench_tn(SparseTensorInternal *sparse, const uint16_t *d_B,
+                                       uint16_t *d_C, int64_t N, int iters);
+extern int sparse_matmul_int8(SparseTensorInternal *sparse, const int8_t *d_B, int8_t *d_C,
+                              int64_t N, float alpha, float beta);
+extern int sparse_matmul_int8_bench(SparseTensorInternal *sparse, const int8_t *d_B, int8_t *d_C,
+                                    int64_t N, int iters);
 
 /* SageAttention (cuda_sage.c) */
 extern int sage_init(void);
 extern int sage_available(void);
 extern int sage_fp8_available(void);
-extern int quant_int8_per_block_cpu(int8_t *out, float *scales, const float *in, size_t n, size_t block_size);
-extern int dequant_int8_per_block_cpu(float *out, const int8_t *in, const float *scales, size_t n, size_t block_size);
+extern int quant_int8_per_block_cpu(int8_t *out, float *scales, const float *in, size_t n,
+                                    size_t block_size);
+extern int dequant_int8_per_block_cpu(float *out, const int8_t *in, const float *scales, size_t n,
+                                      size_t block_size);
 extern int softmax_cpu(float *out, const float *in, size_t batch, size_t dim);
-extern int sage_attention_cpu(float *O, const float *Q, const float *K, const float *V,
-                              int batch, int heads, int seq_q, int seq_k, int head_dim, float sm_scale);
+extern int sage_attention_cpu(float *O, const float *Q, const float *K, const float *V, int batch,
+                              int heads, int seq_q, int seq_k, int head_dim, float sm_scale);
 extern int sage_attention_gpu(float *d_O, const float *d_Q, const float *d_K, const float *d_V,
-                              int batch, int heads, int seq_q, int seq_k, int head_dim, float sm_scale);
+                              int batch, int heads, int seq_q, int seq_k, int head_dim,
+                              float sm_scale);
 
 /* Async GEMM + sync */
 extern int cuda_sgemm_gpu_async(int M, int N, int K, float alpha, const float *d_A, int lda,
-                                 const float *d_B, int ldb, float beta, float *d_C, int ldc);
+                                const float *d_B, int ldb, float beta, float *d_C, int ldc);
 extern int cuda_hgemm_gpu_async(int M, int N, int K, float alpha, const void *d_A, int lda,
-                                 const void *d_B, int ldb, float beta, float *d_C, int ldc);
+                                const void *d_B, int ldb, float beta, float *d_C, int ldc);
 extern void cuda_explicit_sync(void);
 
 #endif /* !_WIN32 */
@@ -644,8 +630,7 @@ extern void cuda_explicit_sync(void);
  *   ERL_NIF_TERM func(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
  * ========================================================================= */
 
-#define NIF_FUNC_DECL(name) \
-  ERL_NIF_TERM name(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+#define NIF_FUNC_DECL(name) ERL_NIF_TERM name(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 /* nif_tensor_core.c — constructors + accessors */
 NIF_FUNC_DECL(nt_zeros);

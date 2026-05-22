@@ -36,8 +36,8 @@
  * size the ElementE metadata buffer correctly regardless of CUTLASS
  * specialisation (Sm80+/Sm89 INT8 m16n8k32 → uint32 covering 16 K,
  * INT4 m16n8k128 → uint32 covering 32 K). */
-extern void cutlass_int8_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e);
-extern void cutlass_int4_sparse_run_info(int* sparse, int* elem_per_e, int* sizeof_e);
+extern void cutlass_int8_sparse_run_info(int *sparse, int *elem_per_e, int *sizeof_e);
+extern void cutlass_int4_sparse_run_info(int *sparse, int *elem_per_e, int *sizeof_e);
 
 #ifndef _WIN32
 #include <cuda_runtime.h>
@@ -61,23 +61,23 @@ extern void cutlass_int4_sparse_run_info(int* sparse, int* elem_per_e, int* size
 #define VIVA_PACKED_WEIGHT_DEFINED
 
 typedef enum {
-    PW_FP8         = 0,
+    PW_FP8 = 0,
     PW_INT8_SPARSE = 1,
     PW_INT4_SPARSE = 2,
 } PackedWeightDType;
 
 typedef struct {
     PackedWeightDType dtype;
-    void*  d_weight;          /* quantized + (for INT4) packed weight buffer  */
+    void *d_weight; /* quantized + (for INT4) packed weight buffer  */
     size_t weight_bytes;
-    void*  d_metadata;        /* 2:4 metadata buffer (E)                       */
+    void *d_metadata; /* 2:4 metadata buffer (E)                       */
     size_t metadata_bytes;
-    void*  d_scales;          /* per-output-channel FP32 dequant scales        */
+    void *d_scales; /* per-output-channel FP32 dequant scales        */
     size_t scales_count;
-    int    in_features;
-    int    out_features;
-    void*  cusparselt_plan;   /* cusparseLtMatmulPlan_t* or NULL               */
-    void*  d_compressed;      /* cuSPARSELt compressed buffer or NULL          */
+    int in_features;
+    int out_features;
+    void *cusparselt_plan; /* cusparseLtMatmulPlan_t* or NULL               */
+    void *d_compressed;    /* cuSPARSELt compressed buffer or NULL          */
 } PackedWeight;
 
 #endif /* VIVA_PACKED_WEIGHT_DEFINED */
@@ -86,19 +86,21 @@ typedef struct {
  * linker will accept a missing symbol on platforms that support it — if you
  * see "undefined reference to make_packed_weight_term" at link time, agent A
  * has not landed yet. */
-extern ErlNifResourceType* PACKED_WEIGHT_RES;
-ERL_NIF_TERM make_packed_weight_term(ErlNifEnv* env, PackedWeight* w);
+extern ErlNifResourceType *PACKED_WEIGHT_RES;
+ERL_NIF_TERM make_packed_weight_term(ErlNifEnv *env, PackedWeight *w);
 
 /* =========================================================================
  * Helpers
  * ========================================================================= */
 
-static inline int parse_in_out(ErlNifEnv* env, ERL_NIF_TERM list_term,
-                               int* in_features, int* out_features) {
+static inline int parse_in_out(ErlNifEnv *env, ERL_NIF_TERM list_term, int *in_features,
+                               int *out_features) {
     int shape[8];
     int ndim = 0;
-    if (!parse_shape(env, list_term, shape, &ndim)) return 0;
-    if (ndim != 2) return 0;
+    if (!parse_shape(env, list_term, shape, &ndim))
+        return 0;
+    if (ndim != 2)
+        return 0;
     *in_features = shape[0];
     *out_features = shape[1];
     return 1;
@@ -106,15 +108,20 @@ static inline int parse_in_out(ErlNifEnv* env, ERL_NIF_TERM list_term,
 
 /* Free helper that releases any partially-initialised PackedWeight on the
  * error path. */
-static void free_packed_weight(PackedWeight* w) {
+static void free_packed_weight(PackedWeight *w) {
 #ifndef _WIN32
-    if (!w) return;
-    if (w->d_weight)     cudaFree(w->d_weight);
-    if (w->d_metadata)   cudaFree(w->d_metadata);
-    if (w->d_scales)     cudaFree(w->d_scales);
-    if (w->d_compressed) cudaFree(w->d_compressed);
+    if (!w)
+        return;
+    if (w->d_weight)
+        cudaFree(w->d_weight);
+    if (w->d_metadata)
+        cudaFree(w->d_metadata);
+    if (w->d_scales)
+        cudaFree(w->d_scales);
+    if (w->d_compressed)
+        cudaFree(w->d_compressed);
     if (w->cusparselt_plan) {
-        cusparseLtMatmulPlanDestroy((cusparseLtMatmulPlan_t*)w->cusparselt_plan);
+        cusparseLtMatmulPlanDestroy((cusparseLtMatmulPlan_t *)w->cusparselt_plan);
         free(w->cusparselt_plan);
     }
 #else
@@ -129,32 +136,59 @@ static inline int8_t f32_to_int8_sat(float v, float inv_scale) {
     float q = v * inv_scale;
     /* Round to nearest, banker's rounding via rintf. */
     long r = lrintf(q);
-    if (r < -127) r = -127;
-    if (r > 127)  r = 127;
+    if (r < -127)
+        r = -127;
+    if (r > 127)
+        r = 127;
     return (int8_t)r;
 }
 
 static inline int8_t f32_to_int4_sat(float v, float inv_scale) {
     float q = v * inv_scale;
     long r = lrintf(q);
-    if (r < -7) r = -7;
-    if (r > 7)  r = 7;
+    if (r < -7)
+        r = -7;
+    if (r > 7)
+        r = 7;
     return (int8_t)r;
 }
 
 /* Sort 4 elements by |value| descending. Returns indices of the 2 largest. */
-static inline void top2_of_4(const float* a, int* keep0, int* keep1) {
+static inline void top2_of_4(const float *a, int *keep0, int *keep1) {
     float m0 = fabsf(a[0]), m1 = fabsf(a[1]), m2 = fabsf(a[2]), m3 = fabsf(a[3]);
     /* Initial: assume 0 is largest, 1 second. */
-    int i0 = 0; float v0 = m0;
-    int i1 = 1; float v1 = m1;
-    if (v1 > v0) { int ti=i0; float tv=v0; i0=i1; v0=v1; i1=ti; v1=tv; }
+    int i0 = 0;
+    float v0 = m0;
+    int i1 = 1;
+    float v1 = m1;
+    if (v1 > v0) {
+        int ti = i0;
+        float tv = v0;
+        i0 = i1;
+        v0 = v1;
+        i1 = ti;
+        v1 = tv;
+    }
     /* Test 2 */
-    if (m2 > v0)      { i1 = i0; v1 = v0; i0 = 2; v0 = m2; }
-    else if (m2 > v1) { i1 = 2; v1 = m2; }
+    if (m2 > v0) {
+        i1 = i0;
+        v1 = v0;
+        i0 = 2;
+        v0 = m2;
+    } else if (m2 > v1) {
+        i1 = 2;
+        v1 = m2;
+    }
     /* Test 3 */
-    if (m3 > v0)      { i1 = i0; v1 = v0; i0 = 3; v0 = m3; }
-    else if (m3 > v1) { i1 = 3; v1 = m3; }
+    if (m3 > v0) {
+        i1 = i0;
+        v1 = v0;
+        i0 = 3;
+        v0 = m3;
+    } else if (m3 > v1) {
+        i1 = 3;
+        v1 = m3;
+    }
     *keep0 = (i0 < i1) ? i0 : i1;
     *keep1 = (i0 < i1) ? i1 : i0;
 }
@@ -162,7 +196,7 @@ static inline void top2_of_4(const float* a, int* keep0, int* keep1) {
 /* CUTLASS sparse INT4 metadata indexes pairs of adjacent int4 values.
  * The official host_uncompress.h path uses step=8, a=4, b=8, ElementsPerE=2:
  * one metadata nibble names two kept pairs inside each 8-int4 chunk. */
-static inline void top2_pairs_of_8(const float* a, int* keep0, int* keep1) {
+static inline void top2_pairs_of_8(const float *a, int *keep0, int *keep1) {
     float score[4];
     for (int p = 0; p < 4; ++p) {
         score[p] = fabsf(a[p * 2 + 0]) + fabsf(a[p * 2 + 1]);
@@ -171,7 +205,9 @@ static inline void top2_pairs_of_8(const float* a, int* keep0, int* keep1) {
     int i0 = 0;
     int i1 = 1;
     if (score[i1] > score[i0]) {
-        int tmp = i0; i0 = i1; i1 = tmp;
+        int tmp = i0;
+        i0 = i1;
+        i1 = tmp;
     }
 
     for (int p = 2; p < 4; ++p) {
@@ -190,18 +226,16 @@ static inline void top2_pairs_of_8(const float* a, int* keep0, int* keep1) {
 /* Provided by cuda_int_sparse_run.cu — calls cutlass::reorder_meta()
  * directly against a RowMajor src and a ColumnMajorInterleaved<2> dst,
  * eliminating any layout/permutation transcription error. */
-extern void cutlass_int4_sparse_reorder_meta_e(uint32_t* dst,
-                                               const uint32_t* src,
-                                               int M, int K_words);
+extern void cutlass_int4_sparse_reorder_meta_e(uint32_t *dst, const uint32_t *src, int M,
+                                               int K_words);
 
 /* Round-trip uncompress (debug-only). */
-extern void cutlass_int4_sparse_uncompress_to_dense(int8_t* dst_int8_per_cell,
-                                                    const int8_t* compressed_a,
-                                                    const uint32_t* meta,
-                                                    int M, int K);
+extern void cutlass_int4_sparse_uncompress_to_dense(int8_t *dst_int8_per_cell,
+                                                    const int8_t *compressed_a,
+                                                    const uint32_t *meta, int M, int K);
 
 /* Pure CUTLASS-driven self-test (debug only). Returns 0 on success. */
-extern int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff);
+extern int cutlass_int4_sparse_self_test(int M, int N, int K, int *out_max_diff);
 
 /* =========================================================================
  * INT8 2:4 sparse prepack
@@ -225,10 +259,10 @@ extern int cutlass_int4_sparse_self_test(int M, int N, int K, int* out_max_diff)
  *     cusparselt_plan = compiled plan or NULL.
  *     d_scales        = float per-output-channel scales.
  * ========================================================================= */
-ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
-                                    const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
-    if (!cuda_available()) return make_error(env, "cuda_unavailable");
+    if (!cuda_available())
+        return make_error(env, "cuda_unavailable");
 
     ErlNifBinary weight_bin;
     if (!enif_inspect_binary(env, argv[0], &weight_bin))
@@ -246,23 +280,25 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
     if (in_features % 4 != 0)
         return make_error(env, "in_features_not_mul_4");
 
-    const float* W = (const float*)weight_bin.data;
+    const float *W = (const float *)weight_bin.data;
 
     /* Allocate host scratch. */
-    float*  h_scales = (float*)malloc((size_t)out_features * sizeof(float));
-    int8_t* h_quant  = (int8_t*)malloc((size_t)out_features * (size_t)in_features);
+    float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
+    int8_t *h_quant = (int8_t *)malloc((size_t)out_features * (size_t)in_features);
     if (!h_scales || !h_quant) {
-        free(h_scales); free(h_quant);
+        free(h_scales);
+        free(h_quant);
         return make_error(env, "host_alloc_failed");
     }
 
     /* Pass 1: per-row absmax → scale. */
     for (int o = 0; o < out_features; ++o) {
         float amax = 0.0f;
-        const float* row = W + (size_t)o * (size_t)in_features;
+        const float *row = W + (size_t)o * (size_t)in_features;
         for (int k = 0; k < in_features; ++k) {
             float a = fabsf(row[k]);
-            if (a > amax) amax = a;
+            if (a > amax)
+                amax = a;
         }
         /* Avoid div-by-zero on all-zero rows. */
         h_scales[o] = (amax > 0.0f) ? (amax / 127.0f) : 1.0f;
@@ -270,11 +306,11 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
 
     /* Pass 2: quantize + 2:4 prune (zero-out non-kept positions). */
     for (int o = 0; o < out_features; ++o) {
-        const float* row = W + (size_t)o * (size_t)in_features;
-        int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
+        const float *row = W + (size_t)o * (size_t)in_features;
+        int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
         float inv_scale = 1.0f / h_scales[o];
         for (int k = 0; k < in_features; k += 4) {
-            float g[4] = { row[k+0], row[k+1], row[k+2], row[k+3] };
+            float g[4] = {row[k + 0], row[k + 1], row[k + 2], row[k + 3]};
             int keep0, keep1;
             top2_of_4(g, &keep0, &keep1);
             for (int j = 0; j < 4; ++j) {
@@ -288,10 +324,10 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
     }
 
     /* Allocate the PackedWeight resource. */
-    PackedWeight* pw = (PackedWeight*)enif_alloc_resource(
-        PACKED_WEIGHT_RES, sizeof(PackedWeight));
+    PackedWeight *pw = (PackedWeight *)enif_alloc_resource(PACKED_WEIGHT_RES, sizeof(PackedWeight));
     if (!pw) {
-        free(h_scales); free(h_quant);
+        free(h_scales);
+        free(h_quant);
         return make_error(env, "resource_alloc_failed");
     }
     memset(pw, 0, sizeof(*pw));
@@ -304,18 +340,21 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
     cudaError_t cerr;
     size_t weight_bytes = (size_t)out_features * (size_t)in_features; /* INT8 */
     cerr = cudaMalloc(&pw->d_weight, weight_bytes);
-    if (cerr != cudaSuccess) goto cuda_fail;
+    if (cerr != cudaSuccess)
+        goto cuda_fail;
     pw->weight_bytes = weight_bytes;
     cerr = cudaMemcpy(pw->d_weight, h_quant, weight_bytes, cudaMemcpyHostToDevice);
-    if (cerr != cudaSuccess) goto cuda_fail;
+    if (cerr != cudaSuccess)
+        goto cuda_fail;
 
     /* Upload scales. */
     cerr = cudaMalloc(&pw->d_scales, (size_t)out_features * sizeof(float));
-    if (cerr != cudaSuccess) goto cuda_fail;
-    cerr = cudaMemcpy(pw->d_scales, h_scales,
-                      (size_t)out_features * sizeof(float),
+    if (cerr != cudaSuccess)
+        goto cuda_fail;
+    cerr = cudaMemcpy(pw->d_scales, h_scales, (size_t)out_features * sizeof(float),
                       cudaMemcpyHostToDevice);
-    if (cerr != cudaSuccess) goto cuda_fail;
+    if (cerr != cudaSuccess)
+        goto cuda_fail;
 
     /* CUTLASS metadata "E" buffer.
      * For CUTLASS INT8 sparse (m16n8k32 OpClassTensorOp on Sm80+):
@@ -328,15 +367,15 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
      * which is harmless for sanity tests but wrong for real inference). */
     int int8_sparse, int8_elems_per_e, int8_sizeof_e;
     cutlass_int8_sparse_run_info(&int8_sparse, &int8_elems_per_e, &int8_sizeof_e);
-    size_t metaK_int8 =
-        (size_t)in_features / (size_t)(int8_sparse * int8_elems_per_e);
+    size_t metaK_int8 = (size_t)in_features / (size_t)(int8_sparse * int8_elems_per_e);
     if (metaK_int8 > 0) {
-        size_t metadata_bytes =
-            (size_t)out_features * metaK_int8 * (size_t)int8_sizeof_e;
+        size_t metadata_bytes = (size_t)out_features * metaK_int8 * (size_t)int8_sizeof_e;
         cerr = cudaMalloc(&pw->d_metadata, metadata_bytes);
-        if (cerr != cudaSuccess) goto cuda_fail;
+        if (cerr != cudaSuccess)
+            goto cuda_fail;
         cerr = cudaMemset(pw->d_metadata, 0, metadata_bytes);
-        if (cerr != cudaSuccess) goto cuda_fail;
+        if (cerr != cudaSuccess)
+            goto cuda_fail;
         pw->metadata_bytes = metadata_bytes;
     }
 
@@ -359,44 +398,42 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
         cusparseLtMatmulPlan_t plan;
 
         /* A (sparse): INT8 [out_features, in_features] ROW-major */
-        if (cusparseLtStructuredDescriptorInit(
-                &handle, &matA, out_features, in_features, in_features,
-                16, CUDA_R_8I, CUSPARSE_ORDER_ROW,
-                CUSPARSELT_SPARSITY_50_PERCENT) != CUSPARSE_STATUS_SUCCESS)
+        if (cusparseLtStructuredDescriptorInit(&handle, &matA, out_features, in_features,
+                                               in_features, 16, CUDA_R_8I, CUSPARSE_ORDER_ROW,
+                                               CUSPARSELT_SPARSITY_50_PERCENT) !=
+            CUSPARSE_STATUS_SUCCESS)
             goto plan_fail;
 
         /* B (dense input^T): INT8 [in_features, N_dummy] COL-major, K = ldb. */
         int N_dummy = 128;
-        if (cusparseLtDenseDescriptorInit(
-                &handle, &matB, in_features, N_dummy, in_features,
-                16, CUDA_R_8I, CUSPARSE_ORDER_COL) != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtDenseDescriptorInit(&handle, &matB, in_features, N_dummy, in_features, 16,
+                                          CUDA_R_8I,
+                                          CUSPARSE_ORDER_COL) != CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             goto plan_fail;
         }
 
-        if (cusparseLtDenseDescriptorInit(
-                &handle, &matC, out_features, N_dummy, N_dummy,
-                16, CUDA_R_32I, CUSPARSE_ORDER_ROW) != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtDenseDescriptorInit(&handle, &matC, out_features, N_dummy, N_dummy, 16,
+                                          CUDA_R_32I,
+                                          CUSPARSE_ORDER_ROW) != CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
             goto plan_fail;
         }
 
-        if (cusparseLtDenseDescriptorInit(
-                &handle, &matD, out_features, N_dummy, N_dummy,
-                16, CUDA_R_32I, CUSPARSE_ORDER_ROW) != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtDenseDescriptorInit(&handle, &matD, out_features, N_dummy, N_dummy, 16,
+                                          CUDA_R_32I,
+                                          CUSPARSE_ORDER_ROW) != CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
             cusparseLtMatDescriptorDestroy(&matC);
             goto plan_fail;
         }
 
-        if (cusparseLtMatmulDescriptorInit(
-                &handle, &matmulDescr,
-                CUSPARSE_OPERATION_NON_TRANSPOSE,
-                CUSPARSE_OPERATION_NON_TRANSPOSE,
-                &matA, &matB, &matC, &matD,
-                CUSPARSE_COMPUTE_32I) != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtMatmulDescriptorInit(&handle, &matmulDescr, CUSPARSE_OPERATION_NON_TRANSPOSE,
+                                           CUSPARSE_OPERATION_NON_TRANSPOSE, &matA, &matB, &matC,
+                                           &matD,
+                                           CUSPARSE_COMPUTE_32I) != CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
             cusparseLtMatDescriptorDestroy(&matC);
@@ -404,9 +441,9 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
             goto plan_fail;
         }
 
-        if (cusparseLtMatmulAlgSelectionInit(
-                &handle, &algSel, &matmulDescr,
-                CUSPARSELT_MATMUL_ALG_DEFAULT) != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtMatmulAlgSelectionInit(&handle, &algSel, &matmulDescr,
+                                             CUSPARSELT_MATMUL_ALG_DEFAULT) !=
+            CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
             cusparseLtMatDescriptorDestroy(&matC);
@@ -414,8 +451,8 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
             goto plan_fail;
         }
 
-        if (cusparseLtMatmulPlanInit(&handle, &plan, &matmulDescr, &algSel)
-            != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtMatmulPlanInit(&handle, &plan, &matmulDescr, &algSel) !=
+            CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
             cusparseLtMatDescriptorDestroy(&matC);
@@ -424,11 +461,8 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
         }
 
         /* SpMMA prune on the device buffer (idempotent for already-pruned data). */
-        if (cusparseLtSpMMAPrune(&handle, &matmulDescr,
-                                  (const void*)pw->d_weight,
-                                  pw->d_weight,
-                                  CUSPARSELT_PRUNE_SPMMA_STRIP, 0)
-            != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtSpMMAPrune(&handle, &matmulDescr, (const void *)pw->d_weight, pw->d_weight,
+                                 CUSPARSELT_PRUNE_SPMMA_STRIP, 0) != CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatmulPlanDestroy(&plan);
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
@@ -438,9 +472,8 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
         }
 
         size_t compressed_size = 0, compressed_buf_size = 0;
-        if (cusparseLtSpMMACompressedSize(&handle, &plan,
-                                          &compressed_size, &compressed_buf_size)
-            != CUSPARSE_STATUS_SUCCESS) {
+        if (cusparseLtSpMMACompressedSize(&handle, &plan, &compressed_size, &compressed_buf_size) !=
+            CUSPARSE_STATUS_SUCCESS) {
             cusparseLtMatmulPlanDestroy(&plan);
             cusparseLtMatDescriptorDestroy(&matA);
             cusparseLtMatDescriptorDestroy(&matB);
@@ -454,20 +487,19 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
             cusparseLtMatmulPlanDestroy(&plan);
             goto plan_fail;
         }
-        void* d_compress_buf = NULL;
+        void *d_compress_buf = NULL;
         cerr = cudaMalloc(&d_compress_buf, compressed_buf_size);
         if (cerr != cudaSuccess) {
-            cudaFree(pw->d_compressed); pw->d_compressed = NULL;
+            cudaFree(pw->d_compressed);
+            pw->d_compressed = NULL;
             cusparseLtMatmulPlanDestroy(&plan);
             goto plan_fail;
         }
 
-        if (cusparseLtSpMMACompress(&handle, &plan,
-                                     (const void*)pw->d_weight,
-                                     pw->d_compressed,
-                                     d_compress_buf, 0)
-            != CUSPARSE_STATUS_SUCCESS) {
-            cudaFree(pw->d_compressed); pw->d_compressed = NULL;
+        if (cusparseLtSpMMACompress(&handle, &plan, (const void *)pw->d_weight, pw->d_compressed,
+                                    d_compress_buf, 0) != CUSPARSE_STATUS_SUCCESS) {
+            cudaFree(pw->d_compressed);
+            pw->d_compressed = NULL;
             cudaFree(d_compress_buf);
             cusparseLtMatmulPlanDestroy(&plan);
             goto plan_fail;
@@ -477,14 +509,14 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
 
         /* Persist the plan handle.  We allocate on the heap so the resource
          * destructor can call cusparseLtMatmulPlanDestroy. */
-        cusparseLtMatmulPlan_t* held_plan =
-            (cusparseLtMatmulPlan_t*)malloc(sizeof(cusparseLtMatmulPlan_t));
+        cusparseLtMatmulPlan_t *held_plan =
+            (cusparseLtMatmulPlan_t *)malloc(sizeof(cusparseLtMatmulPlan_t));
         if (!held_plan) {
             cusparseLtMatmulPlanDestroy(&plan);
             goto plan_fail;
         }
         memcpy(held_plan, &plan, sizeof(plan));
-        pw->cusparselt_plan = (void*)held_plan;
+        pw->cusparselt_plan = (void *)held_plan;
 
         /* Note: matA..matD descriptors are owned by the plan internally in
          * cuSPARSELt; we don't destroy them here. The handle itself is
@@ -495,10 +527,8 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
     plan_fail:
         cusparseLtDestroy(&handle);
         /* Non-fatal — fall through with cusparselt_plan = NULL. */
-    cusparselt_skip:
-        ;
-    cusparselt_done:
-        ;
+    cusparselt_skip:;
+    cusparselt_done:;
     }
 
     free(h_scales);
@@ -530,10 +560,10 @@ cuda_fail:
  *
  * One 32-bit ElementE covers 64 logical INT4 positions as 8 metadata nibbles.
  * ========================================================================= */
-ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
-                                    const ERL_NIF_TERM argv[]) {
+ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
-    if (!cuda_available()) return make_error(env, "cuda_unavailable");
+    if (!cuda_available())
+        return make_error(env, "cuda_unavailable");
 
     ErlNifBinary weight_bin;
     if (!enif_inspect_binary(env, argv[0], &weight_bin))
@@ -552,13 +582,14 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     if (in_features % 128 != 0)
         return make_error(env, "in_features_not_mul_128");
 
-    const float* W = (const float*)weight_bin.data;
+    const float *W = (const float *)weight_bin.data;
 
     /* Host scratch. */
-    float*   h_scales   = (float*)malloc((size_t)out_features * sizeof(float));
-    int8_t*  h_quant    = (int8_t*)malloc((size_t)out_features * (size_t)in_features);
+    float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
+    int8_t *h_quant = (int8_t *)malloc((size_t)out_features * (size_t)in_features);
     if (!h_scales || !h_quant) {
-        free(h_scales); free(h_quant);
+        free(h_scales);
+        free(h_quant);
         return make_error(env, "host_alloc_failed");
     }
 
@@ -567,7 +598,8 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
         float amax = 0.0f;
         for (int k = 0; k < in_features; ++k) {
             float a = fabsf(W[(size_t)k * (size_t)out_features + (size_t)o]);
-            if (a > amax) amax = a;
+            if (a > amax)
+                amax = a;
         }
         h_scales[o] = (amax > 0.0f) ? (amax / 7.0f) : 1.0f;
     }
@@ -576,7 +608,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
      * CUTLASS INT4 sparse metadata indexes 2-int4 pairs, not individual
      * scalar int4 lanes, so the pruning unit is 2 kept pairs per 8 values. */
     for (int o = 0; o < out_features; ++o) {
-        int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
+        int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
         float inv_scale = 1.0f / h_scales[o];
         for (int k = 0; k < in_features; k += 8) {
             float group[8];
@@ -608,16 +640,17 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     int int4_sparse, int4_elems_per_e, int4_sizeof_e;
     cutlass_int4_sparse_run_info(&int4_sparse, &int4_elems_per_e, &int4_sizeof_e);
     if (int4_sizeof_e != (int)sizeof(uint32_t)) {
-        free(h_scales); free(h_quant);
+        free(h_scales);
+        free(h_quant);
         return make_error(env, "unexpected_int4_elemente_size");
     }
-    size_t meta_units_per_row =
-        (size_t)in_features / (size_t)(int4_sparse * int4_elems_per_e);
+    size_t meta_units_per_row = (size_t)in_features / (size_t)(int4_sparse * int4_elems_per_e);
     size_t meta_bytes_per_row = meta_units_per_row * (size_t)int4_sizeof_e;
     size_t meta_total = (size_t)out_features * meta_bytes_per_row;
-    uint8_t* h_meta = (uint8_t*)malloc(meta_total);
+    uint8_t *h_meta = (uint8_t *)malloc(meta_total);
     if (!h_meta) {
-        free(h_scales); free(h_quant);
+        free(h_scales);
+        free(h_quant);
         return make_error(env, "host_alloc_failed");
     }
     memset(h_meta, 0, meta_total);
@@ -626,8 +659,8 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
      * quant loop). Re-reading W here in column-major was a bug: it picked
      * different pairs than the ones actually preserved in h_quant. */
     for (int o = 0; o < out_features; ++o) {
-        const int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
-        uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
+        const int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
+        uint32_t *meta_row = (uint32_t *)(h_meta + (size_t)o * meta_bytes_per_row);
         for (int k = 0; k < in_features; k += 8) {
             int kept[2] = {-1, -1};
             int p = 0;
@@ -638,9 +671,17 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
             }
             /* If a row is entirely zero (rare, all-equal-magnitude block),
              * fall back to pairs 0 and 2 — matches top2_pairs_of_8 default. */
-            if (p == 0) { kept[0] = 0; kept[1] = 2; }
-            else if (p == 1) { kept[1] = (kept[0] == 0) ? 2 : 0;
-                               if (kept[0] > kept[1]) { int t = kept[0]; kept[0] = kept[1]; kept[1] = t; } }
+            if (p == 0) {
+                kept[0] = 0;
+                kept[1] = 2;
+            } else if (p == 1) {
+                kept[1] = (kept[0] == 0) ? 2 : 0;
+                if (kept[0] > kept[1]) {
+                    int t = kept[0];
+                    kept[0] = kept[1];
+                    kept[1] = t;
+                }
+            }
 
             size_t group = (size_t)k / 8;
             size_t word = group / 8;
@@ -650,23 +691,25 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
         }
     }
 
-    size_t packed_bytes_per_row = (size_t)in_features / 4;  /* 50% sparse, int4 packed */
+    size_t packed_bytes_per_row = (size_t)in_features / 4; /* 50% sparse, int4 packed */
     size_t packed_total = (size_t)out_features * packed_bytes_per_row;
-    int8_t* h_packed = (int8_t*)malloc(packed_total);
+    int8_t *h_packed = (int8_t *)malloc(packed_total);
     if (!h_packed) {
-        free(h_scales); free(h_quant); free(h_meta);
+        free(h_scales);
+        free(h_quant);
+        free(h_meta);
         return make_error(env, "host_alloc_failed");
     }
     memset(h_packed, 0, packed_total);
 
     /* Pack compressed A in the same pair order named by ElementE. */
     for (int o = 0; o < out_features; ++o) {
-        int8_t* qrow = h_quant + (size_t)o * (size_t)in_features;
-        int8_t* prow = h_packed + (size_t)o * packed_bytes_per_row;
+        int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
+        int8_t *prow = h_packed + (size_t)o * packed_bytes_per_row;
 
         size_t out_byte_idx = 0;
         for (int k = 0; k < in_features; k += 8) {
-            uint32_t* meta_row = (uint32_t*)(h_meta + (size_t)o * meta_bytes_per_row);
+            uint32_t *meta_row = (uint32_t *)(h_meta + (size_t)o * meta_bytes_per_row);
             size_t group = (size_t)k / 8;
             uint32_t e = (meta_row[group / 8] >> ((group % 8) * 4)) & 0x0F;
             int keep_pair0 = (int)(e & 0x3);
@@ -684,10 +727,12 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
     }
 
     /* Allocate PackedWeight resource. */
-    PackedWeight* pw = (PackedWeight*)enif_alloc_resource(
-        PACKED_WEIGHT_RES, sizeof(PackedWeight));
+    PackedWeight *pw = (PackedWeight *)enif_alloc_resource(PACKED_WEIGHT_RES, sizeof(PackedWeight));
     if (!pw) {
-        free(h_scales); free(h_quant); free(h_packed); free(h_meta);
+        free(h_scales);
+        free(h_quant);
+        free(h_packed);
+        free(h_meta);
         return make_error(env, "resource_alloc_failed");
     }
     memset(pw, 0, sizeof(*pw));
@@ -698,43 +743,50 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
 
     cudaError_t cerr;
     cerr = cudaMalloc(&pw->d_weight, packed_total);
-    if (cerr != cudaSuccess) goto cuda_fail4;
+    if (cerr != cudaSuccess)
+        goto cuda_fail4;
     pw->weight_bytes = packed_total;
     cerr = cudaMemcpy(pw->d_weight, h_packed, packed_total, cudaMemcpyHostToDevice);
-    if (cerr != cudaSuccess) goto cuda_fail4;
+    if (cerr != cudaSuccess)
+        goto cuda_fail4;
 
     cerr = cudaMalloc(&pw->d_metadata, meta_total);
-    if (cerr != cudaSuccess) goto cuda_fail4;
+    if (cerr != cudaSuccess)
+        goto cuda_fail4;
     pw->metadata_bytes = meta_total;
 
     /* Sm80 GemmSparseUniversal expects ElementE in an interleaved (warp-lane)
      * layout. Reorder our logical row-major metadata before upload. */
     {
-        uint32_t* h_meta_reordered = (uint32_t*)malloc(meta_total);
-        if (!h_meta_reordered) goto cuda_fail4;
+        uint32_t *h_meta_reordered = (uint32_t *)malloc(meta_total);
+        if (!h_meta_reordered)
+            goto cuda_fail4;
         memset(h_meta_reordered, 0, meta_total);
         int meta_words_per_row = (int)(meta_bytes_per_row / sizeof(uint32_t));
-        cutlass_int4_sparse_reorder_meta_e(h_meta_reordered,
-                                           (const uint32_t*)h_meta,
-                                           out_features, meta_words_per_row);
-        cerr = cudaMemcpy(pw->d_metadata, h_meta_reordered, meta_total,
-                          cudaMemcpyHostToDevice);
+        cutlass_int4_sparse_reorder_meta_e(h_meta_reordered, (const uint32_t *)h_meta, out_features,
+                                           meta_words_per_row);
+        cerr = cudaMemcpy(pw->d_metadata, h_meta_reordered, meta_total, cudaMemcpyHostToDevice);
         free(h_meta_reordered);
-        if (cerr != cudaSuccess) goto cuda_fail4;
+        if (cerr != cudaSuccess)
+            goto cuda_fail4;
     }
 
     cerr = cudaMalloc(&pw->d_scales, (size_t)out_features * sizeof(float));
-    if (cerr != cudaSuccess) goto cuda_fail4;
-    cerr = cudaMemcpy(pw->d_scales, h_scales,
-                      (size_t)out_features * sizeof(float),
+    if (cerr != cudaSuccess)
+        goto cuda_fail4;
+    cerr = cudaMemcpy(pw->d_scales, h_scales, (size_t)out_features * sizeof(float),
                       cudaMemcpyHostToDevice);
-    if (cerr != cudaSuccess) goto cuda_fail4;
+    if (cerr != cudaSuccess)
+        goto cuda_fail4;
 
     /* No cuSPARSELt plan for INT4 (cuSPARSELt does not support int4 on Ada). */
     pw->cusparselt_plan = NULL;
     pw->d_compressed = NULL;
 
-    free(h_scales); free(h_quant); free(h_packed); free(h_meta);
+    free(h_scales);
+    free(h_quant);
+    free(h_packed);
+    free(h_meta);
 
     ERL_NIF_TERM term = make_packed_weight_term(env, pw);
     return enif_make_tuple2(env, enif_make_atom(env, "ok"), term);
@@ -742,22 +794,25 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
 cuda_fail4:
     free_packed_weight(pw);
     enif_release_resource(pw);
-    free(h_scales); free(h_quant); free(h_packed); free(h_meta);
+    free(h_scales);
+    free(h_quant);
+    free(h_packed);
+    free(h_meta);
     return make_error(env, "cuda_alloc_failed");
 }
 
-#else  /* _WIN32 — CUDA is Linux-only in this codebase. */
+#else /* _WIN32 — CUDA is Linux-only in this codebase. */
 
-ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv* env, int argc,
-                                    const ERL_NIF_TERM argv[]) {
-    (void)argc; (void)argv;
+ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
     return make_error(env, "cuda_unavailable_on_windows");
 }
 
-ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv* env, int argc,
-                                    const ERL_NIF_TERM argv[]) {
-    (void)argc; (void)argv;
+ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
     return make_error(env, "cuda_unavailable_on_windows");
 }
 
-#endif  /* _WIN32 */
+#endif /* _WIN32 */
