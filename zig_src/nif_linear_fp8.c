@@ -565,16 +565,18 @@ static int run_w8a16_dequant_cublaslt(const PackedWeight *w,
   if (w->block_size > 0) {
     rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight,
                                                     (const float *)w->d_scales,
-                                                    d_weight_fp16,
-                                                    w->in_features,
-                                                    w->out_features,
-                                                    w->block_size);
+                                                     d_weight_fp16,
+                                                     w->in_features,
+                                                     w->out_features,
+                                                     w->block_size,
+                                                     NULL);
   } else {
     rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight,
-                                            (const float *)w->d_scales,
-                                            d_weight_fp16,
-                                            w->in_features,
-                                            w->out_features);
+                                             (const float *)w->d_scales,
+                                             d_weight_fp16,
+                                             w->in_features,
+                                             w->out_features,
+                                             NULL);
   }
   if (rc != 0) {
     return -30 + rc;

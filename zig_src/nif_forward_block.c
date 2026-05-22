@@ -15,6 +15,7 @@
 
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
 
+#ifdef VIVA_DEBUG_DECODE
 #define DBG_FAIL_RET(path, ret_code, inner_rc) do { \
   int _dbg_ret = (ret_code); \
   int _dbg_inner = (inner_rc); \
@@ -23,37 +24,45 @@
   fflush(stderr); \
   return _dbg_ret; \
 } while (0)
+#endif
 
 #define DEFAULT_LLAMA_HEAD_DIM 64
 #define DEFAULT_LLAMA_EPS 1.0e-5f
 
-extern int vt_fp16_to_fp32_cast(const void *in, float *out, int n);
-extern int vt_fp32_to_fp16_cast(const float *in, void *out, int n);
-extern int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n, float eps);
-extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int n);
-extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim);
+extern int vt_fp16_to_fp32_cast(const void *in, float *out, int n, cudaStream_t stream);
+extern int vt_fp32_to_fp16_cast(const float *in, void *out, int n, cudaStream_t stream);
+extern int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n,
+                           float eps, cudaStream_t stream);
+extern int vt_residual_add_fp32(const float *a, const float *b, float *out, int n,
+                                cudaStream_t stream);
+extern int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads,
+                              int head_dim, cudaStream_t stream);
 extern int vt_rope_apply_fp32_dyn(float *x, const float *freqs, const int *pos_ptr,
-                                  int num_heads, int head_dim);
-extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n);
-extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx);
+                                  int num_heads, int head_dim, cudaStream_t stream);
+extern int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n,
+                            cudaStream_t stream);
+extern int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx,
+                                  void *stream);
 extern int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices,
-                                float *out_values);
+                                float *out_values, cudaStream_t stream);
 extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
-                                    int hidden, int vocab);
+                                    int hidden, int vocab, cudaStream_t stream);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
                                     const void *d_input, float *d_out,
-                                    int in_features, int out_features);
+                                    int in_features, int out_features,
+                                    cudaStream_t stream);
 extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
                                      const void *k_cache, const void *v_cache, float *out,
                                      int past_len, int num_heads, int num_kv_heads,
-                                     int head_dim);
+                                     int head_dim, cudaStream_t stream);
 extern int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float *new_v,
                                          const void *k_cache, const void *v_cache, float *out,
                                          const int *past_len_ptr, int num_heads,
-                                         int num_kv_heads, int head_dim);
+                                         int num_kv_heads, int head_dim,
+                                         cudaStream_t stream);
 extern int vt_kv_cache_append_fp16_dyn(void *k_cache, void *v_cache, const void *k_append,
                                        const void *v_append, const int *past_len_ptr,
-                                       int kv_dim);
+                                       int kv_dim, cudaStream_t stream);
 extern void vt_block_set_stream(void *stream);
 extern void cuda_fp8_dequant_set_stream(void *stream);
 extern uint16_t float_to_half(float f);
@@ -407,10 +416,11 @@ static int dequant_weight_fp16(const PackedWeight *w, uint16_t **out_weight) {
   if (w->block_size > 0) {
     rc = cuda_fp8_colmajor_dequant_to_fp16_blocked(w->d_weight, (const float *)w->d_scales,
                                                    d_weight, w->in_features, w->out_features,
-                                                   w->block_size);
+                                                   w->block_size, (void *)g_block_stream);
   } else {
     rc = cuda_fp8_colmajor_dequant_to_fp16(w->d_weight, (const float *)w->d_scales,
-                                           d_weight, w->in_features, w->out_features);
+                                           d_weight, w->in_features, w->out_features,
+                                           (void *)g_block_stream);
   }
   if (rc != 0) return -20 + rc;
   mw->fp16_cache_ready = 1;
@@ -478,7 +488,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
     }
     return vt_w8a16_mmv_blocked_k16(w->d_weight, (const float *)w->d_scales,
                                     d_input, d_out, w->in_features,
-                                    w->out_features);
+                                    w->out_features, g_block_stream);
   }
 
   uint16_t *d_weight = NULL;
@@ -490,7 +500,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
 
   BlockGemmPlan *plan = NULL;
   int plan_rc = get_block_gemm_plan(w, batch, &plan);
-  if (plan_rc != 0) DBG_FAIL_RET("gemm_plan", -7 + plan_rc, plan_rc);
+  if (plan_rc != 0) return -7 + plan_rc;
 
   float alpha = 1.0f, beta = 0.0f;
   cublasStatus_t st = cublasLtMatmul(g_block_lt, plan->desc, &alpha,
@@ -501,7 +511,7 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input,
                       &plan->heur.algo, g_block_workspace, g_block_workspace_size,
                       g_block_stream);
 
-  if (st != CUBLAS_STATUS_SUCCESS) DBG_FAIL_RET("gemm_cublasLtMatmul", -1000 - (int)st, (int)st);
+  if (st != CUBLAS_STATUS_SUCCESS) return -1000 - (int)st;
   return 0;
 }
 
@@ -564,66 +574,77 @@ static int run_helper_sequence(int kind, int hidden, int kv_dim, int ffn,
   int rc;
   switch (kind) {
     case BLOCK_GRAPH_NORM1:
-      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden)) != 0) DBG_FAIL_RET("seq_norm1_cast_in", -100 + rc, rc);
+      if ((rc = vt_fp16_to_fp32_cast(b_hidden16.ptr, (float *)b_hidden32.ptr, hidden,
+                                     g_block_stream)) != 0) return -100 + rc;
       if ((rc = vt_rmsnorm_fp32((float *)b_hidden32.ptr,
-                                 g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
-                                   (float *)b_x2.ptr, hidden, eps)) != 0) DBG_FAIL_RET("seq_norm1_rmsnorm", -200 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_norm1_cast_out", -300 + rc, rc);
+                                  g_norm1_ptr ? g_norm1_ptr : (float *)b_norm1.ptr,
+                                    (float *)b_x2.ptr, hidden, eps, g_block_stream)) != 0) return -200 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_norm16.ptr, hidden,
+                                     g_block_stream)) != 0) return -300 + rc;
       return 0;
     case BLOCK_GRAPH_ROPE_ATTN:
       if (g_dyn_pos_ptr) {
-        if ((rc = vt_rope_apply_fp32_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                          g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
-                                          g_dyn_pos_ptr, num_heads, head_dim)) != 0)
-          DBG_FAIL_RET("seq_rope_attn_q_rope_dyn", -400 + rc, rc);
-        if ((rc = vt_rope_apply_fp32_dyn(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                          g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
-                                          g_dyn_pos_ptr, num_kv_heads, head_dim)) != 0)
-          DBG_FAIL_RET("seq_rope_attn_k_rope_dyn", -500 + rc, rc);
+         if ((rc = vt_rope_apply_fp32_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
+                                           g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                           g_dyn_pos_ptr, num_heads, head_dim,
+                                           g_block_stream)) != 0)
+           return -400 + rc;
+         if ((rc = vt_rope_apply_fp32_dyn(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                           g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr,
+                                           g_dyn_pos_ptr, num_kv_heads, head_dim,
+                                           g_block_stream)) != 0)
+           return -500 + rc;
       } else {
         if ((rc = vt_rope_apply_fp32(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                      g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                       num_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_q_rope", -400 + rc, rc);
+                                       g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                        num_heads, head_dim, g_block_stream)) != 0) return -400 + rc;
         if ((rc = vt_rope_apply_fp32(g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                      g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
-                                       num_kv_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_k_rope", -500 + rc, rc);
+                                       g_rope_ptr ? g_rope_ptr : (float *)b_rope.ptr, pos,
+                                        num_kv_heads, head_dim, g_block_stream)) != 0) return -500 + rc;
       }
-      if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr, kv_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_k_cast", -600 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr, kv_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_v_cast", -700 + rc, rc);
+      if ((rc = vt_fp32_to_fp16_cast(g_k_ptr ? g_k_ptr : (float *)b_k.ptr, b_k_append.ptr,
+                                     kv_dim, g_block_stream)) != 0) return -600 + rc;
+      if ((rc = vt_fp32_to_fp16_cast(g_v_ptr ? g_v_ptr : (float *)b_v.ptr, b_v_append.ptr,
+                                     kv_dim, g_block_stream)) != 0) return -700 + rc;
       if (g_dyn_past_len_ptr) {
         if ((rc = vt_gqa_attn_single_token_dyn(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                               g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                               g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
-                                               g_attn_k_cache_ptr, g_attn_v_cache_ptr,
-                                                (float *)b_attn.ptr, g_dyn_past_len_ptr,
-                                                num_heads, num_kv_heads, head_dim)) != 0)
-          DBG_FAIL_RET("seq_rope_attn_gqa_dyn", -800 + rc, rc);
+                                                 g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                                 g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
+                                                 g_attn_k_cache_ptr, g_attn_v_cache_ptr,
+                                                 (float *)b_attn.ptr, g_dyn_past_len_ptr,
+                                                 num_heads, num_kv_heads, head_dim,
+                                                 g_block_stream)) != 0)
+          return -800 + rc;
       } else if ((rc = vt_gqa_attn_single_token(g_q_ptr ? g_q_ptr : (float *)b_q.ptr,
-                                                g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
-                                                g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
-                                                g_attn_k_cache_ptr, g_attn_v_cache_ptr,
-                                                 (float *)b_attn.ptr, past_len, num_heads,
-                                                  num_kv_heads, head_dim)) != 0) DBG_FAIL_RET("seq_rope_attn_gqa", -800 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_rope_attn_out_cast", -900 + rc, rc);
+                                                 g_k_ptr ? g_k_ptr : (float *)b_k.ptr,
+                                                 g_v_ptr ? g_v_ptr : (float *)b_v.ptr,
+                                                 g_attn_k_cache_ptr, g_attn_v_cache_ptr,
+                                                  (float *)b_attn.ptr, past_len, num_heads,
+                                                   num_kv_heads, head_dim, g_block_stream)) != 0) return -800 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_attn.ptr, b_attn16.ptr, hidden,
+                                     g_block_stream)) != 0) return -900 + rc;
       return 0;
     case BLOCK_GRAPH_POST_ATTN:
       if ((rc = vt_residual_add_fp32((float *)b_hidden32.ptr, (float *)b_o.ptr,
-                                       (float *)b_h1.ptr, hidden)) != 0) DBG_FAIL_RET("seq_post_attn_residual", -1000 + rc, rc);
+                                        (float *)b_h1.ptr, hidden, g_block_stream)) != 0) return -1000 + rc;
       if ((rc = vt_rmsnorm_fp32((float *)b_h1.ptr,
-                                 g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
-                                   (float *)b_x2.ptr, hidden, eps)) != 0) DBG_FAIL_RET("seq_post_attn_rmsnorm", -1100 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_post_attn_cast", -1200 + rc, rc);
+                                  g_norm2_ptr ? g_norm2_ptr : (float *)b_norm2.ptr,
+                                    (float *)b_x2.ptr, hidden, eps, g_block_stream)) != 0) return -1100 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_x2_16.ptr, hidden,
+                                     g_block_stream)) != 0) return -1200 + rc;
       return 0;
     case BLOCK_GRAPH_FFN:
       if ((rc = vt_silu_mul_fp32(g_gate_ptr ? g_gate_ptr : (float *)b_gate.ptr,
-                                 g_up_ptr ? g_up_ptr : (float *)b_up.ptr,
-                                  (float *)b_sw.ptr, ffn)) != 0) DBG_FAIL_RET("seq_ffn_silu_mul", -1300 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn)) != 0) DBG_FAIL_RET("seq_ffn_cast", -1400 + rc, rc);
+                                  g_up_ptr ? g_up_ptr : (float *)b_up.ptr,
+                                   (float *)b_sw.ptr, ffn, g_block_stream)) != 0) return -1300 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_sw.ptr, b_sw16.ptr, ffn,
+                                     g_block_stream)) != 0) return -1400 + rc;
       return 0;
     case BLOCK_GRAPH_OUT:
       if ((rc = vt_residual_add_fp32((float *)b_h1.ptr, (float *)b_down.ptr,
-                                      (float *)b_x2.ptr, hidden)) != 0) DBG_FAIL_RET("seq_out_residual", -1500 + rc, rc);
-      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden)) != 0) DBG_FAIL_RET("seq_out_cast", -1600 + rc, rc);
+                                      (float *)b_x2.ptr, hidden, g_block_stream)) != 0) return -1500 + rc;
+      if ((rc = vt_fp32_to_fp16_cast((float *)b_x2.ptr, b_hout16.ptr, hidden,
+                                     g_block_stream)) != 0) return -1600 + rc;
       return 0;
     default:
       return -9999;
@@ -646,7 +667,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
       e->launches++;
       return 0;
     }
-    DBG_FAIL_RET("graph_launch_cached", -2000 - (int)err, (int)err);
+    return -2000 - (int)err;
   }
 
   e = alloc_block_graph(kind, hidden, kv_dim, ffn, pos, past_len, head_dim, eps);
@@ -670,7 +691,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   if (rc != 0 || err != cudaSuccess || !graph) {
     if (graph) cudaGraphDestroy(graph);
     g_block_graph_disabled = 1;
-    DBG_FAIL_RET(rc != 0 ? "graph_capture_sequence" : "graph_end_capture", rc != 0 ? rc : (-2100 - (int)err), rc != 0 ? rc : (int)err);
+    return rc != 0 ? rc : (-2100 - (int)err);
   }
 
   cudaGraphExec_t exec = NULL;
@@ -686,7 +707,7 @@ static int run_helper_graph(int kind, int hidden, int kv_dim, int ffn,
   e->exec = exec;
   e->launches = 1;
   err = cudaGraphLaunch(exec, g_block_stream);
-  if (err != cudaSuccess) DBG_FAIL_RET("graph_launch_new", -2200 - (int)err, (int)err);
+  if (err != cudaSuccess) return -2200 - (int)err;
   return 0;
 }
 
@@ -813,9 +834,9 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   int past_len = kv_cache_res->len;
 
   int rc = 0;
-  if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) DBG_FAIL_RET("decode_upload_norm1", -100 + rc, rc);
-  if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) DBG_FAIL_RET("decode_upload_norm2", -120 + rc, rc);
-  if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) DBG_FAIL_RET("decode_upload_rope", -140 + rc, rc);
+  if ((rc = upload_binary_async(&b_norm1, norm1_bin)) != 0) return -100 + rc;
+  if ((rc = upload_binary_async(&b_norm2, norm2_bin)) != 0) return -120 + rc;
+  if ((rc = upload_binary_async(&b_rope, rope_bin)) != 0) return -140 + rc;
   g_norm1_ptr = (float *)b_norm1.ptr;
   g_norm2_ptr = (float *)b_norm2.ptr;
   g_rope_ptr = (float *)b_rope.ptr;
@@ -855,45 +876,45 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
   g_up_ptr = NULL;
 
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                              num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_norm1_graph", -200 + rc, rc);
+                              num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
-      DBG_FAIL_RET("decode_qkv_gemm", -300 + rc, rc);
+      return -300 + rc;
     g_q_ptr = (float *)b_qkv.ptr;
     g_k_ptr = g_q_ptr + hidden;
     g_v_ptr = g_k_ptr + kv_dim;
   } else {
     if ((rc = gemm_w8a16_dequant(q, (uint16_t *)b_norm16.ptr, 1, (float *)b_q.ptr)) != 0)
-      DBG_FAIL_RET("decode_q_gemm", -300 + rc, rc);
+      return -300 + rc;
     if ((rc = gemm_w8a16_dequant(k, (uint16_t *)b_norm16.ptr, 1, (float *)b_k.ptr)) != 0)
-      DBG_FAIL_RET("decode_k_gemm", -320 + rc, rc);
+      return -320 + rc;
     if ((rc = gemm_w8a16_dequant(v, (uint16_t *)b_norm16.ptr, 1, (float *)b_v.ptr)) != 0)
-      DBG_FAIL_RET("decode_v_gemm", -340 + rc, rc);
+      return -340 + rc;
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
                                   past_len, num_heads, num_kv_heads, head_dim, eps)) != 0)
-    DBG_FAIL_RET("decode_rope_attn_sequence", -400 + rc, rc);
+    return -400 + rc;
   if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
-    DBG_FAIL_RET("decode_o_gemm", -500 + rc, rc);
+    return -500 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_post_attn_graph", -600 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate_up.ptr)) != 0)
-      DBG_FAIL_RET("decode_gate_up_gemm", -700 + rc, rc);
+      return -700 + rc;
     g_gate_ptr = (float *)b_gate_up.ptr;
     g_up_ptr = g_gate_ptr + ffn;
   } else {
     if ((rc = gemm_w8a16_dequant(gate, (uint16_t *)b_x2_16.ptr, 1, (float *)b_gate.ptr)) != 0)
-      DBG_FAIL_RET("decode_gate_gemm", -700 + rc, rc);
+      return -700 + rc;
     if ((rc = gemm_w8a16_dequant(up, (uint16_t *)b_x2_16.ptr, 1, (float *)b_up.ptr)) != 0)
-      DBG_FAIL_RET("decode_up_gemm", -720 + rc, rc);
+      return -720 + rc;
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                              num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_ffn_graph", -800 + rc, rc);
+                              num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
   if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
-    DBG_FAIL_RET("decode_down_gemm", -900 + rc, rc);
+    return -900 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("decode_out_graph", -1000 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
 
   size_t offset = (size_t)past_len * kv16_bytes;
   if (cudaMemcpyAsync((uint8_t *)kv_cache_res->d_k + offset, b_k_append.ptr, kv16_bytes,
@@ -1138,49 +1159,50 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
 
   int rc = 0;
   if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_norm1_graph", -200 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -200 + rc;
   if (use_qkv) {
     if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_qkv.ptr)) != 0) DBG_FAIL_RET("preloaded_qkv_gemm", -300 + rc, rc);
+                                 (float *)b_qkv.ptr)) != 0) return -300 + rc;
     g_q_ptr = (float *)b_qkv.ptr;
     g_k_ptr = g_q_ptr + hidden;
     g_v_ptr = g_k_ptr + kv_dim;
   } else {
     if ((rc = gemm_w8a16_dequant(l->q, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_q.ptr)) != 0) DBG_FAIL_RET("preloaded_q_gemm", -300 + rc, rc);
+                                 (float *)b_q.ptr)) != 0) return -300 + rc;
     if ((rc = gemm_w8a16_dequant(l->k, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_k.ptr)) != 0) DBG_FAIL_RET("preloaded_k_gemm", -320 + rc, rc);
+                                 (float *)b_k.ptr)) != 0) return -320 + rc;
     if ((rc = gemm_w8a16_dequant(l->v, (uint16_t *)b_norm16.ptr, 1,
-                                 (float *)b_v.ptr)) != 0) DBG_FAIL_RET("preloaded_v_gemm", -340 + rc, rc);
+                                 (float *)b_v.ptr)) != 0) return -340 + rc;
   }
   if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos,
-                                past_len, num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_rope_attn_sequence", -400 + rc, rc);
+                                past_len, num_heads, num_kv_heads, head_dim, eps)) != 0) return -400 + rc;
   if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1,
-                               (float *)b_o.ptr)) != 0) DBG_FAIL_RET("preloaded_o_gemm", -500 + rc, rc);
+                               (float *)b_o.ptr)) != 0) return -500 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_post_attn_graph", -600 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -600 + rc;
   if (use_gate_up) {
     if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_gate_up.ptr)) != 0) DBG_FAIL_RET("preloaded_gate_up_gemm", -700 + rc, rc);
+                                 (float *)b_gate_up.ptr)) != 0) return -700 + rc;
     g_gate_ptr = (float *)b_gate_up.ptr;
     g_up_ptr = g_gate_ptr + ffn;
   } else {
     if ((rc = gemm_w8a16_dequant(l->gate, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_gate.ptr)) != 0) DBG_FAIL_RET("preloaded_gate_gemm", -700 + rc, rc);
+                                 (float *)b_gate.ptr)) != 0) return -700 + rc;
     if ((rc = gemm_w8a16_dequant(l->up, (uint16_t *)b_x2_16.ptr, 1,
-                                 (float *)b_up.ptr)) != 0) DBG_FAIL_RET("preloaded_up_gemm", -720 + rc, rc);
+                                 (float *)b_up.ptr)) != 0) return -720 + rc;
   }
   if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_ffn_graph", -800 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -800 + rc;
   if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1,
-                               (float *)b_down.ptr)) != 0) DBG_FAIL_RET("preloaded_down_gemm", -900 + rc, rc);
+                               (float *)b_down.ptr)) != 0) return -900 + rc;
   if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1,
-                             num_heads, num_kv_heads, head_dim, eps)) != 0) DBG_FAIL_RET("preloaded_out_graph", -1000 + rc, rc);
+                             num_heads, num_kv_heads, head_dim, eps)) != 0) return -1000 + rc;
 
   if (g_dyn_past_len_ptr) {
     rc = vt_kv_cache_append_fp16_dyn(l->cache->d_k, l->cache->d_v, b_k_append.ptr,
-                                     b_v_append.ptr, g_dyn_past_len_ptr, kv_dim);
-    if (rc != 0) DBG_FAIL_RET("preloaded_kv_append_dyn", -30 + rc, rc);
+                                     b_v_append.ptr, g_dyn_past_len_ptr, kv_dim,
+                                     g_block_stream);
+    if (rc != 0) return -30 + rc;
   } else {
     size_t offset = (size_t)past_len * kv16_bytes;
     if (cudaMemcpyAsync((uint8_t *)l->cache->d_k + offset, b_k_append.ptr, kv16_bytes,
@@ -1199,24 +1221,25 @@ static int run_decode_token_sequence(EmbeddingTable *embed, int token_id,
                                       float *final_norm, PackedWeight *lm_head,
                                       float *rope, int pos, int head_dim, float eps) {
   int rc = vt_embedding_lookup_fp16(embed->d_weight, (const int *)b_token_id.ptr,
-                                    b_hidden16.ptr, embed->hidden, embed->vocab);
-  if (rc != 0) DBG_FAIL_RET("token_embedding", -10000 + rc, rc);
+                                    b_hidden16.ptr, embed->hidden, embed->vocab,
+                                    g_block_stream);
+  if (rc != 0) return -10000 + rc;
   for (int i = 0; i < layer_count; ++i) {
     rc = run_decode_block_device_preloaded(&layers[i], rope, pos);
-    if (rc != 0) DBG_FAIL_RET("token_layer", -11000 + rc, rc);
+    if (rc != 0) return -11000 + rc;
   }
   g_norm1_ptr = final_norm;
   g_norm2_ptr = NULL;
   g_rope_ptr = rope;
   rc = run_helper_graph(BLOCK_GRAPH_NORM1, embed->hidden, 0, 0, -1, -1, 0, 0,
                         head_dim, eps);
-  if (rc != 0) DBG_FAIL_RET("token_final_norm", -12000 + rc, rc);
+  if (rc != 0) return -12000 + rc;
   rc = gemm_w8a16_dequant(lm_head, (uint16_t *)b_norm16.ptr, 1,
                           (float *)b_logits.ptr);
-  if (rc != 0) DBG_FAIL_RET("token_lm_head", -13000 + rc, rc);
+  if (rc != 0) return -13000 + rc;
   rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
-                              (int *)b_argmax.ptr);
-  if (rc != 0) DBG_FAIL_RET("token_argmax", -14000 + rc, rc);
+                              (int *)b_argmax.ptr, (void *)g_block_stream);
+  if (rc != 0) return -14000 + rc;
   (void)token_id;
   return 0;
 }
@@ -1870,14 +1893,14 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc,
                                  (float *)b_logits.ptr)) != 0)
       return make_block_error(env, "lm_head", rc);
     int argmax_rc = vt_argmax_fp32_as_fp16((float *)b_logits.ptr, lm_head->out_features,
-                                           (int *)b_argmax.ptr);
+                                           (int *)b_argmax.ptr, (void *)g_block_stream);
     if (argmax_rc != 0) return make_block_error(env, "argmax_gpu", argmax_rc);
   }
 
   if (return_topk) {
     int topk_rc = vt_topk_fp32_partial((float *)b_logits.ptr, lm_head->out_features, topk,
                                        (int *)b_topk_indices.ptr,
-                                       (float *)b_topk_values.ptr);
+                                       (float *)b_topk_values.ptr, g_block_stream);
     if (topk_rc != 0) return make_block_error(env, "topk_gpu", topk_rc);
   }
 
