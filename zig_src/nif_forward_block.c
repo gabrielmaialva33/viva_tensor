@@ -26,6 +26,14 @@
         return _dbg_ret;                                                                  \
     } while (0)
 #endif
+#ifndef DBG_FAIL_RET
+#define DBG_FAIL_RET(path, ret_code, inner_rc)                                            \
+    do {                                                                                  \
+        (void)(path);                                                                     \
+        (void)(inner_rc);                                                                 \
+        return (ret_code);                                                                \
+    } while (0)
+#endif
 
 #define DEFAULT_LLAMA_HEAD_DIM 64
 #define DEFAULT_LLAMA_EPS      1.0e-5f
@@ -48,12 +56,16 @@ extern int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices, 
 extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out, int hidden,
                                     int vocab, cudaStream_t stream);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
-                                    const void *d_input, float *d_out, int in_features,
-                                    int out_features, cudaStream_t stream);
+                                     const void *d_input, float *d_out, int in_features,
+                                     int out_features, cudaStream_t stream);
+extern int marlin_cuda(const void *A, const void *B, void *C, void *s, int prob_m,
+                       int prob_n, int prob_k, void *workspace, int groupsize, int dev,
+                       cudaStream_t stream, int thread_k, int thread_n, int sms, int max_par)
+    __asm__("_Z11marlin_cudaPKvS0_PvS1_iiiS1_iiP11CUstream_stiiii");
 extern int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
-                                    const void *k_cache, const void *v_cache, float *out,
-                                    int past_len, int num_heads, int num_kv_heads, int head_dim,
-                                    cudaStream_t stream);
+                                     const void *k_cache, const void *v_cache, float *out,
+                                     int past_len, int num_heads, int num_kv_heads, int head_dim,
+                                     cudaStream_t stream);
 extern int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float *new_v,
                                         const void *k_cache, const void *v_cache, float *out,
                                         const int *past_len_ptr, int num_heads, int num_kv_heads,
@@ -92,6 +104,16 @@ typedef enum {
 } BlockGraphKind;
 
 typedef enum { WEIGHT_FORMAT_FP8 = 0, WEIGHT_FORMAT_MARLIN = 1 } WeightFormat;
+
+typedef struct {
+    int K, N, groupsize, groups;
+    void *d_B;
+    void *d_s;
+    void *d_workspace;
+    size_t b_bytes;
+    size_t s_bytes;
+    size_t ws_bytes;
+} MarlinPackedResource;
 
 typedef struct {
     int kind;
@@ -542,7 +564,7 @@ static int get_block_gemm_plan(const PackedWeight *w, int batch, BlockGemmPlan *
 }
 
 static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input, int batch,
-                              float *d_out) {
+                               float *d_out) {
     if (ensure_block_lt() != 0)
         return -1;
 
@@ -576,6 +598,36 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input, in
 
     if (st != CUBLAS_STATUS_SUCCESS)
         return -1000 - (int)st;
+    return 0;
+}
+
+static int gemm_marlin_w4a16(MarlinPackedResource *r, const uint16_t *d_input, int M,
+                             uint16_t *d_output, cudaStream_t stream) {
+    if (!r || !r->d_B || !r->d_s || !r->d_workspace || r->K <= 0 || r->N <= 0 || M <= 0)
+        DBG_FAIL_RET("marlin_invalid_resource", -9300, 0);
+    if ((r->K % 128) != 0 || (r->N % 256) != 0 ||
+        (r->groupsize != -1 && r->groupsize != 128))
+        DBG_FAIL_RET("marlin_unsupported_shape", -9303, 0);
+
+    cudaError_t e = cudaMemsetAsync(r->d_workspace, 0, r->ws_bytes, stream);
+    if (e != cudaSuccess)
+        DBG_FAIL_RET("marlin_workspace_memset", -9301, (int)e);
+    int rc = marlin_cuda(d_input, r->d_B, d_output, r->d_s, M, r->N, r->K, r->d_workspace,
+                         r->groupsize, 0, stream, -1, -1, -1, 16);
+    if (rc != 0)
+        DBG_FAIL_RET("marlin_cuda", -9302, rc);
+    return 0;
+}
+
+static int gemm_marlin_w4a16_to_fp32(MarlinPackedResource *r, const uint16_t *d_input, int M,
+                                     uint16_t *d_tmp16, float *d_output,
+                                     cudaStream_t stream) {
+    int rc = gemm_marlin_w4a16(r, d_input, M, d_tmp16, stream);
+    if (rc != 0)
+        return rc;
+    rc = vt_fp16_to_fp32_cast(d_tmp16, d_output, M * r->N, stream);
+    if (rc != 0)
+        DBG_FAIL_RET("marlin_fp16_to_fp32", -9304, rc);
     return 0;
 }
 
@@ -858,13 +910,43 @@ static PackedWeight *map_get_weight(ErlNifEnv *env, ERL_NIF_TERM map, const char
     return get_packed_weight(env, val);
 }
 
+static int map_get_value_name(ErlNifEnv *env, ERL_NIF_TERM map, const char *key,
+                              ERL_NIF_TERM *out) {
+    if (enif_get_map_value(env, map, enif_make_atom(env, key), out))
+        return 1;
+    return enif_get_map_value(env, map, enif_make_string(env, key, ERL_NIF_LATIN1), out);
+}
+
+static MarlinPackedResource *get_layer_marlin(ErlNifEnv *env, ERL_NIF_TERM layer_map,
+                                              const char *linear_name) {
+    ERL_NIF_TERM handles, val;
+    if ((map_get_value_name(env, layer_map, "marlin_handles", &handles) ||
+         map_get_value_name(env, layer_map, "marlin_packed_resources", &handles)) &&
+        map_get_value_name(env, handles, linear_name, &val)) {
+        MarlinPackedResource *r = NULL;
+        if (enif_get_resource(env, val, marlin_packed_resource_type, (void **)&r))
+            return r;
+    }
+
+    char direct_key[64];
+    snprintf(direct_key, sizeof(direct_key), "marlin_%s", linear_name);
+    if (map_get_value_name(env, layer_map, direct_key, &val) ||
+        map_get_value_name(env, layer_map, linear_name, &val)) {
+        MarlinPackedResource *r = NULL;
+        if (enif_get_resource(env, val, marlin_packed_resource_type, (void **)&r))
+            return r;
+    }
+    return NULL;
+}
+
 static int map_has_key(ErlNifEnv *env, ERL_NIF_TERM map, const char *key) {
     ERL_NIF_TERM val;
     return enif_get_map_value(env, map, enif_make_atom(env, key), &val);
 }
 
 static int decode_layer_has_marlin_weights(ErlNifEnv *env, ERL_NIF_TERM layer) {
-    return map_has_key(env, layer, "marlin_packed_resources") ||
+    return map_has_key(env, layer, "marlin_handles") ||
+           map_has_key(env, layer, "marlin_packed_resources") ||
            map_has_key(env, layer, "marlin_q") || map_has_key(env, layer, "marlin_qkv") ||
            map_has_key(env, layer, "marlin_gate_up");
 }
@@ -882,11 +964,16 @@ static int parse_weight_format(ErlNifEnv *env, ERL_NIF_TERM term, WeightFormat *
 }
 
 static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeight *v,
-                                   PackedWeight *o, PackedWeight *gate, PackedWeight *up,
-                                   PackedWeight *down, PackedWeight *qkv, PackedWeight *gate_up,
-                                   const ErlNifBinary *norm1_bin, const ErlNifBinary *norm2_bin,
-                                   const ErlNifBinary *rope_bin, BlockKvCache *kv_cache_res,
-                                   int pos, int head_dim, float eps) {
+                                    PackedWeight *o, PackedWeight *gate, PackedWeight *up,
+                                    PackedWeight *down, PackedWeight *qkv, PackedWeight *gate_up,
+                                    MarlinPackedResource *marlin_qkv,
+                                    MarlinPackedResource *marlin_o,
+                                    MarlinPackedResource *marlin_gate,
+                                    MarlinPackedResource *marlin_up,
+                                    MarlinPackedResource *marlin_down,
+                                    const ErlNifBinary *norm1_bin, const ErlNifBinary *norm2_bin,
+                                    const ErlNifBinary *rope_bin, BlockKvCache *kv_cache_res,
+                                    int pos, int head_dim, float eps) {
     if (!validate_fp8_weight(q) || !validate_fp8_weight(k) || !validate_fp8_weight(v) ||
         !validate_fp8_weight(o) || !validate_fp8_weight(gate) || !validate_fp8_weight(up) ||
         !validate_fp8_weight(down)) {
@@ -914,6 +1001,8 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if (use_gate_up && (gate_up->in_features != hidden || gate_up->out_features != ffn + ffn)) {
         use_gate_up = 0;
     }
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN && !use_qkv)
+        DBG_FAIL_RET("marlin_requires_qkv_fused", -9402, 0);
 
     size_t hidden16_bytes = (size_t)hidden * sizeof(uint16_t);
     size_t hidden32_bytes = (size_t)hidden * sizeof(float);
@@ -966,6 +1055,13 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if (use_gate_up && ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0) {
         return -24;
     }
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        size_t marlin_tmp_elems = (size_t)(hidden + kv_dim + kv_dim);
+        if ((size_t)ffn > marlin_tmp_elems)
+            marlin_tmp_elems = (size_t)ffn;
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+            return -25;
+    }
 
     g_attn_k_cache_ptr = kv_cache_res->d_k;
     g_attn_v_cache_ptr = kv_cache_res->d_v;
@@ -978,8 +1074,17 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -200 + rc;
-    /* TODO B4-dispatch: branch on weight_format here */
-    if (use_qkv) {
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!marlin_qkv)
+            DBG_FAIL_RET("marlin_missing_qkv", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_qkv, (uint16_t *)b_norm16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_qkv.ptr, g_block_stream)) != 0)
+            return -300 + rc;
+        g_q_ptr = (float *)b_qkv.ptr;
+        g_k_ptr = g_q_ptr + hidden;
+        g_v_ptr = g_k_ptr + kv_dim;
+    } else if (use_qkv) {
         if ((rc = gemm_w8a16_dequant(qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
         g_q_ptr = (float *)b_qkv.ptr;
@@ -996,12 +1101,30 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
                                   num_heads, num_kv_heads, head_dim, eps)) != 0)
         return -400 + rc;
-    if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!marlin_o)
+            DBG_FAIL_RET("marlin_missing_o", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_o, (uint16_t *)b_attn16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_o.ptr, g_block_stream)) != 0)
+            return -500 + rc;
+    } else if ((rc = gemm_w8a16_dequant(o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
         return -500 + rc;
     if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -600 + rc;
-    if (use_gate_up) {
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!marlin_gate || !marlin_up)
+            DBG_FAIL_RET("marlin_missing_gate_up", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_gate, (uint16_t *)b_x2_16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_gate.ptr, g_block_stream)) != 0)
+            return -700 + rc;
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_up, (uint16_t *)b_x2_16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_up.ptr, g_block_stream)) != 0)
+            return -720 + rc;
+    } else if (use_gate_up) {
         if ((rc = gemm_w8a16_dequant(gate_up, (uint16_t *)b_x2_16.ptr, 1,
                                      (float *)b_gate_up.ptr)) != 0)
             return -700 + rc;
@@ -1016,7 +1139,14 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
     if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -800 + rc;
-    if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!marlin_down)
+            DBG_FAIL_RET("marlin_missing_down", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(marlin_down, (uint16_t *)b_sw16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_down.ptr, g_block_stream)) != 0)
+            return -900 + rc;
+    } else if ((rc = gemm_w8a16_dequant(down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
         return -900 + rc;
     if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
@@ -1040,6 +1170,7 @@ static int run_decode_block_device(PackedWeight *q, PackedWeight *k, PackedWeigh
 
 typedef struct {
     PackedWeight *q, *k, *v, *o, *gate, *up, *down, *qkv, *gate_up;
+    MarlinPackedResource *marlin_qkv, *marlin_o, *marlin_gate, *marlin_up, *marlin_down;
     BlockKvCache *cache;
     float *norm1;
     float *norm2;
@@ -1150,11 +1281,15 @@ static void set_decode_rolling_exec(cudaGraphExec_t exec, int hidden, int vocab,
 }
 
 static int all_decode_weights_captureable(DecodeLayerParams *layers, int layer_count,
-                                          PackedWeight *lm_head) {
+                                           PackedWeight *lm_head) {
     if (!lm_head || lm_head->block_size != 16)
         return 0;
     for (int i = 0; i < layer_count; ++i) {
         DecodeLayerParams *l = &layers[i];
+        if (g_weight_format == WEIGHT_FORMAT_MARLIN &&
+            (!l->marlin_qkv || !l->marlin_o || !l->marlin_gate || !l->marlin_up ||
+             !l->marlin_down))
+            return 0;
         PackedWeight *ws[] = {l->q, l->k, l->v, l->o, l->gate, l->up, l->down};
         for (unsigned j = 0; j < sizeof(ws) / sizeof(ws[0]); ++j) {
             if (!ws[j] || ws[j]->block_size != 16)
@@ -1199,6 +1334,15 @@ static int ensure_decode_layer_scratch(PackedWeight *q, PackedWeight *k, PackedW
     if (gate_up && validate_fp8_weight(gate_up) &&
         ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
         return -24;
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        size_t marlin_tmp_elems = qkv && validate_fp8_weight(qkv)
+                                      ? (size_t)(hidden + kv_dim + kv_dim)
+                                      : (size_t)hidden;
+        if ((size_t)ffn > marlin_tmp_elems)
+            marlin_tmp_elems = (size_t)ffn;
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+            return -25;
+    }
     return 0;
 }
 
@@ -1235,6 +1379,8 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
         (l->gate_up->in_features != hidden || l->gate_up->out_features != ffn + ffn)) {
         use_gate_up = 0;
     }
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN && !use_qkv)
+        DBG_FAIL_RET("marlin_requires_qkv_fused", -9402, 0);
     if (!l->cache || l->cache->kv_dim != kv_dim || l->cache->len < 0 ||
         l->cache->len >= l->cache->max_seq) {
         return -13;
@@ -1265,6 +1411,13 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
         return -23;
     if (use_gate_up && ensure_block_buf(&b_gate_up, (size_t)(ffn + ffn) * sizeof(float)) != 0)
         return -24;
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        size_t marlin_tmp_elems = (size_t)(hidden + kv_dim + kv_dim);
+        if ((size_t)ffn > marlin_tmp_elems)
+            marlin_tmp_elems = (size_t)ffn;
+        if (ensure_block_buf(&b_weight16, marlin_tmp_elems * sizeof(uint16_t)) != 0)
+            return -25;
+    }
 
     g_attn_k_cache_ptr = l->cache->d_k;
     g_attn_v_cache_ptr = l->cache->d_v;
@@ -1281,8 +1434,17 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     if ((rc = run_helper_graph(BLOCK_GRAPH_NORM1, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -200 + rc;
-    /* TODO B4-dispatch: branch on weight_format here */
-    if (use_qkv) {
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_qkv)
+            DBG_FAIL_RET("marlin_missing_qkv", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_qkv, (uint16_t *)b_norm16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_qkv.ptr, g_block_stream)) != 0)
+            return -300 + rc;
+        g_q_ptr = (float *)b_qkv.ptr;
+        g_k_ptr = g_q_ptr + hidden;
+        g_v_ptr = g_k_ptr + kv_dim;
+    } else if (use_qkv) {
         if ((rc = gemm_w8a16_dequant(l->qkv, (uint16_t *)b_norm16.ptr, 1, (float *)b_qkv.ptr)) != 0)
             return -300 + rc;
         g_q_ptr = (float *)b_qkv.ptr;
@@ -1299,12 +1461,30 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     if ((rc = run_helper_sequence(BLOCK_GRAPH_ROPE_ATTN, hidden, kv_dim, ffn, pos, past_len,
                                   num_heads, num_kv_heads, head_dim, eps)) != 0)
         return -400 + rc;
-    if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_o)
+            DBG_FAIL_RET("marlin_missing_o", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_o, (uint16_t *)b_attn16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_o.ptr, g_block_stream)) != 0)
+            return -500 + rc;
+    } else if ((rc = gemm_w8a16_dequant(l->o, (uint16_t *)b_attn16.ptr, 1, (float *)b_o.ptr)) != 0)
         return -500 + rc;
     if ((rc = run_helper_graph(BLOCK_GRAPH_POST_ATTN, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -600 + rc;
-    if (use_gate_up) {
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_gate || !l->marlin_up)
+            DBG_FAIL_RET("marlin_missing_gate_up", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_gate, (uint16_t *)b_x2_16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_gate.ptr, g_block_stream)) != 0)
+            return -700 + rc;
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_up, (uint16_t *)b_x2_16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_up.ptr, g_block_stream)) != 0)
+            return -720 + rc;
+    } else if (use_gate_up) {
         if ((rc = gemm_w8a16_dequant(l->gate_up, (uint16_t *)b_x2_16.ptr, 1,
                                      (float *)b_gate_up.ptr)) != 0)
             return -700 + rc;
@@ -1320,7 +1500,14 @@ static int run_decode_block_device_preloaded(DecodeLayerParams *l, float *rope, 
     if ((rc = run_helper_graph(BLOCK_GRAPH_FFN, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
         return -800 + rc;
-    if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
+    if (g_weight_format == WEIGHT_FORMAT_MARLIN) {
+        if (!l->marlin_down)
+            DBG_FAIL_RET("marlin_missing_down", -9401, 0);
+        if ((rc = gemm_marlin_w4a16_to_fp32(l->marlin_down, (uint16_t *)b_sw16.ptr, 1,
+                                            (uint16_t *)b_weight16.ptr,
+                                            (float *)b_down.ptr, g_block_stream)) != 0)
+            return -900 + rc;
+    } else if ((rc = gemm_w8a16_dequant(l->down, (uint16_t *)b_sw16.ptr, 1, (float *)b_down.ptr)) != 0)
         return -900 + rc;
     if ((rc = run_helper_graph(BLOCK_GRAPH_OUT, hidden, kv_dim, ffn, -1, -1, num_heads,
                                num_kv_heads, head_dim, eps)) != 0)
@@ -1820,9 +2007,25 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         PackedWeight *down = map_get_weight(env, layer_term, "down");
         PackedWeight *qkv = map_get_weight(env, layer_term, "qkv");
         PackedWeight *gate_up = map_get_weight(env, layer_term, "gate_up");
+        MarlinPackedResource *marlin_qkv = NULL;
+        MarlinPackedResource *marlin_o = NULL;
+        MarlinPackedResource *marlin_gate = NULL;
+        MarlinPackedResource *marlin_up = NULL;
+        MarlinPackedResource *marlin_down = NULL;
         if (weight_format == WEIGHT_FORMAT_MARLIN &&
             !decode_layer_has_marlin_weights(env, layer_term)) {
             return make_block_error(env, "marlin_weights_not_loaded", -8001);
+        }
+        if (weight_format == WEIGHT_FORMAT_MARLIN) {
+            marlin_qkv = get_layer_marlin(env, layer_term, "qkv");
+            marlin_o = get_layer_marlin(env, layer_term, "o");
+            marlin_gate = get_layer_marlin(env, layer_term, "gate");
+            marlin_up = get_layer_marlin(env, layer_term, "up");
+            marlin_down = get_layer_marlin(env, layer_term, "down");
+            if (!marlin_qkv)
+                return make_block_error(env, "marlin_requires_qkv_fused", -9402);
+            if (!marlin_o || !marlin_gate || !marlin_up || !marlin_down)
+                return make_block_error(env, "marlin_weights_not_loaded", -9401);
         }
         int head_dim = map_get_int_default(env, layer_term, "head_dim", DEFAULT_LLAMA_HEAD_DIM);
         float eps = map_get_float_default(env, layer_term, "eps", DEFAULT_LLAMA_EPS);
@@ -1862,6 +2065,11 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         decode_layers[layer_count].down = down;
         decode_layers[layer_count].qkv = qkv;
         decode_layers[layer_count].gate_up = gate_up;
+        decode_layers[layer_count].marlin_qkv = marlin_qkv;
+        decode_layers[layer_count].marlin_o = marlin_o;
+        decode_layers[layer_count].marlin_gate = marlin_gate;
+        decode_layers[layer_count].marlin_up = marlin_up;
+        decode_layers[layer_count].marlin_down = marlin_down;
         decode_layers[layer_count].cache = cache;
         decode_layers[layer_count].norm1 = (float *)g_decode_norm1[layer_count].buf.ptr;
         decode_layers[layer_count].norm2 = (float *)g_decode_norm2[layer_count].buf.ptr;
@@ -1893,6 +2101,11 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         signature = mix_ptr(signature, down ? down->d_weight : NULL);
         signature = mix_ptr(signature, qkv ? qkv->d_weight : NULL);
         signature = mix_ptr(signature, gate_up ? gate_up->d_weight : NULL);
+        signature = mix_ptr(signature, marlin_qkv);
+        signature = mix_ptr(signature, marlin_o);
+        signature = mix_ptr(signature, marlin_gate);
+        signature = mix_ptr(signature, marlin_up);
+        signature = mix_ptr(signature, marlin_down);
         signature = mix_ptr(signature, (const void *)(uintptr_t)head_dim);
         signature = mix_ptr(signature, (const void *)(uintptr_t)float_bits_u32(eps));
         layer_count++;
@@ -2079,12 +2292,17 @@ static ERL_NIF_TERM nt_forward_decode_step_impl(ErlNifEnv *env, int argc, const 
         }
         for (int i = 0; i < layer_count; ++i) {
             rc = run_decode_block_device(decode_layers[i].q, decode_layers[i].k, decode_layers[i].v,
-                                         decode_layers[i].o, decode_layers[i].gate,
-                                         decode_layers[i].up, decode_layers[i].down,
-                                         decode_layers[i].qkv, decode_layers[i].gate_up,
-                                         &norm1_bins[i], &norm2_bins[i], &rope_bin,
-                                         decode_layers[i].cache, pos, decode_layers[i].head_dim,
-                                         decode_layers[i].eps);
+                                          decode_layers[i].o, decode_layers[i].gate,
+                                          decode_layers[i].up, decode_layers[i].down,
+                                          decode_layers[i].qkv, decode_layers[i].gate_up,
+                                          decode_layers[i].marlin_qkv,
+                                          decode_layers[i].marlin_o,
+                                          decode_layers[i].marlin_gate,
+                                          decode_layers[i].marlin_up,
+                                          decode_layers[i].marlin_down,
+                                          &norm1_bins[i], &norm2_bins[i], &rope_bin,
+                                          decode_layers[i].cache, pos, decode_layers[i].head_dim,
+                                          decode_layers[i].eps);
             if (rc != 0)
                 return make_block_error(env, "decode_block", rc);
         }
