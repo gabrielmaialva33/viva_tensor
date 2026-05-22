@@ -1,0 +1,55 @@
+# =============================================================================
+# viva_tensor — clang-format config (C / CUDA)
+# Used by: make fmt-c / make fmt-check-c
+# Targets: zig_src/*.{c,h,cu,cuh}
+# Aligned with .editorconfig (4-space indent, LF, no trailing whitespace).
+# =============================================================================
+---
+Language:        Cpp
+BasedOnStyle:    LLVM
+IndentWidth:     4
+TabWidth:        4
+UseTab:          Never
+ColumnLimit:     100
+ContinuationIndentWidth: 4
+AccessModifierOffset: -4
+
+# Pointers / refs: `int *p`, not `int* p` (matches kernel/NIF style)
+PointerAlignment: Right
+DerivePointerAlignment: false
+
+# Braces / control flow
+BreakBeforeBraces: Attach
+AllowShortFunctionsOnASingleLine: Empty
+AllowShortIfStatementsOnASingleLine: Never
+AllowShortLoopsOnASingleLine: false
+AllowShortBlocksOnASingleLine: Empty
+AllowShortCaseLabelsOnASingleLine: false
+
+# Includes: preserve order — CUDA / cutlass headers are order-sensitive
+SortIncludes: Never
+IncludeBlocks: Preserve
+
+# Spacing
+SpaceAfterCStyleCast: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeParens: ControlStatements
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+SpacesInAngles: Never
+
+# Alignment
+AlignAfterOpenBracket: Align
+AlignConsecutiveAssignments: None
+AlignConsecutiveDeclarations: None
+AlignConsecutiveMacros: AcrossComments
+AlignEscapedNewlines: Left
+AlignOperands: Align
+AlignTrailingComments: true
+
+# Comments / line length
+ReflowComments: false
+
+# Penalties tuned to keep kernel signatures readable
+PenaltyReturnTypeOnItsOwnLine: 1000
+PenaltyBreakBeforeFirstCallParameter: 100

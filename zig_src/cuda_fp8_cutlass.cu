@@ -169,10 +169,15 @@ using Gemm_FP8_F32_out_f32_Default = cutlass::gemm::device::Gemm<
  * ========================================================================= */
 extern "C" {
 
-static thread_local cudaStream_t g_fp8_dequant_stream = 0;
+static cudaStream_t g_fp8_dequant_stream = 0;
 
 void cuda_fp8_dequant_set_stream(void *stream) {
     g_fp8_dequant_stream = (cudaStream_t)stream;
+}
+
+static inline cudaStream_t fp8_resolve_stream(void *stream) {
+    cudaStream_t explicit_stream = (cudaStream_t)stream;
+    return explicit_stream ? explicit_stream : g_fp8_dequant_stream;
 }
 
 /* Dequant FP8 col-major weight back to FP16. Supports both layouts:
@@ -206,13 +211,14 @@ int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
                                        const float *d_scales,
                                        void *d_fp16,
                                        int K,
-                                       int N) {
+                                       int N,
+                                       void *stream) {
     /* Legacy per-channel entry — block_size = 0. */
     if (!d_fp8 || !d_fp16 || K <= 0 || N <= 0) return -10;
     int total = K * N;
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
-    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, g_fp8_dequant_stream>>>(
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, fp8_resolve_stream(stream)>>>(
         static_cast<const cutlass::float_e4m3_t *>(d_fp8),
         d_scales,
         static_cast<cutlass::half_t *>(d_fp16),
@@ -225,17 +231,18 @@ int cuda_fp8_colmajor_dequant_to_fp16(const void *d_fp8,
 
 /* Same but with per-block scales. block_size must divide K. */
 int cuda_fp8_colmajor_dequant_to_fp16_blocked(const void *d_fp8,
-                                                const float *d_scales,
-                                                void *d_fp16,
-                                                int K,
-                                                int N,
-                                                int block_size) {
+                                                 const float *d_scales,
+                                                 void *d_fp16,
+                                                 int K,
+                                                 int N,
+                                                 int block_size,
+                                                 void *stream) {
     if (!d_fp8 || !d_fp16 || K <= 0 || N <= 0) return -10;
     if (block_size <= 0 || (K % block_size) != 0) return -12;
     int total = K * N;
     int threads = 256;
     int blocks = (total + threads - 1) / threads;
-    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, g_fp8_dequant_stream>>>(
+    fp8_colmajor_dequant_to_fp16_kernel<<<blocks, threads, 0, fp8_resolve_stream(stream)>>>(
         static_cast<const cutlass::float_e4m3_t *>(d_fp8),
         d_scales,
         static_cast<cutlass::half_t *>(d_fp16),

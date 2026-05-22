@@ -1,0 +1,37 @@
+# =============================================================================
+# viva_tensor — ruff config (Python)
+# Used by: make fmt-py / make fmt-check-py / make lint-py
+# Targets: bench/*.py, dev/*.py, any ad-hoc scripts in repo root.
+# =============================================================================
+
+line-length = 100
+target-version = "py312"
+extend-exclude = [
+    "build",
+    "bench/reports",
+    ".venv",
+    "venv",
+]
+
+[format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "lf"
+docstring-code-format = true
+
+[lint]
+# Conservative lint set — this is a Gleam project; Python is glue only.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes
+    "W",    # pycodestyle warnings
+    "I",    # isort (import sorting)
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear (likely bugs)
+]
+ignore = [
+    "E501",  # line too long — formatter handles it
+]
+
+[lint.isort]
+known-first-party = ["viva_tensor"]

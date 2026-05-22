@@ -5,10 +5,14 @@
 
 extern "C" {
 
-static thread_local cudaStream_t g_vt_block_stream = 0;
+static cudaStream_t g_vt_block_stream = 0;
 
 void vt_block_set_stream(void *stream) {
   g_vt_block_stream = (cudaStream_t)stream;
+}
+
+static inline cudaStream_t vt_resolve_stream(cudaStream_t stream) {
+  return stream ? stream : g_vt_block_stream;
 }
 
 __global__ void fp16_to_fp32_cast_kernel(const uint16_t *in, float *out, int n) {
@@ -613,71 +617,78 @@ __global__ void kv_cache_append_fp16_dyn_kernel(uint16_t *k_cache, uint16_t *v_c
   v_cache[base + (size_t)i] = v_append[i];
 }
 
-int vt_fp16_to_fp32_cast(const void *in, float *out, int n) {
+int vt_fp16_to_fp32_cast(const void *in, float *out, int n, cudaStream_t stream) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  fp16_to_fp32_cast_kernel<<<grid, block, 0, g_vt_block_stream>>>((const uint16_t *)in, out, n);
+  fp16_to_fp32_cast_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
+      (const uint16_t *)in, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_fp32_to_fp16_cast(const float *in, void *out, int n) {
+int vt_fp32_to_fp16_cast(const float *in, void *out, int n, cudaStream_t stream) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  fp32_to_fp16_cast_kernel<<<grid, block, 0, g_vt_block_stream>>>(in, (uint16_t *)out, n);
+  fp32_to_fp16_cast_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
+      in, (uint16_t *)out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n, float eps) {
-  rmsnorm_fp32_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, gamma, out, n, eps);
+int vt_rmsnorm_fp32(const float *x, const float *gamma, float *out, int n, float eps,
+                    cudaStream_t stream) {
+  rmsnorm_fp32_kernel<<<1, 256, 0, vt_resolve_stream(stream)>>>(x, gamma, out, n, eps);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_residual_add_fp32(const float *a, const float *b, float *out, int n) {
+int vt_residual_add_fp32(const float *a, const float *b, float *out, int n,
+                         cudaStream_t stream) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  residual_add_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(a, b, out, n);
+  residual_add_fp32_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(a, b, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim) {
+int vt_rope_apply_fp32(float *x, const float *freqs, int pos, int num_heads, int head_dim,
+                       cudaStream_t stream) {
   int total = num_heads * (head_dim / 2);
   int block = 128;
   int grid = (total + block - 1) / block;
-  rope_apply_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(x, freqs, pos, num_heads, head_dim);
+  rope_apply_fp32_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
+      x, freqs, pos, num_heads, head_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_rope_apply_fp32_dyn(float *x, const float *freqs, const int *pos_ptr,
-                           int num_heads, int head_dim) {
+                           int num_heads, int head_dim, cudaStream_t stream) {
   int total = num_heads * (head_dim / 2);
   int block = 128;
   int grid = (total + block - 1) / block;
-  rope_apply_fp32_dyn_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+  rope_apply_fp32_dyn_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
       x, freqs, pos_ptr, num_heads, head_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n) {
+int vt_silu_mul_fp32(const float *gate, const float *up, float *out, int n,
+                     cudaStream_t stream) {
   int block = 256;
   int grid = (n + block - 1) / block;
-  silu_mul_fp32_kernel<<<grid, block, 0, g_vt_block_stream>>>(gate, up, out, n);
+  silu_mul_fp32_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(gate, up, out, n);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *new_v,
                               const void *k_cache, const void *v_cache, float *out,
                               int past_len, int num_heads, int num_kv_heads,
-                              int head_dim) {
+                              int head_dim, cudaStream_t stream) {
   int seq_len = past_len + 1;
   size_t shared = (size_t)seq_len * sizeof(float);
   if (head_dim == 64) {
     (void)seq_len;
     (void)shared;
-    gqa_attn_flash_single_token_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
+    gqa_attn_flash_single_token_kernel<<<num_heads, 32, 0, vt_resolve_stream(stream)>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   } else {
-    gqa_attn_naive_single_token_kernel<<<num_heads, 1, shared, g_vt_block_stream>>>(
+    gqa_attn_naive_single_token_kernel<<<num_heads, 1, shared, vt_resolve_stream(stream)>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len, num_heads, num_kv_heads, head_dim);
   }
@@ -687,13 +698,13 @@ int vt_gqa_attn_single_token(const float *q, const float *new_k, const float *ne
 int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float *new_v,
                                  const void *k_cache, const void *v_cache, float *out,
                                  const int *past_len_ptr, int num_heads, int num_kv_heads,
-                                 int head_dim) {
+                                 int head_dim, cudaStream_t stream) {
   if (head_dim == 64) {
-    gqa_attn_flash_single_token_dyn_kernel<<<num_heads, 32, 0, g_vt_block_stream>>>(
+    gqa_attn_flash_single_token_dyn_kernel<<<num_heads, 32, 0, vt_resolve_stream(stream)>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len_ptr, num_heads, num_kv_heads, head_dim);
   } else if (head_dim == 32 || head_dim == 128) {
-    gqa_attn_naive_single_token_dyn_kernel<<<num_heads, 1, 0, g_vt_block_stream>>>(
+    gqa_attn_naive_single_token_dyn_kernel<<<num_heads, 1, 0, vt_resolve_stream(stream)>>>(
         q, new_k, new_v, (const uint16_t *)k_cache, (const uint16_t *)v_cache, out,
         past_len_ptr, num_heads, num_kv_heads, head_dim);
   } else {
@@ -704,57 +715,58 @@ int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float
 
 int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
                              const void *d_input, float *d_out,
-                             int in_features, int out_features) {
+                             int in_features, int out_features, cudaStream_t stream) {
   if (!d_weight || !d_scales || !d_input || !d_out || in_features <= 0 ||
       out_features <= 0 || (in_features % 16) != 0) {
     return -2;
   }
   int num_blocks = in_features / 16;
-  w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, g_vt_block_stream>>>(
+  w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, vt_resolve_stream(stream)>>>(
       (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out,
       in_features, num_blocks);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
-int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx) {
+int vt_argmax_fp32_as_fp16(const float *x, int n, int *out_idx, void *stream) {
   if (!x || !out_idx || n <= 0) return -2;
-  argmax_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(x, n, out_idx);
+  argmax_fp32_as_fp16_kernel<<<1, 256, 0, vt_resolve_stream((cudaStream_t)stream)>>>(
+      x, n, out_idx);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices,
-                         float *out_values) {
+                         float *out_values, cudaStream_t stream) {
   if (!x || !out_indices || !out_values || n <= 0 || k <= 0 || k > 256 || k > n) {
     return -2;
   }
   if (k == 1) {
-    topk_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(
+    topk_fp32_as_fp16_kernel<<<1, 256, 0, vt_resolve_stream(stream)>>>(
         x, n, k, out_indices, out_values);
   } else {
-    topk_approx_fp32_as_fp16_kernel<<<1, 256, 0, g_vt_block_stream>>>(
+    topk_approx_fp32_as_fp16_kernel<<<1, 256, 0, vt_resolve_stream(stream)>>>(
         x, n, k, out_indices, out_values);
   }
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out,
-                             int hidden, int vocab) {
+                             int hidden, int vocab, cudaStream_t stream) {
   if (!table || !token_id || !out || hidden <= 0 || vocab <= 0) return -2;
   int block = 256;
   int grid = (hidden + block - 1) / block;
-  embedding_lookup_fp16_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+  embedding_lookup_fp16_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
       (const uint16_t *)table, token_id, (uint16_t *)out, hidden, vocab);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }
 
 int vt_kv_cache_append_fp16_dyn(void *k_cache, void *v_cache, const void *k_append,
                                 const void *v_append, const int *past_len_ptr,
-                                int kv_dim) {
+                                int kv_dim, cudaStream_t stream) {
   if (!k_cache || !v_cache || !k_append || !v_append || !past_len_ptr || kv_dim <= 0)
     return -2;
   int block = 256;
   int grid = (kv_dim + block - 1) / block;
-  kv_cache_append_fp16_dyn_kernel<<<grid, block, 0, g_vt_block_stream>>>(
+  kv_cache_append_fp16_dyn_kernel<<<grid, block, 0, vt_resolve_stream(stream)>>>(
       (uint16_t *)k_cache, (uint16_t *)v_cache, (const uint16_t *)k_append,
       (const uint16_t *)v_append, past_len_ptr, kv_dim);
   return cudaGetLastError() == cudaSuccess ? 0 : -1;

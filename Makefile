@@ -78,6 +78,7 @@ endif
 .PHONY: zig zig-cpu zig-cuda cutlass-libs zig-clean zig-info build-all
 .PHONY: bench-int8 bench-nf4 bench-awq bench-flash bench-sparse bench-all
 .PHONY: watch deps publish
+.PHONY: fmt-all fmt-check-all fmt-c fmt-check-c fmt-erl fmt-check-erl fmt-py fmt-check-py fmt-zig fmt-check-zig lint-py
 
 ## Build, test, and run benchmarks
 all: build test bench
@@ -177,6 +178,103 @@ fmt-check:
 	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking code format..."
 	gleam format --check $(SRC_DIR) $(TEST_DIR) $(DEV_DIR)
 	@$(LOG) "$(GREEN)[OK]$(NC) Code format OK!"
+
+# =============================================================================
+# POLYGLOT FORMATTERS (opt-in — not wired into `verify` yet)
+#
+# Tooling required (install once, host-local):
+#   C/CUDA   : clang-format    (apt: clang-format / pacman: clang)
+#   Erlang   : erlfmt          (rebar3 escriptize OR cargo-binstall erlfmt)
+#   Python   : ruff            (uv tool install ruff)
+#   Zig      : zig fmt         (bundled with zig toolchain)
+#
+# Run per-language:  make fmt-c | fmt-erl | fmt-py | fmt-zig
+# Run everything:    make fmt-all  (write)  /  make fmt-check-all  (CI mode)
+# =============================================================================
+
+# Path globs — kept narrow so we never touch generated/vendored code.
+C_CUDA_SOURCES   := $(wildcard zig_src/*.c zig_src/*.h zig_src/*.cu zig_src/*.cuh)
+ERL_SOURCES      := $(wildcard src/*.erl)
+PY_PATHS         := bench dev
+ZIG_PATHS        := zig_src
+
+## Format C and CUDA sources (zig_src/*.{c,h,cu,cuh}) with clang-format.
+fmt-c:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) clang-format (C/CUDA)..."
+	@if [ -z "$(C_CUDA_SOURCES)" ]; then \
+		$(LOG) "$(YELLOW)[FMT]$(NC) no C/CUDA sources found, skipping."; \
+	else \
+		clang-format -i --style=file $(C_CUDA_SOURCES); \
+		$(LOG) "$(GREEN)[OK]$(NC) C/CUDA formatted!"; \
+	fi
+
+## Check C/CUDA formatting (CI-friendly, non-zero exit on drift).
+fmt-check-c:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking C/CUDA format..."
+	@if [ -z "$(C_CUDA_SOURCES)" ]; then \
+		$(LOG) "$(YELLOW)[FMT]$(NC) no C/CUDA sources found, skipping."; \
+	else \
+		clang-format --dry-run --Werror --style=file $(C_CUDA_SOURCES); \
+		$(LOG) "$(GREEN)[OK]$(NC) C/CUDA format OK!"; \
+	fi
+
+## Format Erlang FFI wrappers (src/*.erl) with erlfmt.
+fmt-erl:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) erlfmt (Erlang)..."
+	@if [ -z "$(ERL_SOURCES)" ]; then \
+		$(LOG) "$(YELLOW)[FMT]$(NC) no Erlang sources found, skipping."; \
+	else \
+		erlfmt -w $(ERL_SOURCES); \
+		$(LOG) "$(GREEN)[OK]$(NC) Erlang formatted!"; \
+	fi
+
+## Check Erlang formatting (CI-friendly).
+fmt-check-erl:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking Erlang format..."
+	@if [ -z "$(ERL_SOURCES)" ]; then \
+		$(LOG) "$(YELLOW)[FMT]$(NC) no Erlang sources found, skipping."; \
+	else \
+		erlfmt -c $(ERL_SOURCES); \
+		$(LOG) "$(GREEN)[OK]$(NC) Erlang format OK!"; \
+	fi
+
+## Format Python sources (bench/, dev/) with ruff.
+fmt-py:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) ruff format (Python)..."
+	ruff format $(PY_PATHS)
+	@$(LOG) "$(GREEN)[OK]$(NC) Python formatted!"
+
+## Check Python formatting.
+fmt-check-py:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking Python format..."
+	ruff format --check $(PY_PATHS)
+	@$(LOG) "$(GREEN)[OK]$(NC) Python format OK!"
+
+## Lint Python sources (no auto-fix).
+lint-py:
+	@$(LOG) "$(YELLOW)[LINT]$(NC) ruff check (Python)..."
+	ruff check $(PY_PATHS)
+	@$(LOG) "$(GREEN)[OK]$(NC) Python lint OK!"
+
+## Format Zig sources (zig_src/) with `zig fmt`.
+fmt-zig:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) zig fmt..."
+	zig fmt $(ZIG_PATHS)
+	@$(LOG) "$(GREEN)[OK]$(NC) Zig formatted!"
+
+## Check Zig formatting (uses --check; non-zero exit on drift).
+fmt-check-zig:
+	@$(LOG) "$(YELLOW)[FMT]$(NC) Checking Zig format..."
+	zig fmt --check $(ZIG_PATHS)
+	@$(LOG) "$(GREEN)[OK]$(NC) Zig format OK!"
+
+## Format every language in the repo (Gleam + C/CUDA + Erlang + Python + Zig).
+fmt-all: fmt fmt-c fmt-erl fmt-py fmt-zig
+	@$(LOG) "$(GREEN)[OK]$(NC) All languages formatted!"
+
+## Check formatting for every language (intended for CI).
+fmt-check-all: fmt-check fmt-check-c fmt-check-erl fmt-check-py fmt-check-zig
+	@$(LOG) "$(GREEN)[OK]$(NC) All languages format OK!"
 
 ## Type check without building
 check:
