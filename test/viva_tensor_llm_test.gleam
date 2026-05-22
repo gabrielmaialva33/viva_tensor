@@ -1,6 +1,7 @@
 //// Public LLM ModelHandle smoke test.
 
 import gleam/io
+import gleam/string
 import gleeunit
 import gleeunit/should
 import viva_tensor as t
@@ -94,6 +95,98 @@ pub fn deterministic_sampling_with_seed_test() {
       }
     }
   }
+}
+
+pub fn generate_batch_matches_sequential_argmax_test() {
+  case path_exists(tinyllama_path) {
+    False -> {
+      io.println(
+        "tmp/tinyllama fixture not found; skipping generate_batch test",
+      )
+      Nil
+    }
+    True -> {
+      case t.load_model(tinyllama_path) {
+        Error(_) -> {
+          io.println("ModelHandle load failed; skipping generate_batch test")
+          Nil
+        }
+        Ok(model) -> {
+          let opts = opts_argmax(8)
+          let assert Ok(expected) = t.generate(model, "Hello", opts)
+          let assert [Ok(first), Ok(second)] =
+            t.generate_batch(model, ["Hello", "Hello"], opts)
+
+          first |> should.equal(expected)
+          second |> should.equal(expected)
+        }
+      }
+    }
+  }
+}
+
+pub fn generate_batch_empty_prompts_test() {
+  case path_exists(tinyllama_path) {
+    False -> {
+      io.println(
+        "tmp/tinyllama fixture not found; skipping generate_batch empty test",
+      )
+      Nil
+    }
+    True -> {
+      case t.load_model(tinyllama_path) {
+        Error(_) -> {
+          io.println(
+            "ModelHandle load failed; skipping generate_batch empty test",
+          )
+          Nil
+        }
+        Ok(model) ->
+          t.generate_batch(model, [], opts_argmax(1)) |> should.equal([])
+      }
+    }
+  }
+}
+
+pub fn generate_batch_isolates_prompt_errors_test() {
+  case path_exists(tinyllama_path) {
+    False -> {
+      io.println(
+        "tmp/tinyllama fixture not found; skipping generate_batch error test",
+      )
+      Nil
+    }
+    True -> {
+      case t.load_model(tinyllama_path) {
+        Error(_) -> {
+          io.println(
+            "ModelHandle load failed; skipping generate_batch error test",
+          )
+          Nil
+        }
+        Ok(model) -> {
+          let opts = opts_argmax(8)
+          let oversized_prompt = string.repeat("Hello ", 3000)
+          let assert Ok(expected) = t.generate(model, "Hello", opts)
+          let assert [Ok(first), Error(_)] =
+            t.generate_batch(model, ["Hello", oversized_prompt], opts)
+
+          first |> should.equal(expected)
+        }
+      }
+    }
+  }
+}
+
+fn opts_argmax(max_new_tokens: Int) -> t.GenerateOpts {
+  t.GenerateOpts(
+    max_new_tokens: max_new_tokens,
+    temperature: 0.0,
+    top_k: t.TopKInfinity,
+    top_p: 1.0,
+    seed: 42,
+    stop_on_eos: True,
+  )
 }
 
 @external(erlang, "viva_tensor_llm", "path_exists")
