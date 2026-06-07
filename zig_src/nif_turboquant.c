@@ -132,6 +132,106 @@ static void rht_inverse(double *buf, int n, uint64_t seed) {
 
 /* ---- NIF ---------------------------------------------------------------- */
 
+/** nt_turboquant_ip(QueryRef, KeyRef, Bits, Seed, UseQjl) -> {ok, Float}
+ *  TurboQuant_prod inner-product estimator (arXiv:2504.19874, Algorithm 2).
+ *
+ *  Estimates <query, key> when `key` is TurboQuant-compressed. Both vectors are
+ *  rotated by the same orthonormal RHT (so <Rq, Rk> = <q, k>); the key is
+ *  unit-normalized, MSE-quantized in the rotated basis, and (UseQjl=1) corrected
+ *  by a 1-bit residual sign term. The MSE-only estimate is biased; the QJL
+ *  residual removes that bias. Returns the estimate (FP64).
+ */
+ERL_NIF_TERM nt_turboquant_ip(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *q = get_tensor(env, argv[0]);
+    NativeTensor *k = get_tensor(env, argv[1]);
+    if (!q || !k)
+        return make_error(env, "invalid_tensor");
+    int bits, use_qjl;
+    unsigned long seed_ul;
+    if (!enif_get_int(env, argv[2], &bits) || !enif_get_ulong(env, argv[3], &seed_ul) ||
+        !enif_get_int(env, argv[4], &use_qjl))
+        return make_error(env, "invalid_args");
+    if (bits < 1 || bits > 8)
+        return make_error(env, "bits_out_of_range");
+    if (q->size != k->size)
+        return make_error(env, "size_mismatch");
+
+    int len = k->size;
+    int n = next_pow2(len);
+    int L = 1 << bits;
+    double centroids[256];
+    lloyd_max_normal(L, centroids);
+
+    double *kb = (double *)calloc((size_t)n, sizeof(double));
+    double *qb = (double *)calloc((size_t)n, sizeof(double));
+    double *mn = (double *)calloc((size_t)n, sizeof(double));
+    int *sg = (int *)calloc((size_t)n, sizeof(int));
+    if (!kb || !qb || !mn || !sg) {
+        free(kb);
+        free(qb);
+        free(mn);
+        free(sg);
+        return make_error(env, "out_of_memory");
+    }
+    uint64_t seed = (uint64_t)seed_ul;
+
+    /* normalize + rotate key */
+    const double *kd = k->data + k->offset;
+    double knorm = 0.0;
+    for (int j = 0; j < len; j++)
+        knorm += kd[j] * kd[j];
+    knorm = sqrt(knorm);
+    if (knorm > 1e-30) {
+        double ik = 1.0 / knorm;
+        for (int j = 0; j < len; j++)
+            kb[j] = kd[j] * ik;
+    }
+    rht_forward(kb, n, seed);
+
+    /* adaptive-scaled MSE quantize; capture residual sign + mean|residual| */
+    double amax = 0.0;
+    for (int j = 0; j < n; j++) {
+        double a = fabs(kb[j]);
+        if (a > amax)
+            amax = a;
+    }
+    double c_ext = centroids[L - 1] > 0.0 ? centroids[L - 1] : 1.0;
+    double scl = amax > 0.0 ? c_ext / amax : 1.0;
+    double inv_scl = 1.0 / scl;
+    double res_abs = 0.0;
+    for (int j = 0; j < n; j++) {
+        int idx = quantize_to_codebook(kb[j] * scl, centroids, L);
+        double deq = centroids[idx] * inv_scl;
+        double resid = kb[j] - deq;
+        mn[j] = deq;
+        sg[j] = resid >= 0.0 ? 1 : -1;
+        res_abs += fabs(resid);
+    }
+    double res_scale = n > 0 ? res_abs / (double)n : 0.0;
+
+    /* rotate query (full precision, not normalized) */
+    const double *qd = q->data + q->offset;
+    for (int j = 0; j < len; j++)
+        qb[j] = qd[j];
+    rht_forward(qb, n, seed);
+
+    /* <Rq, dequant_rot(key)> * knorm  ==  estimate of <q, k> */
+    double ip = 0.0;
+    for (int j = 0; j < n; j++) {
+        double kdeq = mn[j] + (use_qjl ? (double)sg[j] * res_scale : 0.0);
+        ip += qb[j] * kdeq;
+    }
+    ip *= knorm;
+
+    free(kb);
+    free(qb);
+    free(mn);
+    free(sg);
+    return make_ok(env, enif_make_double(env, ip));
+}
+
+
 /** nt_turboquant(Ref, Bits, Seed) -> {ok, Ref}
  *  TurboQuant_mse fake-quant round-trip on a 2D tensor [rows, cols], per row.
  *  Returns the reconstructed FP64 tensor (same shape). bits in 1..8.

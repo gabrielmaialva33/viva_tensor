@@ -133,6 +133,33 @@ pub fn dequantize_tensor(vector: QuantizedVector) -> Tensor {
   tensor.from_list(dequantize(vector))
 }
 
+/// Native TurboQuant_prod inner-product estimator (the QJL stage). Estimates
+/// `<query, key>` when `key` is TurboQuant-compressed at `bits` bits, in one C
+/// call. With `use_qjl: True` a 1-bit residual correction removes the
+/// MSE-quantizer's inner-product bias (and roughly halves the RMS error) — the
+/// property that makes TurboQuant work for attention/KV-cache and vector search.
+/// Both tensors must be native and the same length.
+pub fn inner_product_native(
+  query: Tensor,
+  key: Tensor,
+  bits: Int,
+  seed: Int,
+  use_qjl: Bool,
+) -> Result(Float, TensorError) {
+  let qjl = case use_qjl {
+    True -> 1
+    False -> 0
+  }
+  case tensor.native_ref(query), tensor.native_ref(key) {
+    Ok(qr), Ok(kr) ->
+      case ffi.nt_turboquant_ip(qr, kr, bits, seed, qjl) {
+        Ok(value) -> Ok(value)
+        Error(msg) -> Error(InvalidShape("turboquant ip nif: " <> msg))
+      }
+    _, _ -> Error(InvalidShape("inner_product_native requires native tensors"))
+  }
+}
+
 /// Native fast path — the NIF this module's header promises ("moving the hot
 /// loops into a NIF/CUDA kernel"). Does the full TurboQuant_mse round-trip
 /// (randomized Hadamard rotation + **Lloyd-Max** optimal-MSE scalar quantize +

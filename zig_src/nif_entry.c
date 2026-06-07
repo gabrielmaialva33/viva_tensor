@@ -255,6 +255,7 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_matmul_e4m3", 5, nt_matmul_e4m3, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     /* TurboQuant (MSE) */
     {"nt_turboquant", 3, nt_turboquant, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_turboquant_ip", 5, nt_turboquant_ip, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_cuda", 5, nt_matmul_cuda, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
     {"nt_matmul_cuda_fp32", 5, nt_matmul_cuda_fp32, ERL_NIF_DIRTY_JOB_CPU_BOUND},

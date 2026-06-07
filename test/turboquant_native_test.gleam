@@ -52,6 +52,55 @@ pub fn native_beats_uniform_on_outliers_test() {
   |> should.be_true
 }
 
+// Inner-product estimate is finite and reasonably close to the exact dot.
+pub fn native_inner_product_sanity_test() {
+  let q = gen256(256, 111, [])
+  let k = gen256(256, 222, [])
+  let assert Ok(qt) = viva_tensor.native_from_list(q, [256])
+  let assert Ok(kt) = viva_tensor.native_from_list(k, [256])
+  let exact = dot(q, k)
+  let assert Ok(est) = turboquant.inner_product_native(qt, kt, 4, 7, True)
+  // 4-bit estimate of a ~N(0,16) dot: within a few units.
+  { float.absolute_value(est -. exact) <. 5.0 }
+  |> should.be_true
+}
+
+// QJL residual lowers the inner-product error, summed over several rotations.
+pub fn native_qjl_reduces_ip_error_test() {
+  let q = gen256(256, 333, [])
+  let k = gen256(256, 444, [])
+  let assert Ok(qt) = viva_tensor.native_from_list(q, [256])
+  let assert Ok(kt) = viva_tensor.native_from_list(k, [256])
+  let exact = dot(q, k)
+  let with_qjl = sum_ip_error(qt, kt, exact, True)
+  let no_qjl = sum_ip_error(qt, kt, exact, False)
+  { with_qjl <. no_qjl }
+  |> should.be_true
+}
+
+fn sum_ip_error(
+  qt: viva_tensor.Tensor,
+  kt: viva_tensor.Tensor,
+  exact: Float,
+  use_qjl: Bool,
+) -> Float {
+  [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+  |> list.fold(0.0, fn(acc, seed) {
+    case turboquant.inner_product_native(qt, kt, 3, seed, use_qjl) {
+      Ok(est) -> acc +. float.absolute_value(est -. exact)
+      Error(_) -> acc
+    }
+  })
+}
+
+fn dot(a: List(Float), b: List(Float)) -> Float {
+  list.zip(a, b)
+  |> list.fold(0.0, fn(acc, p) {
+    let #(x, y) = p
+    acc +. x *. y
+  })
+}
+
 // --- helpers --------------------------------------------------------------
 
 fn outlier_vec() -> List(Float) {

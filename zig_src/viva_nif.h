@@ -728,6 +728,7 @@ NIF_FUNC_DECL(nt_matmul_e4m3);
 
 /* TurboQuant (MSE) NIF — nif_turboquant.c */
 NIF_FUNC_DECL(nt_turboquant);
+NIF_FUNC_DECL(nt_turboquant_ip);
 NIF_FUNC_DECL(nt_matmul_cuda);
 NIF_FUNC_DECL(nt_transpose);
 NIF_FUNC_DECL(nt_fp16_to_fp32_binary);

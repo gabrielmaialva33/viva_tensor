@@ -811,6 +811,19 @@ pub fn nt_turboquant(
   nt_turboquant_ffi(ref, bits, seed)
 }
 
+/// TurboQuant_prod inner-product estimate of `<query, key>` with `key`
+/// TurboQuant-compressed. `use_qjl` (0/1) toggles the 1-bit residual correction
+/// that removes the MSE-quantizer's inner-product bias.
+pub fn nt_turboquant_ip(
+  query: NativeTensorRef,
+  key: NativeTensorRef,
+  bits: Int,
+  seed: Int,
+  use_qjl: Int,
+) -> Result(Float, String) {
+  nt_turboquant_ip_ffi(query, key, bits, seed, use_qjl)
+}
+
 /// Native matmul into preallocated output: out = [m,k] @ [k,n].
 pub fn nt_matmul_inplace(
   a: NativeTensorRef,
@@ -1252,6 +1265,15 @@ fn nt_turboquant_ffi(
   bits: Int,
   seed: Int,
 ) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_turboquant_ip")
+fn nt_turboquant_ip_ffi(
+  query: NativeTensorRef,
+  key: NativeTensorRef,
+  bits: Int,
+  seed: Int,
+  use_qjl: Int,
+) -> Result(Float, String)
 
 @external(erlang, "viva_tensor_zig", "nt_matmul_inplace")
 fn nt_matmul_inplace_ffi(
