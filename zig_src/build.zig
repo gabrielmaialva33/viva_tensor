@@ -94,6 +94,13 @@ pub fn build(b: *std.Build) void {
         .flags = &.{},
     });
 
+    // FP8 (E4M3) CPU reference: exact OFP8 encoding + per-tensor-scaled
+    // emulated GEMM. Validates quantization error bands without a GPU.
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("nif_fp8_cpu.c"),
+        .flags = &.{},
+    });
+
     // Specialized backends: Resonance/LNS, Horde physics, HDC (extracted from nif_entry.c)
     lib.root_module.addCSourceFile(.{
         .file = b.path("nif_specialized.c"),

@@ -721,6 +721,10 @@ NIF_FUNC_DECL(ntf_size);
 NIF_FUNC_DECL(ntf_matmul);
 NIF_FUNC_DECL(ntf_from_f64);
 NIF_FUNC_DECL(ntf_to_f64);
+
+/* FP8 E4M3 CPU reference NIFs — nif_fp8_cpu.c */
+NIF_FUNC_DECL(nt_quantize_e4m3);
+NIF_FUNC_DECL(nt_matmul_e4m3);
 NIF_FUNC_DECL(nt_matmul_cuda);
 NIF_FUNC_DECL(nt_transpose);
 NIF_FUNC_DECL(nt_fp16_to_fp32_binary);

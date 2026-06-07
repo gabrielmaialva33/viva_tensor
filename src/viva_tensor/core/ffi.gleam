@@ -778,6 +778,28 @@ pub fn ntf_to_f64(ref: NativeTensorF32Ref) -> Result(NativeTensorRef, String) {
   ntf_to_f64_ffi(ref)
 }
 
+// --- FP8 E4M3 CPU reference ---
+
+/// Fake-quantize an FP64 native tensor through E4M3 (per-tensor current
+/// scaling) and return the reconstructed FP64 tensor.
+pub fn nt_quantize_e4m3(
+  ref: NativeTensorRef,
+) -> Result(NativeTensorRef, String) {
+  nt_quantize_e4m3_ffi(ref)
+}
+
+/// Emulated FP8 (E4M3) matmul `[m,k] @ [k,n]`: quantize both inputs with
+/// per-tensor scaling, GEMM in FP32, rescale. Output is FP64.
+pub fn nt_matmul_e4m3(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_matmul_e4m3_ffi(a, b, m, n, k)
+}
+
 /// Native matmul into preallocated output: out = [m,k] @ [k,n].
 pub fn nt_matmul_inplace(
   a: NativeTensorRef,
@@ -1200,6 +1222,18 @@ fn ntf_from_f64_ffi(ref: NativeTensorRef) -> Result(NativeTensorF32Ref, String)
 
 @external(erlang, "viva_tensor_zig", "ntf_to_f64")
 fn ntf_to_f64_ffi(ref: NativeTensorF32Ref) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_quantize_e4m3")
+fn nt_quantize_e4m3_ffi(ref: NativeTensorRef) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_matmul_e4m3")
+fn nt_matmul_e4m3_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_matmul_inplace")
 fn nt_matmul_inplace_ffi(
