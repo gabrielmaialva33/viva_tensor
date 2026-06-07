@@ -89,6 +89,11 @@ static int nif_load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info) {
     if (!TENSOR_RESOURCE)
         return -1;
 
+    TENSOR_F32_RESOURCE = enif_open_resource_type(env, NULL, "NativeTensorF32",
+                                                  tensor_f32_destructor, ERL_NIF_RT_CREATE, NULL);
+    if (!TENSOR_F32_RESOURCE)
+        return -1;
+
     LNS_RESOURCE =
         enif_open_resource_type(env, NULL, "LnsTensor", lns_destructor, ERL_NIF_RT_CREATE, NULL);
     if (!LNS_RESOURCE)
@@ -233,7 +238,18 @@ static ErlNifFunc nif_funcs[] = {
     /* NIF Resource API — matrix ops */
     {"nt_matmul", 5, nt_matmul_blas, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_blas", 5, nt_matmul_blas, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_matmul_sgemm", 5, nt_matmul_sgemm, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_matmul_inplace", 6, nt_matmul_inplace, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    /* NativeTensorF32 (FP32 first-class) */
+    {"ntf_zeros", 1, ntf_zeros, 0},
+    {"ntf_fill", 2, ntf_fill, 0},
+    {"ntf_from_list", 2, ntf_from_list, 0},
+    {"ntf_to_list", 1, ntf_to_list, 0},
+    {"ntf_shape", 1, ntf_shape, 0},
+    {"ntf_size", 1, ntf_size, 0},
+    {"ntf_matmul", 5, ntf_matmul, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"ntf_from_f64", 1, ntf_from_f64, 0},
+    {"ntf_to_f64", 1, ntf_to_f64, 0},
     {"nt_matmul_cuda", 5, nt_matmul_cuda, ERL_NIF_DIRTY_JOB_CPU_BOUND},
 #if !defined(_WIN32) && !defined(VIVA_NO_CUDA)
     {"nt_matmul_cuda_fp32", 5, nt_matmul_cuda_fp32, ERL_NIF_DIRTY_JOB_CPU_BOUND},

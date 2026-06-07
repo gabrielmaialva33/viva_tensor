@@ -88,6 +88,12 @@ pub fn build(b: *std.Build) void {
         .flags = &.{},
     });
 
+    // First-class FP32 tensor (NativeTensorF32): float storage + native SGEMM
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("nif_tensor_f32.c"),
+        .flags = &.{},
+    });
+
     // Specialized backends: Resonance/LNS, Horde physics, HDC (extracted from nif_entry.c)
     lib.root_module.addCSourceFile(.{
         .file = b.path("nif_specialized.c"),

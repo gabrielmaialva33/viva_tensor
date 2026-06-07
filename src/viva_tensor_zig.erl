@@ -54,6 +54,16 @@
     nt_matmul/5,
     nt_matmul_inplace/6,
     nt_matmul_blas/5,
+    nt_matmul_sgemm/5,
+    ntf_zeros/1,
+    ntf_fill/2,
+    ntf_from_list/2,
+    ntf_to_list/1,
+    ntf_shape/1,
+    ntf_size/1,
+    ntf_matmul/5,
+    ntf_from_f64/1,
+    ntf_to_f64/1,
     nt_matmul_cuda/5,
     nt_matmul_cuda_fp32/5,
     %% INT8 Tensor Cores (old DP4A)
@@ -613,6 +623,16 @@ nt_count_nonzero(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_inplace(_A, _B, _C, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_blas(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_matmul_sgemm(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ntf_zeros(_Shape) -> erlang:nif_error(nif_not_loaded).
+ntf_fill(_Shape, _Value) -> erlang:nif_error(nif_not_loaded).
+ntf_from_list(_Data, _Shape) -> erlang:nif_error(nif_not_loaded).
+ntf_to_list(_Ref) -> erlang:nif_error(nif_not_loaded).
+ntf_shape(_Ref) -> erlang:nif_error(nif_not_loaded).
+ntf_size(_Ref) -> erlang:nif_error(nif_not_loaded).
+ntf_matmul(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+ntf_from_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
+ntf_to_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda_fp32(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_int8_tc(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).

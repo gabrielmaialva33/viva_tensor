@@ -978,6 +978,12 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   tensor.matmul(a, b)
 }
 
+/// Single-precision matrix-matrix multiplication (FP32 SGEMM via native BLAS).
+/// ~2x the throughput of `matmul` (DGEMM) on AVX2, at FP32 result precision.
+pub fn matmul_f32(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  tensor.matmul_f32(a, b)
+}
+
 pub fn matmul_planned(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   case tensor.shape(a), tensor.shape(b) {
     [m, k], [k2, n] if k == k2 -> {

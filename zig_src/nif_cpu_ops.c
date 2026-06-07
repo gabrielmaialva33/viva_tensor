@@ -503,6 +503,99 @@ ERL_NIF_TERM nt_matmul_blas(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
     return make_ok(env, make_tensor_term(env, c));
 }
 
+/** nt_matmul_sgemm(RefA, RefB, M, N, K) -> {ok, RefC}
+ *  Single-precision (FP32) matmul on CPU via cblas_sgemm.
+ *
+ *  Tensors are stored as FP64; this path down-converts A and B to float,
+ *  runs SGEMM (≈2x the vector throughput of DGEMM on AVX2), then stores the
+ *  FP32 result back into an FP64 output tensor. The conversion is O(n^2) and
+ *  negligible next to the O(n^3) GEMM for large matrices. Result precision is
+ *  FP32 — use nt_matmul_blas (DGEMM) when full double precision is required.
+ */
+ERL_NIF_TERM nt_matmul_sgemm(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    NativeTensor *a = get_tensor(env, argv[0]);
+    NativeTensor *b = get_tensor(env, argv[1]);
+    if (!a || !b)
+        return make_error(env, "invalid_tensor");
+
+    int m_int, n_int, k_int;
+    if (!enif_get_int(env, argv[2], &m_int) || !enif_get_int(env, argv[3], &n_int) ||
+        !enif_get_int(env, argv[4], &k_int))
+        return make_error(env, "invalid_dimensions");
+
+    size_t m = (size_t)m_int, n = (size_t)n_int, k = (size_t)k_int;
+    if (a->size != (int)(m * k) || b->size != (int)(k * n))
+        return make_error(env, "size_mismatch");
+
+    size_t size_a = m * k, size_b = k * n, size_c = m * n;
+    float *a_f32 = (float *)malloc(size_a * sizeof(float));
+    float *b_f32 = (float *)malloc(size_b * sizeof(float));
+    float *c_f32 = (float *)malloc(size_c * sizeof(float));
+    if (!a_f32 || !b_f32 || !c_f32) {
+        free(a_f32);
+        free(b_f32);
+        free(c_f32);
+        return make_error(env, "out_of_memory");
+    }
+
+    /* double -> float (auto-vectorized) */
+    const double *ad = a->data + a->offset;
+    const double *bd = b->data + b->offset;
+    for (size_t i = 0; i < size_a; i++)
+        a_f32[i] = (float)ad[i];
+    for (size_t i = 0; i < size_b; i++)
+        b_f32[i] = (float)bd[i];
+
+    /* Direct-linked CBLAS: MKL (Intel/AMD, Win/Linux) or Apple Accelerate
+     * (macOS / Apple Silicon). Both expose the standard cblas_sgemm symbol. */
+#if defined(_WIN32) || defined(USE_MKL_DIRECT) || defined(__APPLE__)
+    cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans, (int)m, (int)n, (int)k, 1.0f, a_f32,
+                (int)k, b_f32, (int)n, 0.0f, c_f32, (int)n);
+#else
+    /* Linux generic (AMD/ARM): SGEMM from the dynamically loaded BLAS
+     * (OpenBLAS, ARM PL, ...). g_sgemm is NULL only if the BLAS lacks the
+     * symbol — extremely rare, but then fall back to the FP64 DGEMM path. */
+    if (g_sgemm) {
+        blas_sgemm((int)m, (int)n, (int)k, 1.0f, a_f32, (int)k, b_f32, (int)n, 0.0f, c_f32, (int)n);
+    } else if (g_dgemm) {
+        free(a_f32);
+        free(b_f32);
+        free(c_f32);
+        int out_shape_d[2] = {m_int, n_int};
+        NativeTensor *cd = alloc_tensor_uninit(2, out_shape_d);
+        if (!cd)
+            return make_error(env, "out_of_memory");
+        blas_dgemm((int)m, (int)n, (int)k, 1.0, a->data + a->offset, (int)k, b->data + b->offset,
+                   (int)n, 0.0, cd->data, (int)n);
+        return make_ok(env, make_tensor_term(env, cd));
+    } else {
+        free(a_f32);
+        free(b_f32);
+        free(c_f32);
+        return make_error(env, "no_blas_backend");
+    }
+#endif
+
+    int out_shape[2] = {m_int, n_int};
+    NativeTensor *c = alloc_tensor_uninit(2, out_shape);
+    if (!c) {
+        free(a_f32);
+        free(b_f32);
+        free(c_f32);
+        return make_error(env, "out_of_memory");
+    }
+
+    /* float -> double back into the FP64 output tensor */
+    for (size_t i = 0; i < size_c; i++)
+        c->data[i] = (double)c_f32[i];
+
+    free(a_f32);
+    free(b_f32);
+    free(c_f32);
+    return make_ok(env, make_tensor_term(env, c));
+}
+
 /** nt_matmul_inplace(RefA, RefB, RefC, M, N, K) -> ok
  *  Zero-allocation matmul: writes result into existing C tensor.
  *  Eliminates malloc + page-fault overhead (~8ms for large matrices).

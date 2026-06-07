@@ -45,6 +45,10 @@ extern "C" {
 #ifdef USE_MKL_DIRECT
 #include <mkl.h>
 #endif
+/* macOS / Apple Silicon (M-series): Accelerate provides cblas_sgemm/dgemm. */
+#ifdef __APPLE__
+#include <Accelerate/Accelerate.h>
+#endif
 #endif
 
 /* =========================================================================
@@ -101,12 +105,17 @@ typedef void (*dgemm_fn)(const int Order, const int TransA, const int TransB, co
                          const int N, const int K, const double alpha, const double *A,
                          const int lda, const double *B, const int ldb, const double beta,
                          double *C, const int ldc);
+typedef void (*sgemm_fn)(const int Order, const int TransA, const int TransB, const int M,
+                         const int N, const int K, const float alpha, const float *A,
+                         const int lda, const float *B, const int ldb, const float beta, float *C,
+                         const int ldc);
 typedef void (*set_threads_fn)(int);
 
 /* Defined in nif_platform.c */
 extern BlasBackend g_blas_backend;
 extern void *g_blas_handle;
 extern dgemm_fn g_dgemm;
+extern sgemm_fn g_sgemm;
 extern set_threads_fn g_set_threads;
 extern const char *g_blas_name;
 extern int g_blas_detected;
@@ -141,6 +150,8 @@ void detect_cpu_topology(void);
 void detect_blas_backend(void);
 void blas_dgemm(int M, int N, int K, double alpha, const double *A, int lda, const double *B,
                 int ldb, double beta, double *C, int ldc);
+void blas_sgemm(int M, int N, int K, float alpha, const float *A, int lda, const float *B, int ldb,
+                float beta, float *C, int ldc);
 void blas_set_threads(int n);
 
 /* Exported to Zig (nif_platform.c) */
@@ -185,6 +196,34 @@ ERL_NIF_TERM make_tensor_term(ErlNifEnv *env, NativeTensor *t);
 int tensor_is_contiguous(const NativeTensor *t);
 int tensor_storage_index(const NativeTensor *t, int logical_index);
 double tensor_get_flat(const NativeTensor *t, int logical_index);
+
+/* =========================================================================
+ * NativeTensorF32 - First-class single-precision (FP32) tensor
+ *
+ * Parallel to NativeTensor but stores `float` data: half the memory and a
+ * native SGEMM matmul path with no per-call double<->float conversion. Mirrors
+ * the CudaTensor (FP32) / NativeTensor (FP64) split already in the codebase.
+ * ========================================================================= */
+
+typedef struct NativeTensorF32 {
+    float *data;
+    int *shape;
+    int *strides;
+    int ndim;
+    int size;
+    int offset;
+    int owns_data;
+    struct NativeTensorF32 *owner;
+} NativeTensorF32;
+
+extern ErlNifResourceType *TENSOR_F32_RESOURCE;
+
+/* NativeTensorF32 lifecycle (nif_tensor_f32.c) */
+void tensor_f32_destructor(ErlNifEnv *env, void *obj);
+NativeTensorF32 *alloc_tensor_f32(int ndim, const int *shape);
+NativeTensorF32 *alloc_tensor_f32_uninit(int ndim, const int *shape);
+NativeTensorF32 *get_tensor_f32(ErlNifEnv *env, ERL_NIF_TERM term);
+ERL_NIF_TERM make_tensor_f32_term(ErlNifEnv *env, NativeTensorF32 *t);
 
 /* =========================================================================
  * QuantInt8Tensor - INT8 quantized (4x compression)
@@ -669,7 +708,19 @@ NIF_FUNC_DECL(nt_max);
 NIF_FUNC_DECL(nt_min);
 NIF_FUNC_DECL(nt_count_nonzero);
 NIF_FUNC_DECL(nt_matmul_blas);
+NIF_FUNC_DECL(nt_matmul_sgemm);
 NIF_FUNC_DECL(nt_matmul_inplace);
+
+/* NativeTensorF32 (FP32 first-class) NIFs — nif_tensor_f32.c */
+NIF_FUNC_DECL(ntf_zeros);
+NIF_FUNC_DECL(ntf_fill);
+NIF_FUNC_DECL(ntf_from_list);
+NIF_FUNC_DECL(ntf_to_list);
+NIF_FUNC_DECL(ntf_shape);
+NIF_FUNC_DECL(ntf_size);
+NIF_FUNC_DECL(ntf_matmul);
+NIF_FUNC_DECL(ntf_from_f64);
+NIF_FUNC_DECL(ntf_to_f64);
 NIF_FUNC_DECL(nt_matmul_cuda);
 NIF_FUNC_DECL(nt_transpose);
 NIF_FUNC_DECL(nt_fp16_to_fp32_binary);

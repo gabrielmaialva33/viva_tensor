@@ -1866,6 +1866,28 @@ pub fn matmul(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
   }
 }
 
+/// Single-precision matmul: `[m,k] @ [k,n]`, computed in FP32 (SGEMM/MKL) for
+/// ~2x the throughput of `matmul`/DGEMM on AVX2. Only the native (`NativeTensor`)
+/// path is accelerated; other layouts fall back to the dense FP64 path. Result
+/// precision is FP32 — use `matmul` when full double precision is required.
+pub fn matmul_f32(a: Tensor, b: Tensor) -> Result(Tensor, TensorError) {
+  case a.shape, b.shape {
+    [m, n], [n2, p] if n == n2 -> {
+      case a, b {
+        NativeTensor(a_ref, _), NativeTensor(b_ref, _) -> {
+          case ffi.nt_matmul_sgemm(a_ref, b_ref, m, p, n) {
+            Ok(ref) -> Ok(NativeTensor(ref: ref, shape: [m, p]))
+            Error(_) -> matmul_dense(a, b, m, n, p)
+          }
+        }
+        _, _ -> matmul_dense(a, b, m, n, p)
+      }
+    }
+    [_m, n], [n2, _p] -> Error(ShapeMismatch(expected: [n, -1], got: [n2, -1]))
+    _, _ -> Error(DimensionError("Expected two matrices"))
+  }
+}
+
 fn matmul_dense(
   a: Tensor,
   b: Tensor,

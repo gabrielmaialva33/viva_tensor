@@ -44,6 +44,10 @@ pub type ErlangArray
 /// Erlang GC frees native memory automatically via destructor.
 pub type NativeTensorRef
 
+/// Opaque handle to a native FP32 tensor (NativeTensorF32 resource).
+/// Half the memory of NativeTensorRef; matmul runs SGEMM with no conversion.
+pub type NativeTensorF32Ref
+
 // --- Array Operations ---
 //
 // These wrap Erlang :array operations for O(1) element access.
@@ -701,6 +705,79 @@ pub fn nt_matmul(
   nt_matmul_ffi(a, b, m, n, k)
 }
 
+/// Native single-precision matmul (FP32 SGEMM via MKL): ≈2x DGEMM throughput
+/// on AVX2 at FP32 result precision. Storage stays FP64.
+pub fn nt_matmul_sgemm(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_matmul_sgemm_ffi(a, b, m, n, k)
+}
+
+// --- NativeTensorF32 (FP32 first-class) ---
+
+/// FP32 tensor of zeros.
+pub fn ntf_zeros(shape: List(Int)) -> Result(NativeTensorF32Ref, String) {
+  ntf_zeros_ffi(shape)
+}
+
+/// FP32 tensor filled with `value`.
+pub fn ntf_fill(
+  shape: List(Int),
+  value: Float,
+) -> Result(NativeTensorF32Ref, String) {
+  ntf_fill_ffi(shape, value)
+}
+
+/// Build an FP32 tensor from a flat float list + shape.
+pub fn ntf_from_list(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(NativeTensorF32Ref, String) {
+  ntf_from_list_ffi(data, shape)
+}
+
+/// Read an FP32 tensor back to a flat float list (values widened to Float).
+pub fn ntf_to_list(ref: NativeTensorF32Ref) -> Result(List(Float), String) {
+  ntf_to_list_ffi(ref)
+}
+
+/// Shape of an FP32 tensor.
+pub fn ntf_shape(ref: NativeTensorF32Ref) -> Result(List(Int), String) {
+  ntf_shape_ffi(ref)
+}
+
+/// Element count of an FP32 tensor.
+pub fn ntf_size(ref: NativeTensorF32Ref) -> Result(Int, String) {
+  ntf_size_ffi(ref)
+}
+
+/// FP32 matmul `[m,k] @ [k,n]` via native SGEMM (no conversion).
+pub fn ntf_matmul(
+  a: NativeTensorF32Ref,
+  b: NativeTensorF32Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorF32Ref, String) {
+  ntf_matmul_ffi(a, b, m, n, k)
+}
+
+/// Down-convert an FP64 native tensor to FP32.
+pub fn ntf_from_f64(
+  ref: NativeTensorRef,
+) -> Result(NativeTensorF32Ref, String) {
+  ntf_from_f64_ffi(ref)
+}
+
+/// Up-convert an FP32 native tensor to FP64.
+pub fn ntf_to_f64(ref: NativeTensorF32Ref) -> Result(NativeTensorRef, String) {
+  ntf_to_f64_ffi(ref)
+}
+
 /// Native matmul into preallocated output: out = [m,k] @ [k,n].
 pub fn nt_matmul_inplace(
   a: NativeTensorRef,
@@ -1075,6 +1152,54 @@ fn nt_matmul_ffi(
   n: Int,
   k: Int,
 ) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_matmul_sgemm")
+fn nt_matmul_sgemm_ffi(
+  a: NativeTensorRef,
+  b: NativeTensorRef,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_zeros")
+fn ntf_zeros_ffi(shape: List(Int)) -> Result(NativeTensorF32Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_fill")
+fn ntf_fill_ffi(
+  shape: List(Int),
+  value: Float,
+) -> Result(NativeTensorF32Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_from_list")
+fn ntf_from_list_ffi(
+  data: List(Float),
+  shape: List(Int),
+) -> Result(NativeTensorF32Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_to_list")
+fn ntf_to_list_ffi(ref: NativeTensorF32Ref) -> Result(List(Float), String)
+
+@external(erlang, "viva_tensor_zig", "ntf_shape")
+fn ntf_shape_ffi(ref: NativeTensorF32Ref) -> Result(List(Int), String)
+
+@external(erlang, "viva_tensor_zig", "ntf_size")
+fn ntf_size_ffi(ref: NativeTensorF32Ref) -> Result(Int, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_matmul")
+fn ntf_matmul_ffi(
+  a: NativeTensorF32Ref,
+  b: NativeTensorF32Ref,
+  m: Int,
+  n: Int,
+  k: Int,
+) -> Result(NativeTensorF32Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_from_f64")
+fn ntf_from_f64_ffi(ref: NativeTensorRef) -> Result(NativeTensorF32Ref, String)
+
+@external(erlang, "viva_tensor_zig", "ntf_to_f64")
+fn ntf_to_f64_ffi(ref: NativeTensorF32Ref) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_matmul_inplace")
 fn nt_matmul_inplace_ffi(

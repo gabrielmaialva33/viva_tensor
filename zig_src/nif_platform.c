@@ -21,6 +21,7 @@
 BlasBackend g_blas_backend = BLAS_ZIG_GEMM;
 void *g_blas_handle = NULL;
 dgemm_fn g_dgemm = NULL;
+sgemm_fn g_sgemm = NULL;
 set_threads_fn g_set_threads = NULL;
 const char *g_blas_name = "Zig GEMM";
 int g_blas_detected = 0;
@@ -39,6 +40,9 @@ static int try_load_blas(const char *libname, const char *backend_name, BlasBack
 
     g_blas_handle = handle;
     g_dgemm = dgemm;
+    /* SGEMM is optional: same CBLAS symbol in every standard BLAS. If absent,
+     * the FP32 path falls back to DGEMM upstream. */
+    g_sgemm = (sgemm_fn)dlsym(handle, "cblas_sgemm");
     g_blas_backend = backend_type;
     g_blas_name = backend_name;
 
@@ -96,6 +100,14 @@ void blas_dgemm(int M, int N, int K, double alpha, const double *A, int lda, con
                 int ldb, double beta, double *C, int ldc) {
     if (g_dgemm) {
         g_dgemm(101, 111, 111, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
+    }
+}
+
+/* 101 = CblasRowMajor, 111 = CblasNoTrans */
+void blas_sgemm(int M, int N, int K, float alpha, const float *A, int lda, const float *B, int ldb,
+                float beta, float *C, int ldc) {
+    if (g_sgemm) {
+        g_sgemm(101, 111, 111, M, N, K, alpha, A, lda, B, ldb, beta, C, ldc);
     }
 }
 
