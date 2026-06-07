@@ -800,6 +800,17 @@ pub fn nt_matmul_e4m3(
   nt_matmul_e4m3_ffi(a, b, m, n, k)
 }
 
+/// TurboQuant (MSE) fake-quant round-trip on a 1D/2D tensor (per row): random
+/// rotation + Lloyd-Max scalar quantization at `bits` bits. Returns the
+/// reconstructed FP64 tensor. `seed` selects the random rotation.
+pub fn nt_turboquant(
+  ref: NativeTensorRef,
+  bits: Int,
+  seed: Int,
+) -> Result(NativeTensorRef, String) {
+  nt_turboquant_ffi(ref, bits, seed)
+}
+
 /// Native matmul into preallocated output: out = [m,k] @ [k,n].
 pub fn nt_matmul_inplace(
   a: NativeTensorRef,
@@ -1233,6 +1244,13 @@ fn nt_matmul_e4m3_ffi(
   m: Int,
   n: Int,
   k: Int,
+) -> Result(NativeTensorRef, String)
+
+@external(erlang, "viva_tensor_zig", "nt_turboquant")
+fn nt_turboquant_ffi(
+  ref: NativeTensorRef,
+  bits: Int,
+  seed: Int,
 ) -> Result(NativeTensorRef, String)
 
 @external(erlang, "viva_tensor_zig", "nt_matmul_inplace")

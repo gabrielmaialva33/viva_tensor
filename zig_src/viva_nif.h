@@ -725,6 +725,9 @@ NIF_FUNC_DECL(ntf_to_f64);
 /* FP8 E4M3 CPU reference NIFs — nif_fp8_cpu.c */
 NIF_FUNC_DECL(nt_quantize_e4m3);
 NIF_FUNC_DECL(nt_matmul_e4m3);
+
+/* TurboQuant (MSE) NIF — nif_turboquant.c */
+NIF_FUNC_DECL(nt_turboquant);
 NIF_FUNC_DECL(nt_matmul_cuda);
 NIF_FUNC_DECL(nt_transpose);
 NIF_FUNC_DECL(nt_fp16_to_fp32_binary);

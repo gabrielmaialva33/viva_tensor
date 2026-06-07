@@ -66,6 +66,7 @@
     ntf_to_f64/1,
     nt_quantize_e4m3/1,
     nt_matmul_e4m3/5,
+    nt_turboquant/3,
     nt_matmul_cuda/5,
     nt_matmul_cuda_fp32/5,
     %% INT8 Tensor Cores (old DP4A)
@@ -637,6 +638,7 @@ ntf_from_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
 ntf_to_f64(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_quantize_e4m3(_Ref) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_e4m3(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
+nt_turboquant(_Ref, _Bits, _Seed) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_cuda_fp32(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).
 nt_matmul_int8_tc(_A, _B, _M, _N, _K) -> erlang:nif_error(nif_not_loaded).

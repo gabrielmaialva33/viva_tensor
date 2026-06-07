@@ -12,6 +12,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import viva_tensor/core/error.{type TensorError, InvalidShape, ShapeMismatch}
+import viva_tensor/core/ffi
 import viva_tensor/tensor.{type Tensor}
 
 @external(erlang, "math", "sqrt")
@@ -130,6 +131,34 @@ pub fn dequantize(vector: QuantizedVector) -> List(Float) {
 /// Dequantize back to a rank-1 tensor.
 pub fn dequantize_tensor(vector: QuantizedVector) -> Tensor {
   tensor.from_list(dequantize(vector))
+}
+
+/// Native fast path — the NIF this module's header promises ("moving the hot
+/// loops into a NIF/CUDA kernel"). Does the full TurboQuant_mse round-trip
+/// (randomized Hadamard rotation + **Lloyd-Max** optimal-MSE scalar quantize +
+/// dequantize + inverse rotation) in one C call.
+///
+/// Two upgrades over the pure-Gleam path: it uses the optimal-MSE Lloyd-Max
+/// codebook for the rotated-basis Normal distribution (vs. uniform levels), and
+/// it runs orders of magnitude faster (FWHT in C). Operates per row on a 1D/2D
+/// native tensor and returns the reconstructed FP64 tensor — for weight
+/// fake-quant and distortion measurement. `bits` in 1..8.
+pub fn quantize_dequantize_native(
+  input: Tensor,
+  bits: Int,
+  seed: Int,
+) -> Result(Tensor, TensorError) {
+  case tensor.native_ref(input) {
+    Ok(ref) ->
+      case ffi.nt_turboquant(ref, bits, seed) {
+        Ok(q) -> Ok(tensor.from_native_ref(q, tensor.shape(input)))
+        Error(msg) -> Error(InvalidShape("turboquant nif: " <> msg))
+      }
+    Error(_) ->
+      Error(InvalidShape(
+        "quantize_dequantize_native requires a native tensor (viva_tensor.native_*)",
+      ))
+  }
 }
 
 /// Estimate the inner product between an uncompressed query and a compressed

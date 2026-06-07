@@ -101,6 +101,13 @@ pub fn build(b: *std.Build) void {
         .flags = &.{},
     });
 
+    // TurboQuant (MSE): random-rotation + Lloyd-Max data-oblivious quantizer
+    // (Zandieh et al., ICLR 2026, arXiv:2504.19874).
+    lib.root_module.addCSourceFile(.{
+        .file = b.path("nif_turboquant.c"),
+        .flags = &.{},
+    });
+
     // Specialized backends: Resonance/LNS, Horde physics, HDC (extracted from nif_entry.c)
     lib.root_module.addCSourceFile(.{
         .file = b.path("nif_specialized.c"),
