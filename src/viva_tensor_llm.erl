@@ -996,11 +996,16 @@ model_config(Header, SafetensorsPath, Opts) ->
         max(1, HiddenSize div ?DEFAULT_HEAD_DIM)
     ),
     NumKvHeads = int_config(FileConfig, <<"num_key_value_heads">>, NumHeads),
-    HeadDim =
+    %% Prefer the explicit head_dim from config.json (some models set
+    %% head_dim != hidden_size / num_heads); fall back to the derived value.
+    HeadDim = int_config(
+        FileConfig,
+        <<"head_dim">>,
         case NumHeads of
             0 -> ?DEFAULT_HEAD_DIM;
-            _ -> HiddenSize div NumHeads
-        end,
+            _ -> max(1, HiddenSize div NumHeads)
+        end
+    ),
     KvDim = NumKvHeads * HeadDim,
     FfnSize = int_config_lazy(
         FileConfig,
@@ -1032,9 +1037,27 @@ read_hf_config(SafetensorsPath) ->
             try
                 json:decode(Bin)
             catch
-                _:_ -> #{}
+                Class:Reason ->
+                    %% A present-but-malformed config.json must not be silently
+                    %% swallowed: every dimension would silently fall back to a
+                    %% (possibly wrong) default. Surface it, then degrade.
+                    logger:warning(
+                        "viva_tensor: failed to parse ~ts (~p:~p); "
+                        "falling back to header-derived config",
+                        [ConfigPath, Class, Reason]
+                    ),
+                    #{}
             end;
-        _ ->
+        {error, enoent} ->
+            %% No config.json: legitimate, dimensions are derived from the
+            %% safetensors header.
+            #{};
+        {error, Reason} ->
+            logger:warning(
+                "viva_tensor: cannot read ~ts (~p); "
+                "falling back to header-derived config",
+                [ConfigPath, Reason]
+            ),
             #{}
     end.
 
