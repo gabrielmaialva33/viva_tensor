@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — eliminate the wasted load transpose
+
+- **The loader no longer transposes weights.** `load_linear` transposed HF
+  `[out,in]` → `[in,out]`, and the FP8 prepack then re-transposed back to
+  `[out,in]` (the original HF layout) while reading it strided — a wasted
+  round-trip. The prepack now accepts the HF-native `[out,in]` layout
+  directly (`nt_prepack_fp8_blocked/4`, `weight_layout=1`): the transpose is
+  gone and the quantize loop reads each channel row contiguously (1 cache
+  line per 16-block instead of 16 misses). The fused QKV/gate_up build also
+  drops from a row-by-row reorganize to a plain append.
+- **Byte-identical** output (same absmax/scale/quantize, same packed layout):
+  TinyLlama golden and Llama-3.2 argmax (`Paris`) unchanged, verified against
+  the legacy strided path.
+- **Llama-3.2-1B load: ~6.4s → ~3.8s warm** (now ~14× vs the original ~55s).
+
 ### Changed — parallel model load
 
 - **Model load is now concurrent.** The per-tensor bf16→fp32 + transpose +

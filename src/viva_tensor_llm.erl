@@ -1258,8 +1258,8 @@ build_layer_blocked(Header, LayerIdx, Config) ->
     GateProj = load_linear(Header, P("mlp.gate_proj.weight"), Ffn, Hidden),
     UpProj = load_linear(Header, P("mlp.up_proj.weight"), Ffn, Hidden),
     DownProj = load_linear(Header, P("mlp.down_proj.weight"), Hidden, Ffn),
-    QKVProj = concat_linear_columns([{QProj, Hidden}, {KProj, KvDim}, {VProj, KvDim}], Hidden),
-    GateUpProj = concat_linear_columns([{GateProj, Ffn}, {UpProj, Ffn}], Hidden),
+    QKVProj = concat_linear_rows([{QProj, Hidden}, {KProj, KvDim}, {VProj, KvDim}]),
+    GateUpProj = concat_linear_rows([{GateProj, Ffn}, {UpProj, Ffn}]),
     #{
         norm1_bin => load_rmsnorm_bin(Header, P("input_layernorm.weight")),
         norm2_bin => load_rmsnorm_bin(Header, P("post_attention_layernorm.weight")),
@@ -1643,20 +1643,18 @@ require_tensors(Header, Names, LayerIdx) ->
         Names
     ).
 
-load_linear(Header, Name, OutF, InF) ->
+%% Load a linear weight in HF-native [out_features, in_features] row-major
+%% layout (no transpose). The FP8 prepack consumes this directly via layout=1,
+%% which both skips the transpose and makes the quantize loop contiguous.
+load_linear(Header, Name, _OutF, _InF) ->
     {ok, Fp32} = viva_tensor_safetensors_ffi:read_tensor_fp32(Header, Name),
-    {ok, Transposed} = viva_tensor_safetensors_ffi:transpose_fp32(Fp32, OutF, InF),
-    Transposed.
+    Fp32.
 
-concat_linear_columns(Parts, InF) ->
-    BytesPerFloat = 4,
-    list_to_binary([
-        [
-            binary:part(Bin, Row * OutF * BytesPerFloat, OutF * BytesPerFloat)
-         || {Bin, OutF} <- Parts
-        ]
-     || Row <- lists:seq(0, InF - 1)
-    ]).
+%% Concatenate per-output-channel weights along the output (row) axis. With
+%% native [out, in] row-major layout each part's rows are already contiguous,
+%% so this is a plain append (the old column-concat reorganized row by row).
+concat_linear_rows(Parts) ->
+    list_to_binary([Bin || {Bin, _OutF} <- Parts]).
 
 load_rmsnorm_bin(Header, Name) ->
     {ok, Fp32} = viva_tensor_safetensors_ffi:read_tensor_fp32(Header, Name),
@@ -1678,7 +1676,7 @@ load_embed_table_resource(Header, Config) ->
     end.
 
 prepack_blocked(Bin, InF, OutF, BlockSize) when is_binary(Bin) ->
-    case viva_tensor_zig:nt_prepack_fp8_blocked(Bin, [InF, OutF], BlockSize) of
+    case viva_tensor_zig:nt_prepack_fp8_blocked(Bin, [InF, OutF], BlockSize, 1) of
         {ok, {Resource, _, _, _}} -> Resource;
         {ok, Resource} when is_reference(Resource) -> Resource;
         Other -> error({prepack_blocked_failed, Other})

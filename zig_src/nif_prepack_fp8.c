@@ -319,6 +319,15 @@ ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (!enif_get_int(env, argv[2], &block_size))
         return make_error(env, "invalid_block_size");
 
+    /* Optional 4th arg: source weight layout.
+     *   0 (default) = in-major [in_features, out_features] (transposed input,
+     *                 strided reads).
+     *   1           = out-major [out_features, in_features] (HF-native input,
+     *                 contiguous reads, lets the loader skip transpose). */
+    int weight_layout = 0;
+    if (argc >= 4)
+        enif_get_int(env, argv[3], &weight_layout);
+
     if (in_features <= 0 || out_features <= 0)
         return make_error(env, "invalid_dimensions");
     if (block_size <= 0 || (in_features % block_size) != 0)
@@ -345,25 +354,51 @@ ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     }
 
     /* Single fused pass: per-(channel, block) absmax -> scale -> quantize.
-     * The src access src[k*out_features + n] is strided (cache-unfriendly);
-     * doing absmax and quantize over each 16-element block together reads it
-     * once instead of twice, roughly halving RAM traffic for the hot loop. */
-    for (int n = 0; n < out_features; ++n) {
-        for (int b = 0; b < num_blocks; ++b) {
-            int base = b * block_size;
-            float absmax = 0.0f;
-            for (int j = 0; j < block_size; ++j) {
-                float a = fabsf(src[(size_t)(base + j) * out_features + n]);
-                if (a > absmax)
-                    absmax = a;
+     * Doing absmax and quantize over each 16-element block together reads the
+     * source once instead of twice, roughly halving RAM traffic. The two
+     * layouts are split so there is no per-element branch in the hot loop.
+     * Both produce the identical packed [out, in] layout: h_packed[n*in + k]. */
+    if (weight_layout == 1) {
+        /* out-major [out_features, in_features]: each channel row is contiguous. */
+        for (int n = 0; n < out_features; ++n) {
+            const float *row = src + (size_t)n * in_features;
+            for (int b = 0; b < num_blocks; ++b) {
+                int base = b * block_size;
+                float absmax = 0.0f;
+                for (int j = 0; j < block_size; ++j) {
+                    float a = fabsf(row[base + j]);
+                    if (a > absmax)
+                        absmax = a;
+                }
+                float scale_nb = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+                float inv_scale = 1.0f / scale_nb;
+                h_scales[(size_t)n * num_blocks + b] = scale_nb;
+                for (int j = 0; j < block_size; ++j) {
+                    int k = base + j;
+                    h_packed[(size_t)n * in_features + k] =
+                        float_to_fp8_e4m3(row[k] * inv_scale);
+                }
             }
-            float scale_nb = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-            float inv_scale = 1.0f / scale_nb;
-            h_scales[(size_t)n * num_blocks + b] = scale_nb;
-            for (int j = 0; j < block_size; ++j) {
-                int k = base + j;
-                float v = src[(size_t)k * out_features + n] * inv_scale;
-                h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+        }
+    } else {
+        /* in-major [in_features, out_features]: strided reads (legacy). */
+        for (int n = 0; n < out_features; ++n) {
+            for (int b = 0; b < num_blocks; ++b) {
+                int base = b * block_size;
+                float absmax = 0.0f;
+                for (int j = 0; j < block_size; ++j) {
+                    float a = fabsf(src[(size_t)(base + j) * out_features + n]);
+                    if (a > absmax)
+                        absmax = a;
+                }
+                float scale_nb = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+                float inv_scale = 1.0f / scale_nb;
+                h_scales[(size_t)n * num_blocks + b] = scale_nb;
+                for (int j = 0; j < block_size; ++j) {
+                    int k = base + j;
+                    float v = src[(size_t)k * out_features + n] * inv_scale;
+                    h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
+                }
             }
         }
     }
