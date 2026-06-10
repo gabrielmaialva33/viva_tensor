@@ -248,6 +248,7 @@
     nt_prepack_fp8/2,
     nt_prepack_fp8_blocked/3,
     nt_prepack_fp8_blocked/4,
+    nt_prepack_fp8_blocked/5,
     nt_embedding_table_new/3,
     nt_embedding_table_new_fp16/3,
     nt_floats_to_fp16_binary/1,
@@ -802,6 +803,9 @@ nt_prepack_fp8(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize) -> erlang:nif_error(nif_not_loaded).
 
 nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize, _Layout) ->
+    erlang:nif_error(nif_not_loaded).
+
+nt_prepack_fp8_blocked(_Weight, _Shape, _BlockSize, _Layout, _Bias) ->
     erlang:nif_error(nif_not_loaded).
 nt_embedding_table_new(_Bf16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).
 nt_embedding_table_new_fp16(_Fp16Embedding, _Vocab, _Hidden) -> erlang:nif_error(nif_not_loaded).

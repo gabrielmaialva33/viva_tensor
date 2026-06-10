@@ -327,8 +327,12 @@ prepare_batch_prompt(BlockState, Handle, Prompt0, Opts, Idx) ->
         WeightFormat = maps:get(weight_format, Opts),
         Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
         Prompt = to_binary(Prompt0),
-        BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
-        PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+        Enc0 = viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt),
+        PromptTokens =
+            case viva_tensor_tokenizer_ffi:prepends_bos(Tokenizer) of
+                true -> [viva_tensor_tokenizer_ffi:bos_id(Tokenizer) | Enc0];
+                false -> Enc0
+            end,
         MaxSeq = maps:get(max_seq, Config),
         case length(PromptTokens) + MaxNew >= MaxSeq of
             true ->
@@ -517,9 +521,13 @@ generate_argmax_with_state(Handle, Prompt, Opts, BlockState) ->
     StopOnEos = maps:get(stop_on_eos, Opts),
     WeightFormat = maps:get(weight_format, Opts),
     Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
-    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
     EosIds = stop_token_ids(Handle, Tokenizer),
-    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    Enc0 = viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt),
+    PromptTokens =
+        case viva_tensor_tokenizer_ffi:prepends_bos(Tokenizer) of
+            true -> [viva_tensor_tokenizer_ffi:bos_id(Tokenizer) | Enc0];
+            false -> Enc0
+        end,
     MaxSeq = maps:get(max_seq, Config),
     case length(PromptTokens) + MaxNew >= MaxSeq of
         true ->
@@ -694,9 +702,13 @@ generate_sampling_with_state(Handle, Prompt, Opts, BlockState) ->
     RopeFreqs = maps:get(rope_freqs, Handle),
     MaxNew = maps:get(max_new_tokens, Opts),
     StopOnEos = maps:get(stop_on_eos, Opts),
-    BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
     EosIds = stop_token_ids(Handle, Tokenizer),
-    PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
+    Enc0 = viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt),
+    PromptTokens =
+        case viva_tensor_tokenizer_ffi:prepends_bos(Tokenizer) of
+            true -> [viva_tensor_tokenizer_ffi:bos_id(Tokenizer) | Enc0];
+            false -> Enc0
+        end,
     MaxSeq = maps:get(max_seq, Config),
     case length(PromptTokens) + MaxNew >= MaxSeq of
         true ->
@@ -1258,6 +1270,11 @@ build_layer_blocked(Header, LayerIdx, Config) ->
     GateProj = load_linear(Header, P("mlp.gate_proj.weight"), Ffn, Hidden),
     UpProj = load_linear(Header, P("mlp.up_proj.weight"), Ffn, Hidden),
     DownProj = load_linear(Header, P("mlp.down_proj.weight"), Hidden, Ffn),
+    QkvBias = concat_bias([
+        load_bias_opt(Header, P("self_attn.q_proj.bias")),
+        load_bias_opt(Header, P("self_attn.k_proj.bias")),
+        load_bias_opt(Header, P("self_attn.v_proj.bias"))
+    ]),
     QKVProj = concat_linear_rows([{QProj, Hidden}, {KProj, KvDim}, {VProj, KvDim}]),
     GateUpProj = concat_linear_rows([{GateProj, Ffn}, {UpProj, Ffn}]),
     #{
@@ -1277,7 +1294,7 @@ build_layer_blocked(Header, LayerIdx, Config) ->
         o => prepack_blocked(OProj, Hidden, Hidden, BlockSize),
         gate => prepack_blocked(GateProj, Hidden, Ffn, BlockSize),
         up => prepack_blocked(UpProj, Hidden, Ffn, BlockSize),
-        qkv => prepack_blocked(QKVProj, Hidden, Hidden + KvDim + KvDim, BlockSize),
+        qkv => prepack_blocked_bias(QKVProj, Hidden, Hidden + KvDim + KvDim, BlockSize, QkvBias),
         gate_up => prepack_blocked(GateUpProj, Hidden, Ffn + Ffn, BlockSize),
         down => prepack_blocked(DownProj, Ffn, Hidden, BlockSize)
     }.
@@ -1680,6 +1697,33 @@ prepack_blocked(Bin, InF, OutF, BlockSize) when is_binary(Bin) ->
         {ok, {Resource, _, _, _}} -> Resource;
         {ok, Resource} when is_reference(Resource) -> Resource;
         Other -> error({prepack_blocked_failed, Other})
+    end.
+
+%% Like prepack_blocked but with an optional FP32 per-output-channel bias
+%% (Qwen-style QKV bias). nil falls back to the biasless path.
+prepack_blocked_bias(Bin, InF, OutF, BlockSize, nil) ->
+    prepack_blocked(Bin, InF, OutF, BlockSize);
+prepack_blocked_bias(Bin, InF, OutF, BlockSize, Bias) when is_binary(Bias) ->
+    case viva_tensor_zig:nt_prepack_fp8_blocked(Bin, [InF, OutF], BlockSize, 1, Bias) of
+        {ok, {Resource, _, _, _}} -> Resource;
+        {ok, Resource} when is_reference(Resource) -> Resource;
+        Other -> error({prepack_blocked_bias_failed, Other})
+    end.
+
+%% Read an optional FP32 bias tensor; returns nil when the tensor is absent
+%% (e.g. Llama has no QKV bias, Qwen does).
+load_bias_opt(Header, Name) ->
+    case viva_tensor_safetensors_ffi:read_tensor_fp32(Header, Name) of
+        {ok, Bin} -> Bin;
+        _ -> nil
+    end.
+
+%% Concatenate q/k/v biases into one [out_q + out_k + out_v] FP32 binary, or
+%% nil when none are present (matching the fused QKV weight layout).
+concat_bias(Biases) ->
+    case lists:any(fun(B) -> is_binary(B) end, Biases) of
+        false -> nil;
+        true -> list_to_binary([B || B <- Biases, is_binary(B)])
     end.
 
 new_kv_caches(Config) ->

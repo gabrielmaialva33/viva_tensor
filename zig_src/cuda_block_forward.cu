@@ -392,8 +392,8 @@ __device__ __forceinline__ uint16_t uint4_half_bits(const uint4 v, int idx) {
 }
 
 __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight, const float *scales,
-                                             const uint16_t *input, float *out, int in_features,
-                                             int num_blocks) {
+                                             const uint16_t *input, float *out, const float *bias,
+                                             int in_features, int num_blocks) {
     int out_col = blockIdx.x;
     int lane = threadIdx.x & 31;
     const uint8_t *w_row = weight + (size_t)out_col * (size_t)in_features;
@@ -419,7 +419,7 @@ __global__ void w8a16_mmv_blocked_k16_kernel(const uint8_t *weight, const float 
 
     acc = warp_sum(acc);
     if (lane == 0)
-        out[out_col] = acc;
+        out[out_col] = bias ? acc + bias[out_col] : acc;
 }
 
 __global__ void gqa_attn_flash_single_token_kernel(const float *q, const float *new_k,
@@ -712,14 +712,15 @@ int vt_gqa_attn_single_token_dyn(const float *q, const float *new_k, const float
 }
 
 int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales, const void *d_input,
-                             float *d_out, int in_features, int out_features, cudaStream_t stream) {
+                             float *d_out, const float *d_bias, int in_features, int out_features,
+                             cudaStream_t stream) {
     if (!d_weight || !d_scales || !d_input || !d_out || in_features <= 0 || out_features <= 0 ||
         (in_features % 16) != 0) {
         return -2;
     }
     int num_blocks = in_features / 16;
     w8a16_mmv_blocked_k16_kernel<<<out_features, 32, 0, vt_resolve_stream(stream)>>>(
-        (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out, in_features,
+        (const uint8_t *)d_weight, d_scales, (const uint16_t *)d_input, d_out, d_bias, in_features,
         num_blocks);
     return cudaGetLastError() == cudaSuccess ? 0 : -1;
 }

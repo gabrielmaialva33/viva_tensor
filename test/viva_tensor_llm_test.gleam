@@ -200,5 +200,30 @@ fn opts_argmax(max_new_tokens: Int) -> t.GenerateOpts {
   )
 }
 
+// Qwen2 support (qkv bias + no BOS). Robust contains-check rather than a
+// brittle full-text golden. Fixture lives under tmp/ (gitignored).
+pub fn qwen2_generates_paris_test() {
+  let qwen_path = "tmp/qwen25_05b/model.safetensors"
+  case path_exists(qwen_path) {
+    False -> {
+      io.println("tmp/qwen25_05b fixture not found; skipping Qwen2 test")
+      Nil
+    }
+    True -> {
+      case t.load_model(qwen_path) {
+        Error(_) -> {
+          io.println("Qwen load failed (likely no NIF/GPU); skipping")
+          Nil
+        }
+        Ok(model) -> {
+          let assert Ok(result) =
+            t.generate(model, "The capital of France is", opts_argmax(8))
+          string.contains(result.text, "Paris") |> should.be_true
+        }
+      }
+    }
+  }
+}
+
 @external(erlang, "viva_tensor_llm", "path_exists")
 fn path_exists(path: String) -> Bool

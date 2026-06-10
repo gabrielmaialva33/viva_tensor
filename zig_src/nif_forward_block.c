@@ -56,8 +56,8 @@ extern int vt_topk_fp32_partial(const float *x, int n, int k, int *out_indices, 
 extern int vt_embedding_lookup_fp16(const void *table, const int *token_id, void *out, int hidden,
                                     int vocab, cudaStream_t stream);
 extern int vt_w8a16_mmv_blocked_k16(const void *d_weight, const float *d_scales,
-                                    const void *d_input, float *d_out, int in_features,
-                                    int out_features, cudaStream_t stream);
+                                    const void *d_input, float *d_out, const float *d_bias,
+                                    int in_features, int out_features, cudaStream_t stream);
 extern int marlin_cuda(const void *A, const void *B, void *C, void *s, int prob_m, int prob_n,
                        int prob_k, void *workspace, int groupsize, int dev, cudaStream_t stream,
                        int thread_k, int thread_n, int sms,
@@ -582,7 +582,8 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input, in
             return -40;
         }
         return vt_w8a16_mmv_blocked_k16(w->d_weight, (const float *)w->d_scales, d_input, d_out,
-                                        w->in_features, w->out_features, g_block_stream);
+                                        (const float *)w->d_bias, w->in_features, w->out_features,
+                                        g_block_stream);
     }
 
     uint16_t *d_weight = NULL;
@@ -601,7 +602,8 @@ static int gemm_w8a16_dequant(const PackedWeight *w, const uint16_t *d_input, in
             int row_rc = vt_w8a16_mmv_blocked_k16(w->d_weight, (const float *)w->d_scales,
                                                   d_input + (size_t)b * (size_t)w->in_features,
                                                   d_out + (size_t)b * (size_t)w->out_features,
-                                                  w->in_features, w->out_features, g_block_stream);
+                                                  (const float *)w->d_bias, w->in_features,
+                                                  w->out_features, g_block_stream);
             if (row_rc != 0)
                 return row_rc;
         }

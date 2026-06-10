@@ -328,6 +328,11 @@ ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (argc >= 4)
         enif_get_int(env, argv[3], &weight_layout);
 
+    /* Optional 5th arg: FP32 per-output-channel bias binary (Qwen QKV), or
+     * nil/absent for biasless layers. */
+    ErlNifBinary bias_bin;
+    int has_bias = (argc >= 5) && enif_inspect_binary(env, argv[4], &bias_bin);
+
     if (in_features <= 0 || out_features <= 0)
         return make_error(env, "invalid_dimensions");
     if (block_size <= 0 || (in_features % block_size) != 0)
@@ -449,6 +454,22 @@ ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (err != cudaSuccess) {
         enif_release_resource(w);
         return make_error(env, "cuda_upload_scale_failed");
+    }
+
+    if (has_bias) {
+        if (bias_bin.size != (size_t)out_features * sizeof(float)) {
+            enif_release_resource(w);
+            return make_error(env, "bias_size_mismatch");
+        }
+        if (cudaMalloc(&w->d_bias, bias_bin.size) != cudaSuccess) {
+            enif_release_resource(w);
+            return make_error(env, "cuda_malloc_bias_failed");
+        }
+        if (cudaMemcpy(w->d_bias, bias_bin.data, bias_bin.size, cudaMemcpyHostToDevice) !=
+            cudaSuccess) {
+            enif_release_resource(w);
+            return make_error(env, "cuda_upload_bias_failed");
+        }
     }
 
     ERL_NIF_TERM res_term = make_packed_weight_term(env, w);

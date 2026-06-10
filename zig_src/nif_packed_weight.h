@@ -43,6 +43,8 @@ typedef struct {
                          */
     size_t scales_count;
 
+    void *d_bias; /* Optional FP32 per-output-channel bias (Qwen QKV), or NULL. */
+
     void *d_fp16_cache; /* Optional persistent W8A16 dequant cache. */
     size_t fp16_cache_bytes;
     int fp16_cache_ready;

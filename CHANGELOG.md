@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — Qwen2 / Qwen2.5 / Qwen3 support
+
+- **The Qwen decoder family now loads and generates correctly.** Qwen is
+  Llama-shaped (RMSNorm, RoPE, SwiGLU, GQA, tied embeddings, byte-level BPE)
+  with two differences, both now handled:
+  - **QKV bias.** Qwen has a per-output-channel bias on `q/k/v_proj` (Llama
+    does not). The `PackedWeight` gained an optional `d_bias`, the W8A16 GEMV
+    adds it (`out += bias` when present), and the loader reads + concatenates
+    the q/k/v biases into the fused QKV pack
+    (`nt_prepack_fp8_blocked/5`). Biasless layers/models are unaffected
+    (`d_bias == NULL`).
+  - **No BOS.** Qwen sets `add_bos_token: false`; the loader prepended one
+    unconditionally. The tokenizer now reads `add_bos_token` and exposes
+    `prepends_bos/1`; generation only prepends BOS when the model wants it.
+- Validated on Qwen2.5-0.5B-Instruct: `"The capital of France is"` →
+  `Paris` (matches the HF fp32 argmax, token 12095). Llama/TinyLlama
+  unchanged. Regression test `qwen2_generates_paris_test`.
+
 ### Changed — eliminate the wasted load transpose
 
 - **The loader no longer transposes weights.** `load_linear` transposed HF

@@ -33,7 +33,8 @@
     decode/2,
     bos_id/1,
     eos_id/1,
-    unk_id/1
+    unk_id/1,
+    prepends_bos/1
 ]).
 
 %% State shape — opaque to callers.
@@ -80,7 +81,8 @@ read_tokenizer_config(TokenizerPath) ->
                     ),
                     eos_name => special_token_name(
                         maps:get(<<"eos_token">>, C, undefined)
-                    )
+                    ),
+                    add_bos => maps:get(<<"add_bos_token">>, C, undefined)
                 }
             catch
                 _:_ -> #{}
@@ -176,7 +178,10 @@ build_state(Json, Hints) ->
         byte_level => ByteLevel,
         byte_decoder => ByteDecoder,
         special_tokens => SpecialMap,
-        special_pattern => SpecialPattern
+        special_pattern => SpecialPattern,
+        %% Prepend BOS unless tokenizer_config sets add_bos_token: false
+        %% (Llama prepends; Qwen does not).
+        prepends_bos => maps:get(add_bos, Hints, undefined) =/= false
     }}.
 
 %% Build content -> id map of special tokens (those flagged `special: true`
@@ -288,6 +293,9 @@ byte_token_name(B) ->
 
 %% ---------------------------------------------------------------- bos_id/eos_id/unk_id
 bos_id(#{bos := B}) -> B.
+
+%% Whether callers should prepend BOS to the prompt (false for Qwen-style).
+prepends_bos(State) -> maps:get(prepends_bos, State, true).
 eos_id(#{eos := E}) -> E.
 unk_id(#{unk := U}) -> U.
 

@@ -74,6 +74,10 @@ void packed_weight_destructor(ErlNifEnv *env, void *obj) {
         cudaFree(w->d_scales);
         w->d_scales = NULL;
     }
+    if (w->d_bias) {
+        cudaFree(w->d_bias);
+        w->d_bias = NULL;
+    }
     if (w->d_fp16_cache) {
         cudaFree(w->d_fp16_cache);
         w->d_fp16_cache = NULL;
