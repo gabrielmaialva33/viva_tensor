@@ -8,7 +8,9 @@ import viva_tensor as t
 
 const tinyllama_path = "tmp/tinyllama/model.safetensors"
 
-const expected_hello = ", I am interested to bookmark this job for [company/brand name], please? I am interested in [job title/function] at [company name] in [city/state/country]?</s>"
+// Golden recaptured after the FP8 E4M3 encode fix (commit 59b9aa4); the prior
+// golden was produced with the [256,448)-saturation bug and was incoherent.
+const expected_hello = ", World!\n\n5. Node.js:\n\nNode.js is a popular server-side JavaScript runtime that allows you to write server-side applications in JavaScript. Here's an example of a Node.js server that listens"
 
 pub fn main() -> Nil {
   gleeunit.main()

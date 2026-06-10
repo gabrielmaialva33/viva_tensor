@@ -163,7 +163,10 @@ static fp8_e4m3_t float_to_fp8_e4m3(float x) {
     if (fp8_exp <= 0) {
         return sign ? 0x80 : 0x00; /* Underflow to zero */
     }
-    if (fp8_exp >= 15) {
+    /* stored exp 15 is valid for mantissa 0..6 (256..448 = the top binade);
+       only mant 7 (the NaN slot) or exp > 15 overflows. Saturating all of
+       exp 15 here would bump [256,448) up to 448. */
+    if (fp8_exp > 15 || (fp8_exp == 15 && mantissa >= 7)) {
         return sign ? 0xFE : 0x7E; /* Saturate to max (no inf in E4M3) */
     }
 

@@ -12,9 +12,14 @@ All notable changes to this project will be documented in this file.
   overflow, but E4M3's max finite is `448 = 1.75·2^8`, so `[256, 448)` is
   representable (stored exp 15, mantissa 0..6). Large quantized weights
   were rounded up to 448, giving ~25% error on affected GEMV outputs.
-- Fixed in all three encoders (`nif_prepack_fp8.c`, `nif_linear_fp8.c`,
-  `nif_linear_swiglu_fp8.cu`): saturate only at `f32_exp >= 9` (≥512) or a
-  post-rounding carry past the NaN slot.
+- Fixed in all three W8A16 encoders (`nif_prepack_fp8.c`, `nif_linear_fp8.c`,
+  `nif_linear_swiglu_fp8.cu`) plus the SageAttention encoder
+  (`cuda_sage.c`): saturate only at `f32_exp >= 9` (≥512) or a post-rounding
+  carry past the NaN slot. (`nif_fp8_cpu.c`'s `frexpf`-based reference was
+  already correct.)
+- Recaptured the TinyLlama generation golden in
+  `viva_tensor_llm_test.gleam` (the prior one was produced with the bug and
+  was incoherent; now `"Hello"` → `", World! ... Node.js ..."`).
 - **Impact:** the W8A16 forward now matches the HuggingFace `transformers`
   fp32 argmax on Llama-3.2-1B (`"The capital of France is"` → `Paris`,
   was `a`). Every FP8 path is more accurate; the bug previously degraded
