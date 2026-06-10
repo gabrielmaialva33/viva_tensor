@@ -27,6 +27,23 @@ pub fn e4m3_exact_values_test() {
   |> should.equal([0.0, 1.0, 2.0, 0.5, -0.0625, 448.0, 256.0])
 }
 
+// --- top binade [256, 448) is representable, must NOT saturate to 448 ------
+
+pub fn e4m3_top_binade_representable_test() {
+  // E4M3's top binade (stored exp 15, mantissa 0..6) holds 256, 288, 320,
+  // 352, 384, 416, 448. A saturation bug in the W8A16 encoders rounded this
+  // whole range up to 448 (commit 59b9aa4). The CPU reference encodes them
+  // exactly -- this pins that and documents the gotcha.
+  let assert Ok(t) =
+    viva_tensor.native_from_list(
+      [256.0, 288.0, 320.0, 352.0, 384.0, 416.0, 448.0],
+      [7],
+    )
+  let assert Ok(q) = f8.quantize(t)
+  viva_tensor.to_list(q)
+  |> should.equal([256.0, 288.0, 320.0, 352.0, 384.0, 416.0, 448.0])
+}
+
 // --- saturation: values above 448 clamp -----------------------------------
 
 pub fn e4m3_saturates_test() {
