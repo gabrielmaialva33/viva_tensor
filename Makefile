@@ -103,7 +103,12 @@ endif
 ## Run tests
 test:
 	@$(LOG) "$(YELLOW)[TEST]$(NC) Running tests..."
+	@# gleam 1.16's `gleam test` does NOT propagate the test exit code (it
+	@# returns 0 even when EUnit reports failures), so a CI green is meaningless.
+	@# Compile+run for visible output, then re-run via the BEAM which halt(1)s on
+	@# failure so `make test` actually fails when a test fails.
 	gleam test
+	erl -noshell -pa build/dev/erlang/*/ebin -eval 'viva_tensor_test:main()'
 	@$(LOG) "$(GREEN)[OK]$(NC) Tests finished!"
 
 ## Run tests with native NIF library temporarily hidden

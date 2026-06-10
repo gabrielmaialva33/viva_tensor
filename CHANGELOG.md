@@ -15,6 +15,21 @@ All notable changes to this project will be documented in this file.
   (the 7B was effectively un-loadable interactively before). The remaining
   ceiling is the ~7.5× scaling of the quantize/transpose kernels themselves.
 
+### Fixed — test suite actually fails on failures
+
+- **`gleam test` (1.16) returns exit 0 even when EUnit reports failures and
+  doesn't print the summary**, so `make test` / CI were green regardless. The
+  Makefile `test` target now re-runs the suite via the BEAM
+  (`erl -eval viva_tensor_test:main()`), which `halt(1)`s on failure. Verified:
+  an injected failing test now makes `make test` exit non-zero.
+- This surfaced **two pre-existing failures the green CI had masked**:
+  `generate_batch_matches_sequential_argmax_test` and
+  `generate_batch_isolates_prompt_errors_test` compared the whole `Generation`
+  record — including `ms_per_token` (wall-clock timing) — between batched and
+  sequential. The tokens/text are byte-identical; only the timing differed.
+  Fixed to compare the deterministic fields (`tokens`, `text`) only. Suite is
+  now 817 passed, no failures.
+
 ### Fixed — memory-aware load concurrency (unblocks 7B)
 
 - **Layer-build concurrency is now capped by available memory, not just core

@@ -122,8 +122,12 @@ pub fn generate_batch_matches_sequential_argmax_test() {
           let assert [Ok(first), Ok(second)] =
             t.generate_batch(model, ["Hello", "Hello"], opts)
 
-          first |> should.equal(expected)
-          second |> should.equal(expected)
+          // Compare deterministic fields only; ms_per_token is wall-clock
+          // timing and legitimately differs between batched and sequential.
+          first.tokens |> should.equal(expected.tokens)
+          first.text |> should.equal(expected.text)
+          second.tokens |> should.equal(expected.tokens)
+          second.text |> should.equal(expected.text)
         }
       }
     }
@@ -176,7 +180,8 @@ pub fn generate_batch_isolates_prompt_errors_test() {
           let assert [Ok(first), Error(_)] =
             t.generate_batch(model, ["Hello", oversized_prompt], opts)
 
-          first |> should.equal(expected)
+          first.tokens |> should.equal(expected.tokens)
+          first.text |> should.equal(expected.text)
         }
       }
     }
