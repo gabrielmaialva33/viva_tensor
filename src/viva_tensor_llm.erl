@@ -38,10 +38,7 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
         Config = model_config(Header, SafetensorsPath, Opts0),
         TokenizerPath = tokenizer_path(SafetensorsPath, Opts0),
         {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(TokenizerPath),
-        Layers = [
-            build_layer_blocked(Header, I, Config)
-         || I <- lists:seq(0, maps:get(num_layers, Config) - 1)
-        ],
+        Layers = parallel_build_layers(Header, Config, maps:get(num_layers, Config)),
         EmbedTable = load_embed_table_resource(Header, Config),
         FinalNorm = load_rmsnorm_bin(Header, <<"model.norm.weight">>),
         LmHeadName =
@@ -1082,6 +1079,52 @@ first_layer_ffn(Header) ->
 shape2(Header, Name) ->
     {ok, #{shape := [A, B]}} = viva_tensor_safetensors_ffi:tensor_info(Header, Name),
     {A, B}.
+
+%% Build transformer layers concurrently. The per-tensor bf16->fp32 +
+%% transpose + FP8 quantize is CPU-bound and dominates load time; running
+%% layers across dirty CPU schedulers cuts wall time roughly by the core
+%% count. Concurrency is capped at the dirty-CPU scheduler count so peak host
+%% scratch (the FP32 staging buffers) stays bounded for large models.
+parallel_build_layers(Header, Config, NumLayers) ->
+    Limit = max(1, min(NumLayers, erlang:system_info(dirty_cpu_schedulers))),
+    Indices = lists:seq(0, NumLayers - 1),
+    lists:append([
+        pmap_ordered(fun(I) -> build_layer_blocked(Header, I, Config) end, Chunk)
+     || Chunk <- chunk_list(Indices, Limit)
+    ]).
+
+%% Run Fun over Items concurrently (one process each), returning results in
+%% input order and re-raising the first worker error in the caller.
+pmap_ordered(Fun, Items) ->
+    Parent = self(),
+    Tagged = [{erlang:make_ref(), I} || I <- Items],
+    lists:foreach(
+        fun({Ref, I}) ->
+            spawn_link(fun() ->
+                R =
+                    try
+                        {ok, Fun(I)}
+                    catch
+                        Class:Reason:Stack -> {error, {Class, Reason, Stack}}
+                    end,
+                Parent ! {Ref, R}
+            end)
+        end,
+        Tagged
+    ),
+    [
+        receive
+            {Ref, {ok, V}} -> V;
+            {Ref, {error, {C, E, S}}} -> erlang:raise(C, E, S)
+        end
+     || {Ref, _} <- Tagged
+    ].
+
+chunk_list([], _N) ->
+    [];
+chunk_list(List, N) ->
+    {Head, Tail} = lists:split(min(N, length(List)), List),
+    [Head | chunk_list(Tail, N)].
 
 build_layer_blocked(Header, LayerIdx, Config) ->
     Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",

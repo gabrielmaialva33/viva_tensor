@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed — parallel model load
+
+- **Layers are now built concurrently** across dirty-CPU schedulers during
+  `load`. The per-tensor bf16→fp32 + transpose + FP8 quantize is CPU-bound
+  and dominated load time; running layers in parallel (capped at the
+  dirty-CPU scheduler count) cuts Llama-3.2-1B load from ~55s to ~15s
+  (3.6×) with byte-identical results. Larger models benefit more. The
+  remaining ceiling is CUDA's serialized `cudaMalloc`/upload.
+
 ### Fixed — FP8 E4M3 encode saturation (numerical correctness)
 
 - **The FP8 E4M3 encoder saturated the entire top binade `[256, 448)` to
