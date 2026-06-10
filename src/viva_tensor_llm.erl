@@ -63,7 +63,8 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
         ),
         RopeFreqs = precompute_rope_freqs_bin(
             maps:get(head_dim, Config),
-            maps:get(rope_theta, Config)
+            maps:get(rope_theta, Config),
+            maps:get(rope_scaling, Config, none)
         ),
         InitialCaches = new_kv_caches(Config),
         Handle = #{
@@ -1019,6 +1020,7 @@ model_config(Header, SafetensorsPath, Opts) ->
         head_dim => HeadDim,
         eps => float_config(FileConfig, <<"rms_norm_eps">>, ?DEFAULT_EPS),
         rope_theta => float_config(FileConfig, <<"rope_theta">>, ?DEFAULT_ROPE_THETA),
+        rope_scaling => rope_scaling_config(FileConfig),
         max_seq => opt(Opts, max_seq, ?DEFAULT_MAX_SEQ),
         tie_word_embeddings => Tied
     }.
@@ -1524,13 +1526,59 @@ new_kv_caches(Config) ->
      || _ <- lists:seq(1, maps:get(num_layers, Config))
     ].
 
+%% Read rope_scaling from HF config.json. Returns `none` for classic RoPE
+%% (theta only), or `{llama3, Factor, LowFreqF, HighFreqF, OrigMax}` for the
+%% Llama-3 "NTK-by-parts" frequency rescaling that Llama-3.1/3.2 require.
+rope_scaling_config(FileConfig) ->
+    case maps:get(<<"rope_scaling">>, FileConfig, undefined) of
+        Scaling when is_map(Scaling) ->
+            RopeType = maps:get(
+                <<"rope_type">>, Scaling, maps:get(<<"type">>, Scaling, undefined)
+            ),
+            case RopeType of
+                <<"llama3">> ->
+                    {llama3, float_config(Scaling, <<"factor">>, 8.0),
+                        float_config(Scaling, <<"low_freq_factor">>, 1.0),
+                        float_config(Scaling, <<"high_freq_factor">>, 4.0),
+                        float_config(
+                            Scaling, <<"original_max_position_embeddings">>, 8192.0
+                        )};
+                _ ->
+                    none
+            end;
+        _ ->
+            none
+    end.
+
 precompute_rope_freqs_bin(HeadDim, Theta) ->
+    precompute_rope_freqs_bin(HeadDim, Theta, none).
+
+precompute_rope_freqs_bin(HeadDim, Theta, Scaling) ->
     Half = HeadDim div 2,
     Freqs = [
-        math:pow(Theta, -2.0 * float(I) / float(HeadDim))
+        scale_rope_freq(math:pow(Theta, -2.0 * float(I) / float(HeadDim)), Scaling)
      || I <- lists:seq(0, Half - 1)
     ],
     <<<<F:32/float-little>> || F <- Freqs>>.
+
+%% Llama-3 "NTK-by-parts" rope scaling, faithful to the HuggingFace reference:
+%% high-frequency components are kept, low-frequency ones are divided by Factor,
+%% and a smooth interpolation bridges the band in between.
+scale_rope_freq(Freq, none) ->
+    Freq;
+scale_rope_freq(Freq, {llama3, Factor, LowF, HighF, OrigMax}) ->
+    LowWavelen = OrigMax / LowF,
+    HighWavelen = OrigMax / HighF,
+    Wavelen = 2.0 * math:pi() / Freq,
+    if
+        Wavelen < HighWavelen ->
+            Freq;
+        Wavelen > LowWavelen ->
+            Freq / Factor;
+        true ->
+            Smooth = (OrigMax / Wavelen - LowF) / (HighF - LowF),
+            (1.0 - Smooth) * Freq / Factor + Smooth * Freq
+    end.
 
 generation_options(Opts) ->
     #{

@@ -55,14 +55,46 @@ load(Path) ->
         {ok, Bin} ->
             try
                 Json = json:decode(Bin),
-                build_state(Json)
+                Hints = read_tokenizer_config(Path),
+                build_state(Json, Hints)
             catch
                 Class:Err:Stack ->
                     {error, {parse, Class, Err, Stack}}
             end
     end.
 
-build_state(Json) ->
+%% Best-effort read of tokenizer_config.json (same dir) for the canonical
+%% bos_token / eos_token names. Returns #{} on any failure so loading a bare
+%% tokenizer.json keeps working.
+read_tokenizer_config(TokenizerPath) ->
+    ConfigPath = filename:join(
+        filename:dirname(TokenizerPath), "tokenizer_config.json"
+    ),
+    case file:read_file(ConfigPath) of
+        {ok, Bin} ->
+            try
+                C = json:decode(Bin),
+                #{
+                    bos_name => special_token_name(
+                        maps:get(<<"bos_token">>, C, undefined)
+                    ),
+                    eos_name => special_token_name(
+                        maps:get(<<"eos_token">>, C, undefined)
+                    )
+                }
+            catch
+                _:_ -> #{}
+            end;
+        _ ->
+            #{}
+    end.
+
+%% A HF special token is either a plain string or an object with "content".
+special_token_name(N) when is_binary(N) -> N;
+special_token_name(#{<<"content">> := C}) when is_binary(C) -> C;
+special_token_name(_) -> undefined.
+
+build_state(Json, Hints) ->
     Model = maps:get(<<"model">>, Json),
     VocabMap = maps:get(<<"vocab">>, Model),
     MergesList = maps:get(<<"merges">>, Model),
@@ -90,11 +122,37 @@ build_state(Json) ->
         MergesList
     ),
 
-    %% Resolve special tokens from added_tokens / config defaults.
+    %% Resolve special tokens. Prefer the canonical name from
+    %% tokenizer_config.json, then known per-family candidates (Llama-3
+    %% byte-level `<|begin_of_text|>`/`<|eot_id|>` vs Llama-2 SentencePiece
+    %% `<s>`/`</s>`), falling back to the legacy defaults. Looks up both the
+    %% added_tokens table and the main vocab.
     Added = maps:get(<<"added_tokens">>, Json, []),
-    Bos = find_special(Added, <<"<s>">>, 1),
-    Eos = find_special(Added, <<"</s>">>, 2),
+    Bos = resolve_special(
+        maps:get(bos_name, Hints, undefined),
+        [<<"<|begin_of_text|>">>, <<"<s>">>],
+        Added,
+        VocabMap,
+        1
+    ),
+    Eos = resolve_special(
+        maps:get(eos_name, Hints, undefined),
+        [<<"<|eot_id|>">>, <<"<|end_of_text|>">>, <<"</s>">>],
+        Added,
+        VocabMap,
+        2
+    ),
     Unk = find_special(Added, <<"<unk>">>, 0),
+
+    %% Special tokens (e.g. <|begin_of_text|>, <|eot_id|>, <|start_header_id|>)
+    %% must be matched atomically inside the text — chat templates embed them
+    %% inline, and BPE would otherwise shatter them into raw bytes.
+    SpecialMap = build_special_map(Added),
+    SpecialPattern =
+        case maps:keys(SpecialMap) of
+            [] -> none;
+            Names -> binary:compile_pattern(Names)
+        end,
 
     %% Build byte-fallback table: byte N -> id of "<0xNN>".
     ByteIds = build_byte_table(VocabMap),
@@ -116,8 +174,31 @@ build_state(Json) ->
         unk => Unk,
         byte_ids => ByteIds,
         byte_level => ByteLevel,
-        byte_decoder => ByteDecoder
+        byte_decoder => ByteDecoder,
+        special_tokens => SpecialMap,
+        special_pattern => SpecialPattern
     }}.
+
+%% Build content -> id map of special tokens (those flagged `special: true`
+%% in added_tokens), longest content first so e.g. `<|eot_id|>` wins over a
+%% shorter overlapping marker during matching.
+build_special_map(Added) ->
+    lists:foldl(
+        fun(Tok, Acc) ->
+            case
+                {
+                    maps:get(<<"special">>, Tok, false),
+                    maps:get(<<"content">>, Tok, undefined),
+                    maps:get(<<"id">>, Tok, undefined)
+                }
+            of
+                {true, C, I} when is_binary(C), is_integer(I) -> maps:put(C, I, Acc);
+                _ -> Acc
+            end
+        end,
+        #{},
+        Added
+    ).
 
 %% Detect byte-level BPE (GPT-2/Llama-3): many tokens start with Ġ AND
 %% no SentencePiece ▁ markers present. Threshold of 100 avoids false positives
@@ -165,6 +246,31 @@ find_special([H | T], Tok, Default) ->
         _ -> find_special(T, Tok, Default)
     end.
 
+%% Resolve a special-token id: prefer the canonical name from
+%% tokenizer_config.json, then the per-family candidate names, then Default.
+resolve_special(undefined, Candidates, Added, Vocab, Default) ->
+    resolve_candidates(Candidates, Added, Vocab, Default);
+resolve_special(Name, Candidates, Added, Vocab, Default) ->
+    case lookup_token_id(Name, Added, Vocab) of
+        undefined -> resolve_candidates(Candidates, Added, Vocab, Default);
+        Id -> Id
+    end.
+
+resolve_candidates([], _Added, _Vocab, Default) ->
+    Default;
+resolve_candidates([Name | Rest], Added, Vocab, Default) ->
+    case lookup_token_id(Name, Added, Vocab) of
+        undefined -> resolve_candidates(Rest, Added, Vocab, Default);
+        Id -> Id
+    end.
+
+%% Look up a token id by name in the added_tokens table first, then the vocab.
+lookup_token_id(Name, Added, Vocab) ->
+    case find_special(Added, Name, undefined) of
+        undefined -> maps:get(Name, Vocab, undefined);
+        Id -> Id
+    end.
+
 build_byte_table(Vocab) ->
     list_to_tuple([
         maps:get(byte_token_name(B), Vocab, undefined)
@@ -189,17 +295,101 @@ unk_id(#{unk := U}) -> U.
 encode(State, Text) when is_list(Text) ->
     encode(State, unicode:characters_to_binary(Text));
 encode(State, Text) when is_binary(Text) ->
-    %% Normalizer: prepend ▁, replace spaces with ▁.
-    %% NOTE: Erlang treats <<"▁">> as Latin-1 by default — must use /utf8.
+    case maps:get(special_pattern, State, none) of
+        none ->
+            encode_segment(State, Text);
+        Pattern ->
+            Specials = maps:get(special_tokens, State, #{}),
+            lists:flatmap(
+                fun
+                    ({text, T}) -> encode_segment(State, T);
+                    ({special, Id}) -> [Id]
+                end,
+                split_on_specials(Text, Pattern, Specials)
+            )
+    end.
+
+%% Encode a span guaranteed to contain no special tokens.
+encode_segment(State, Text) ->
+    case maps:get(byte_level, State, false) of
+        true -> encode_byte_level(State, Text);
+        false -> encode_sentencepiece(State, Text)
+    end.
+
+%% Split text on special-token occurrences, keeping each special token atomic.
+%% binary:match with a compiled pattern returns the leftmost (and, among ties,
+%% longest) match — exactly HF's "special tokens are atomic" rule.
+split_on_specials(<<>>, _Pattern, _Specials) ->
+    [];
+split_on_specials(Text, Pattern, Specials) ->
+    case binary:match(Text, Pattern) of
+        nomatch ->
+            [{text, Text}];
+        {Start, Len} ->
+            <<Before:Start/binary, Matched:Len/binary, After/binary>> = Text,
+            Id = maps:get(Matched, Specials),
+            Rest = [{special, Id} | split_on_specials(After, Pattern, Specials)],
+            case Before of
+                <<>> -> Rest;
+                _ -> [{text, Before} | Rest]
+            end
+    end.
+
+%% SentencePiece (Llama-2 / TinyLlama): prepend ▁, spaces -> ▁, BPE over
+%% codepoints. NOTE: Erlang treats <<"▁">> as Latin-1 by default — use /utf8.
+encode_sentencepiece(State, Text) ->
     Up = <<"▁"/utf8>>,
     Prepended = <<Up/binary, Text/binary>>,
     Normalized = binary:replace(Prepended, <<" ">>, Up, [global]),
-    %% Split into single-codepoint binaries.
     Pieces = split_chars(Normalized),
-    %% BPE-merge until no merges apply.
     Merged = bpe_loop(Pieces, maps:get(merges, State)),
-    %% Map each merged token to an id, falling back to bytes if unknown.
     tokens_to_ids(Merged, State).
+
+%% Byte-level BPE (GPT-2 / Llama-3): GPT-2 regex pre-tokenization, map each
+%% raw UTF-8 byte to its byte-level codepoint (e.g. space 0x20 -> "Ġ"), then
+%% BPE-merge each piece independently. Mirrors the reference HF pipeline.
+encode_byte_level(State, Text) ->
+    Merges = maps:get(merges, State),
+    Encoder = byte_encoder(),
+    lists:flatmap(
+        fun(Piece) ->
+            Chars = byte_encode_piece(Piece, Encoder),
+            Merged = bpe_loop(Chars, Merges),
+            tokens_to_ids(Merged, State)
+        end,
+        pretokenize_gpt2(Text)
+    ).
+
+%% GPT-2 / Llama-3 pre-tokenization regex (PCRE via Erlang re; `ucp` enables
+%% \p{L} / \p{N} unicode properties). `Isolated` behavior == every match is a
+%% piece, and the alternation covers whitespace, so the matches tile the input.
+pretokenize_gpt2(Text) ->
+    Pattern =
+        <<"(?i:'s|'t|'re|'ve|'m|'ll|'d)|[^\\r\\n\\p{L}\\p{N}]?\\p{L}+|\\p{N}{1,3}| ?[^\\s\\p{L}\\p{N}]+[\\r\\n]*|\\s*[\\r\\n]+|\\s+(?!\\S)|\\s+"/utf8>>,
+    case re:run(Text, Pattern, [unicode, ucp, global, {capture, first, binary}]) of
+        {match, Matches} -> [M || [M | _] <- Matches];
+        nomatch -> []
+    end.
+
+%% Map a raw piece's UTF-8 bytes to single-codepoint binaries via the GPT-2
+%% byte->unicode table.
+byte_encode_piece(Piece, Encoder) ->
+    [unicode:characters_to_binary([maps:get(B, Encoder)], utf8) || <<B>> <= Piece].
+
+%% GPT-2 byte-level encoder: byte (0..255) -> printable unicode codepoint.
+%% Inverse of build_byte_decoder/0; printable bytes map to themselves, the rest
+%% to 256+N in byte order.
+byte_encoder() ->
+    Printable = lists:seq(33, 126) ++ lists:seq(161, 172) ++ lists:seq(174, 255),
+    PrintableSet = sets:from_list(Printable),
+    PrintablePairs = [{B, B} || B <- Printable],
+    NonPrintable = [B || B <- lists:seq(0, 255), not sets:is_element(B, PrintableSet)],
+    {_, NonPrintablePairs} = lists:foldl(
+        fun(B, {N, Acc}) -> {N + 1, [{B, 256 + N} | Acc]} end,
+        {0, []},
+        NonPrintable
+    ),
+    maps:from_list(PrintablePairs ++ NonPrintablePairs).
 
 %% Split a UTF-8 binary into a list of single-codepoint binaries.
 split_chars(Bin) ->

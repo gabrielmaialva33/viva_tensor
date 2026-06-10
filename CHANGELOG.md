@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Llama-3 / Llama-3.x inference
+
+- **`rope_scaling: "llama3"` is now applied.** The loader only read
+  `rope_theta` and ignored the NTK-by-parts frequency rescaling that
+  Llama-3.1/3.2 require, producing incoherent output. Added
+  `rope_scaling_config/1` and `precompute_rope_freqs_bin/3` in
+  `viva_tensor_llm.erl`, faithful to the HuggingFace reference (validated
+  to 4e-08 against `transformers`).
+- **BOS/EOS resolution.** The tokenizer hard-coded the Llama-2
+  SentencePiece scheme (`<s>`=1 / `</s>`=2). Llama-3 uses
+  `<|begin_of_text|>`=128000 / `<|eot_id|>`=128009; these are now resolved
+  from `tokenizer_config.json` with per-family fallbacks.
+- **Byte-level BPE encode.** `encode` only implemented the SentencePiece
+  path; Llama-3 / GPT-2 byte-level BPE shattered prompts into UNK. Added
+  GPT-2 regex pre-tokenization (via Erlang `re` + `ucp`), the byte-level
+  encoder, and per-piece BPE. Encode is now byte-identical to HF
+  `tokenizers`.
+
+### Added — instruct inference
+
+- **Special tokens are matched atomically inside text**, so chat templates
+  (`<|start_header_id|>`, `<|eot_id|>`, …) encode correctly instead of
+  being split into bytes. Enables real instruct chat on
+  Llama-3.2-1B-Instruct.
+- `test/tokenizer_ffi_test.gleam` — regression tests with goldens
+  validated byte-for-byte against HF `tokenizers` (skip when the tmp/
+  fixture is absent).
+
 ## [2.2.106] - 2026-05-22
 
 ### Added — Phase B: Marlin W4A16 opt-in
