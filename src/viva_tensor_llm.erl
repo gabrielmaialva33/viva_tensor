@@ -37,27 +37,20 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
         {ok, Header} = viva_tensor_safetensors_ffi:open(SafetensorsPath),
         Config = model_config(Header, SafetensorsPath, Opts0),
         TokenizerPath = tokenizer_path(SafetensorsPath, Opts0),
-        {ok, Tokenizer} = viva_tensor_tokenizer_ffi:load(TokenizerPath),
+        %% The tokenizer (a large JSON vocab), embedding table, and lm_head are
+        %% each as heavy as several layers. Build them — and the layers —
+        %% concurrently so none dominates wall time.
+        TokRef = async_build(fun() ->
+            {ok, Tok} = viva_tensor_tokenizer_ffi:load(TokenizerPath),
+            Tok
+        end),
+        EmbedRef = async_build(fun() -> load_embed_table_resource(Header, Config) end),
+        LmHeadRef = async_build(fun() -> build_lm_head_packed(Header, Config) end),
         Layers = parallel_build_layers(Header, Config, maps:get(num_layers, Config)),
-        EmbedTable = load_embed_table_resource(Header, Config),
+        Tokenizer = await_build(TokRef),
+        EmbedTable = await_build(EmbedRef),
+        LmHeadPacked = await_build(LmHeadRef),
         FinalNorm = load_rmsnorm_bin(Header, <<"model.norm.weight">>),
-        LmHeadName =
-            case maps:get(tie_word_embeddings, Config, false) of
-                true -> <<"model.embed_tokens.weight">>;
-                false -> <<"lm_head.weight">>
-            end,
-        LmHead = load_linear(
-            Header,
-            LmHeadName,
-            maps:get(vocab_size, Config),
-            maps:get(hidden_size, Config)
-        ),
-        LmHeadPacked = prepack_blocked(
-            LmHead,
-            maps:get(hidden_size, Config),
-            maps:get(vocab_size, Config),
-            maps:get(block_size, Config)
-        ),
         RopeFreqs = precompute_rope_freqs_bin(
             maps:get(head_dim, Config),
             maps:get(rope_theta, Config),
@@ -1125,6 +1118,46 @@ chunk_list([], _N) ->
 chunk_list(List, N) ->
     {Head, Tail} = lists:split(min(N, length(List)), List),
     [Head | chunk_list(Tail, N)].
+
+%% Spawn Fun in a linked worker; await_build/1 collects its result, re-raising
+%% any error in the caller.
+async_build(Fun) ->
+    Parent = self(),
+    Ref = erlang:make_ref(),
+    spawn_link(fun() ->
+        R =
+            try
+                {ok, Fun()}
+            catch
+                Class:Reason:Stack -> {error, {Class, Reason, Stack}}
+            end,
+        Parent ! {Ref, R}
+    end),
+    Ref.
+
+await_build(Ref) ->
+    receive
+        {Ref, {ok, V}} -> V;
+        {Ref, {error, {C, E, S}}} -> erlang:raise(C, E, S)
+    end.
+
+%% Load + FP8-prepack the lm_head (tied to embed_tokens, or a dedicated
+%% lm_head.weight).
+build_lm_head_packed(Header, Config) ->
+    LmHeadName =
+        case maps:get(tie_word_embeddings, Config, false) of
+            true -> <<"model.embed_tokens.weight">>;
+            false -> <<"lm_head.weight">>
+        end,
+    LmHead = load_linear(
+        Header, LmHeadName, maps:get(vocab_size, Config), maps:get(hidden_size, Config)
+    ),
+    prepack_blocked(
+        LmHead,
+        maps:get(hidden_size, Config),
+        maps:get(vocab_size, Config),
+        maps:get(block_size, Config)
+    ).
 
 build_layer_blocked(Header, LayerIdx, Config) ->
     Prefix = "model.layers." ++ integer_to_list(LayerIdx) ++ ".",

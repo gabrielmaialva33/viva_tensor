@@ -6,12 +6,14 @@ All notable changes to this project will be documented in this file.
 
 ### Changed — parallel model load
 
-- **Layers are now built concurrently** across dirty-CPU schedulers during
-  `load`. The per-tensor bf16→fp32 + transpose + FP8 quantize is CPU-bound
-  and dominated load time; running layers in parallel (capped at the
-  dirty-CPU scheduler count) cuts Llama-3.2-1B load from ~55s to ~15s
-  (3.6×) with byte-identical results. Larger models benefit more. The
-  remaining ceiling is CUDA's serialized `cudaMalloc`/upload.
+- **Model load is now concurrent.** The per-tensor bf16→fp32 + transpose +
+  FP8 quantize is CPU-bound and dominated load time. Layers are built across
+  dirty-CPU schedulers (capped at the scheduler count), and the three heavy
+  non-layer builds — embedding table, lm_head, and tokenizer (each as large
+  as several layers) — run concurrently with them. Llama-3.2-1B load:
+  ~55s → ~8.6s (6.4×), byte-identical output. Larger models benefit more
+  (the 7B was effectively un-loadable interactively before). The remaining
+  ceiling is the ~7.5× scaling of the quantize/transpose kernels themselves.
 
 ### Fixed — FP8 E4M3 encode saturation (numerical correctness)
 
