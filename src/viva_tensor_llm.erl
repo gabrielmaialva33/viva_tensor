@@ -35,6 +35,7 @@ load(SafetensorsPath0, Opts0) when is_map(Opts0) ->
         SafetensorsPath = to_binary(SafetensorsPath0),
         T0 = us(),
         {ok, Header} = viva_tensor_safetensors_ffi:open(SafetensorsPath),
+        ok = ensure_supported_arch(Header),
         Config = model_config(Header, SafetensorsPath, Opts0),
         TokenizerPath = tokenizer_path(SafetensorsPath, Opts0),
         %% The tokenizer (a large JSON vocab), embedding table, and lm_head are
@@ -1648,6 +1649,27 @@ fp16_round_mantissa(Mh, Eh) ->
 
 abs_float(V) when V < 0.0 -> -V;
 abs_float(V) -> V.
+
+%% The forward path assumes a Llama-shaped decoder (RMSNorm, RoPE, SwiGLU,
+%% GQA). LayerNorm-based architectures (Phi, GPT-2, Falcon, StableLM, ...)
+%% carry a bias on the input layernorm; reject them up front with a clear
+%% error instead of silently generating garbage.
+ensure_supported_arch(Header) ->
+    case
+        viva_tensor_safetensors_ffi:tensor_info(
+            Header, <<"model.layers.0.input_layernorm.bias">>
+        )
+    of
+        {ok, _} ->
+            error(
+                {unsupported_architecture, <<
+                    "model uses LayerNorm (not RMSNorm); only Llama-shaped "
+                    "decoders such as Llama, Qwen and Mistral are supported"
+                >>}
+            );
+        {error, _} ->
+            ok
+    end.
 
 require_tensors(Header, Names, LayerIdx) ->
     lists:foreach(

@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — reject unsupported architectures up front
+
+- **LayerNorm-based decoders (Phi, GPT-2, Falcon, StableLM, …) now fail to
+  load with a clear error** instead of silently generating garbage. The
+  forward path assumes a Llama-shaped decoder (RMSNorm/RoPE/SwiGLU/GQA);
+  `ensure_supported_arch` checks for an input-layernorm bias (present only
+  on LayerNorm models) right after opening the safetensors. Llama, Qwen and
+  Mistral (no such bias) load as before.
+
 ### Added — Qwen2 / Qwen2.5 / Qwen3 support
 
 - **The Qwen decoder family now loads and generates correctly.** Qwen is
