@@ -379,12 +379,12 @@ batch_decode_loop(BlockState, Handle, Opts, States0) ->
             States0;
         false ->
             Tokenizer = maps:get(tokenizer, Handle),
-            EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+            EosIds = stop_token_ids(Handle, Tokenizer),
             StopOnEos = maps:get(stop_on_eos, Opts),
             Active = [
                 State
              || State <- States0,
-                batch_state_needs_forward(State, EOS, StopOnEos)
+                batch_state_needs_forward(State, EosIds, StopOnEos)
             ],
             NextByIdx =
                 case Active of
@@ -441,7 +441,7 @@ batch_decode_loop(BlockState, Handle, Opts, States0) ->
                         end
                 end,
             States = [
-                advance_batch_state(State, NextByIdx, EOS, StopOnEos)
+                advance_batch_state(State, NextByIdx, EosIds, StopOnEos)
              || State <- States0
             ],
             batch_decode_loop(BlockState, Handle, Opts, States)
@@ -451,19 +451,19 @@ batch_state_needs_forward(
     #{
         done := false, remaining := Remaining, next := Next
     },
-    EOS,
+    EosIds,
     StopOnEos
 ) ->
-    Remaining > 1 andalso not (StopOnEos andalso Next =:= EOS);
-batch_state_needs_forward(_State, _EOS, _StopOnEos) ->
+    Remaining > 1 andalso not (StopOnEos andalso lists:member(Next, EosIds));
+batch_state_needs_forward(_State, _EosIds, _StopOnEos) ->
     false.
 
-advance_batch_state(State = #{done := true}, _NextByIdx, _EOS, _StopOnEos) ->
+advance_batch_state(State = #{done := true}, _NextByIdx, _EosIds, _StopOnEos) ->
     State;
 advance_batch_state(
     State = #{idx := Idx, next := Next, pos := Pos, remaining := Remaining, rev_tokens := Rev},
     NextByIdx,
-    EOS,
+    EosIds,
     StopOnEos
 ) ->
     case Remaining =< 0 of
@@ -471,7 +471,7 @@ advance_batch_state(
             State#{done => true};
         false ->
             Rev1 = [Next | Rev],
-            case Remaining =:= 1 orelse (StopOnEos andalso Next =:= EOS) of
+            case Remaining =:= 1 orelse (StopOnEos andalso lists:member(Next, EosIds)) of
                 true ->
                     State#{remaining => Remaining - 1, rev_tokens => Rev1, done => true};
                 false ->
@@ -518,7 +518,7 @@ generate_argmax_with_state(Handle, Prompt, Opts, BlockState) ->
     WeightFormat = maps:get(weight_format, Opts),
     Layers = enrich_layers_with_marlin(Layers0, Handle, WeightFormat),
     BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
-    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    EosIds = stop_token_ids(Handle, Tokenizer),
     PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
     MaxSeq = maps:get(max_seq, Config),
     case length(PromptTokens) + MaxNew >= MaxSeq of
@@ -538,7 +538,7 @@ generate_argmax_with_state(Handle, Prompt, Opts, BlockState) ->
                 StopOnEos,
                 WeightFormat,
                 PromptTokens,
-                EOS
+                EosIds
             )
     end.
 
@@ -555,7 +555,7 @@ generate_argmax_decode_with_state(
     StopOnEos,
     WeightFormat,
     PromptTokens,
-    EOS
+    EosIds
 ) ->
     Config = maps:get(config, Handle),
     Caches = new_kv_caches(Config),
@@ -590,7 +590,7 @@ generate_argmax_decode_with_state(
         RopeFreqs,
         length(PromptTokens),
         MaxNew,
-        EOS,
+        EosIds,
         StopOnEos,
         WeightFormat,
         []
@@ -621,7 +621,7 @@ decode_loop_decode_fused(
     _R,
     _P,
     0,
-    _EOS,
+    _EosIds,
     _StopOnEos,
     _WeightFormat,
     Acc
@@ -638,12 +638,12 @@ decode_loop_decode_fused(
     RopeFreqs,
     Pos,
     Remaining,
-    EOS,
+    EosIds,
     StopOnEos,
     WeightFormat,
     Acc
 ) ->
-    case StopOnEos andalso NextTok =:= EOS of
+    case StopOnEos andalso lists:member(NextTok, EosIds) of
         true ->
             lists:reverse([NextTok | Acc]);
         false ->
@@ -670,7 +670,7 @@ decode_loop_decode_fused(
                 RopeFreqs,
                 Pos + 1,
                 Remaining - 1,
-                EOS,
+                EosIds,
                 StopOnEos,
                 WeightFormat,
                 [NextTok | Acc]
@@ -695,7 +695,7 @@ generate_sampling_with_state(Handle, Prompt, Opts, BlockState) ->
     MaxNew = maps:get(max_new_tokens, Opts),
     StopOnEos = maps:get(stop_on_eos, Opts),
     BOS = viva_tensor_tokenizer_ffi:bos_id(Tokenizer),
-    EOS = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    EosIds = stop_token_ids(Handle, Tokenizer),
     PromptTokens = [BOS | viva_tensor_tokenizer_ffi:encode(Tokenizer, Prompt)],
     MaxSeq = maps:get(max_seq, Config),
     case length(PromptTokens) + MaxNew >= MaxSeq of
@@ -728,7 +728,7 @@ generate_sampling_with_state(Handle, Prompt, Opts, BlockState) ->
                 RopeFreqs,
                 length(PromptTokens),
                 MaxNew,
-                EOS,
+                EosIds,
                 StopOnEos,
                 TopK,
                 Opts,
@@ -813,7 +813,7 @@ decode_loop_decode_sampled(
     _R,
     _P,
     0,
-    _EOS,
+    _EosIds,
     _StopOnEos,
     _TopK,
     _Opts,
@@ -831,13 +831,13 @@ decode_loop_decode_sampled(
     RopeFreqs,
     Pos,
     Remaining,
-    EOS,
+    EosIds,
     StopOnEos,
     TopK,
     Opts,
     Acc
 ) ->
-    case StopOnEos andalso NextTok =:= EOS of
+    case StopOnEos andalso lists:member(NextTok, EosIds) of
         true ->
             lists:reverse([NextTok | Acc]);
         false ->
@@ -865,7 +865,7 @@ decode_loop_decode_sampled(
                 RopeFreqs,
                 Pos + 1,
                 Remaining - 1,
-                EOS,
+                EosIds,
                 StopOnEos,
                 TopK,
                 Opts,
@@ -1016,9 +1016,44 @@ model_config(Header, SafetensorsPath, Opts) ->
         eps => float_config(FileConfig, <<"rms_norm_eps">>, ?DEFAULT_EPS),
         rope_theta => float_config(FileConfig, <<"rope_theta">>, ?DEFAULT_ROPE_THETA),
         rope_scaling => rope_scaling_config(FileConfig),
+        eos_ids => resolve_eos_ids(FileConfig, SafetensorsPath),
         max_seq => opt(Opts, max_seq, ?DEFAULT_MAX_SEQ),
         tie_word_embeddings => Tied
     }.
+
+%% Stop-token ids. Llama-3 instruct lists several (<|end_of_text|>, <|eom_id|>,
+%% <|eot_id|>) in generation_config.json / config.json's eos_token_id, which may
+%% be a single int or a list. Returns a deduped list (possibly empty); the
+%% tokenizer's primary eos is added at generate time.
+resolve_eos_ids(FileConfig, SafetensorsPath) ->
+    GenConfig = read_generation_config(SafetensorsPath),
+    FromConfig = eos_to_list(maps:get(<<"eos_token_id">>, FileConfig, undefined)),
+    FromGen = eos_to_list(maps:get(<<"eos_token_id">>, GenConfig, undefined)),
+    lists:usort(FromConfig ++ FromGen).
+
+eos_to_list(I) when is_integer(I) -> [I];
+eos_to_list(L) when is_list(L) -> [X || X <- L, is_integer(X)];
+eos_to_list(_) -> [].
+
+read_generation_config(SafetensorsPath) ->
+    Path = filename:join(model_dir(SafetensorsPath), "generation_config.json"),
+    case file:read_file(Path) of
+        {ok, Bin} ->
+            try
+                json:decode(Bin)
+            catch
+                _:_ -> #{}
+            end;
+        _ ->
+            #{}
+    end.
+
+%% All token ids that stop generation: the tokenizer's primary eos plus any
+%% extra ids resolved from (generation_)config.json.
+stop_token_ids(Handle, Tokenizer) ->
+    Primary = viva_tensor_tokenizer_ffi:eos_id(Tokenizer),
+    Extra = maps:get(eos_ids, maps:get(config, Handle, #{}), []),
+    lists:usort([Primary | Extra]).
 
 read_hf_config(SafetensorsPath) ->
     ConfigPath = filename:join(model_dir(SafetensorsPath), "config.json"),

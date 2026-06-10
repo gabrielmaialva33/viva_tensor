@@ -36,6 +36,18 @@ All notable changes to this project will be documented in this file.
   was `a`). Every FP8 path is more accurate; the bug previously degraded
   all models but only flipped argmax on the more sensitive ones.
 
+### Fixed — multi-token stop (Llama-3 instruct)
+
+- **Generation now stops on any of the model's EOS tokens.** The decode
+  loops compared the next token against a single eos id (the tokenizer's
+  primary), but Llama-3 instruct lists several in `generation_config.json`
+  (`eos_token_id: [128001, 128008, 128009]` = end_of_text / eom_id /
+  eot_id). The loader now reads `eos_token_id` from config.json and
+  generation_config.json (int or list) into `eos_ids`, and the stop check
+  is `lists:member/2` over the tokenizer's primary eos plus those. Verified:
+  a chat turn emitting `<|eot_id|>` stops immediately ("Say hi." -> "Hi!",
+  3 tokens). No behaviour change for single-eos models (TinyLlama).
+
 ### Fixed — Llama-3 / Llama-3.x inference
 
 - **`rope_scaling: "llama3"` is now applied.** The loader only read
