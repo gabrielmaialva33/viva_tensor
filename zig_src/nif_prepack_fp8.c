@@ -338,32 +338,30 @@ ERL_NIF_TERM nt_prepack_fp8_blocked(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (!h_scales)
         return make_error(env, "out_of_memory");
 
-    for (int n = 0; n < out_features; ++n) {
-        for (int b = 0; b < num_blocks; ++b) {
-            float absmax = 0.0f;
-            for (int j = 0; j < block_size; ++j) {
-                int k = b * block_size + j;
-                float a = fabsf(src[(size_t)k * out_features + n]);
-                if (a > absmax)
-                    absmax = a;
-            }
-            h_scales[(size_t)n * num_blocks + b] = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
-        }
-    }
-
-    /* Pass 2: quantize + transpose. Each (k, n) uses its own block scale. */
     uint8_t *h_packed = (uint8_t *)malloc(n_elems);
     if (!h_packed) {
         free(h_scales);
         return make_error(env, "out_of_memory");
     }
 
+    /* Single fused pass: per-(channel, block) absmax -> scale -> quantize.
+     * The src access src[k*out_features + n] is strided (cache-unfriendly);
+     * doing absmax and quantize over each 16-element block together reads it
+     * once instead of twice, roughly halving RAM traffic for the hot loop. */
     for (int n = 0; n < out_features; ++n) {
         for (int b = 0; b < num_blocks; ++b) {
-            float scale_nb = h_scales[(size_t)n * num_blocks + b];
-            float inv_scale = 1.0f / scale_nb;
+            int base = b * block_size;
+            float absmax = 0.0f;
             for (int j = 0; j < block_size; ++j) {
-                int k = b * block_size + j;
+                float a = fabsf(src[(size_t)(base + j) * out_features + n]);
+                if (a > absmax)
+                    absmax = a;
+            }
+            float scale_nb = (absmax > 0.0f) ? (absmax / FP8_E4M3_MAX) : 1.0f;
+            float inv_scale = 1.0f / scale_nb;
+            h_scales[(size_t)n * num_blocks + b] = scale_nb;
+            for (int j = 0; j < block_size; ++j) {
+                int k = base + j;
                 float v = src[(size_t)k * out_features + n] * inv_scale;
                 h_packed[(size_t)n * in_features + k] = float_to_fp8_e4m3(v);
             }
