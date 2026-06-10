@@ -113,7 +113,8 @@ static int run_scenario(const struct Scenario *scenario) {
 
     fill_inputs(scenario, w_fp16, s_fp16, w_count, s_count);
 
-    rc = viva_marlin_pack(w_fp16, s_fp16, scenario->K, scenario->N, scenario->groupsize, out_B,
+    rc = viva_marlin_pack(w_fp16, s_fp16, scenario->K, scenario->N, scenario->groupsize, 0, 0,
+                          out_B,
                           out_s);
     if (rc != 0) {
         fprintf(stderr, "%s: viva_marlin_pack failed: %d\n", scenario->name, rc);

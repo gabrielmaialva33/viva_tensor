@@ -85,6 +85,7 @@ generate(Handle, Prompt0, GenOpts0) when
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         Prompt = to_binary(Prompt0),
         GenOpts = generation_options(GenOpts0),
+        ok = ensure_generatable_weight_format(maps:get(weight_format, GenOpts)),
         case maps:get(temperature, GenOpts) of
             Temp when Temp =< 0.0 ->
                 generate_argmax(Handle, Prompt, GenOpts);
@@ -100,6 +101,7 @@ generate_batch(Handle, Prompts, GenOpts0) when is_list(Prompts) ->
     try
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         GenOpts = generation_options(GenOpts0),
+        ok = ensure_generatable_weight_format(maps:get(weight_format, GenOpts)),
         case maps:get(temperature, GenOpts) of
             Temp when Temp =< 0.0 ->
                 generate_batch_native(Handle, Prompts, GenOpts);
@@ -1330,137 +1332,151 @@ prepack_layer_linears_marlin(Header, LayerIdx, Config) ->
     Hidden = maps:get(hidden_size, Config),
     KvDim = maps:get(kv_dim, Config),
     Ffn = maps:get(ffn_size, Config),
-    with_raw_marlin_linear(Header, P("self_attn.q_proj.weight"), fun(Q) ->
-        with_raw_marlin_linear(Header, P("self_attn.k_proj.weight"), fun(K) ->
-            with_raw_marlin_linear(Header, P("self_attn.v_proj.weight"), fun(V) ->
-                QKVWeight = iolist_to_binary([Q, K, V]),
-                with_marlin_pack(
-                    QKVWeight,
-                    compute_marlin_scales(
-                        QKVWeight, Hidden + KvDim + KvDim, Hidden, ?MARLIN_GROUPSIZE
-                    ),
-                    Hidden + KvDim + KvDim,
-                    Hidden,
-                    fun(QKVHandle) ->
-                        with_raw_marlin_pack(
-                            Header, P("self_attn.o_proj.weight"), Hidden, Hidden, fun(OHandle) ->
-                                with_raw_marlin_pack(
-                                    Header, P("mlp.gate_proj.weight"), Ffn, Hidden, fun(GateHandle) ->
-                                        with_raw_marlin_pack(
-                                            Header, P("mlp.up_proj.weight"), Ffn, Hidden, fun(
-                                                UpHandle
-                                            ) ->
-                                                with_raw_marlin_pack(
-                                                    Header,
-                                                    P("mlp.down_proj.weight"),
-                                                    Hidden,
-                                                    Ffn,
-                                                    fun(DownHandle) ->
-                                                        {ok, #{
-                                                            qkv => QKVHandle,
-                                                            o => OHandle,
-                                                            gate => GateHandle,
-                                                            up => UpHandle,
-                                                            down => DownHandle
-                                                        }}
-                                                    end
-                                                )
-                                            end
-                                        )
-                                    end
-                                )
-                            end
-                        )
-                    end
-                )
+    QkvOut = Hidden + KvDim + KvDim,
+    %% HF stores linears as [out, in]; Marlin needs B = [in, out] (K = in,
+    %% N = out). Rather than transpose in Erlang (per-element, dominates load),
+    %% the packer transposes on read via weight_layout = 1. The raw HF bytes
+    %% (fp16 or bf16) are fed straight through; the fused QKV is the row-concat
+    %% of the three projections, i.e. [out_q + out_k + out_v, in] HF-native.
+    with_raw_marlin_dtype(Header, P("self_attn.q_proj.weight"), fun(Q, Dtype) ->
+        with_raw_marlin_dtype(Header, P("self_attn.k_proj.weight"), fun(K, _) ->
+            with_raw_marlin_dtype(Header, P("self_attn.v_proj.weight"), fun(V, _) ->
+                QkvHf = iolist_to_binary([Q, K, V]),
+                marlin_pack_hf(QkvHf, Hidden, QkvOut, Dtype, fun(QKVHandle) ->
+                    marlin_pack_hf_named(
+                        Header, P("self_attn.o_proj.weight"), Hidden, Hidden, fun(OHandle) ->
+                            marlin_pack_hf_named(
+                                Header, P("mlp.gate_proj.weight"), Hidden, Ffn, fun(GateHandle) ->
+                                    marlin_pack_hf_named(
+                                        Header, P("mlp.up_proj.weight"), Hidden, Ffn, fun(UpHandle) ->
+                                            marlin_pack_hf_named(
+                                                Header,
+                                                P("mlp.down_proj.weight"),
+                                                Ffn,
+                                                Hidden,
+                                                fun(DownHandle) ->
+                                                    {ok, #{
+                                                        qkv => QKVHandle,
+                                                        o => OHandle,
+                                                        gate => GateHandle,
+                                                        up => UpHandle,
+                                                        down => DownHandle
+                                                    }}
+                                                end
+                                            )
+                                        end
+                                    )
+                                end
+                            )
+                        end
+                    )
+                end)
             end)
         end)
     end).
 
-with_raw_marlin_pack(Header, Name, K, N, Fun) ->
-    with_raw_marlin_linear(Header, Name, fun(WeightFp16) ->
-        with_marlin_pack(
-            WeightFp16,
-            compute_marlin_scales(WeightFp16, K, N, ?MARLIN_GROUPSIZE),
-            K,
-            N,
-            Fun
-        )
-    end).
-
-with_raw_marlin_linear(Header, Name, Fun) ->
-    case load_raw_fp16_linear(Header, Name) of
-        {ok, WeightFp16} -> Fun(WeightFp16);
-        {error, _} = Error -> Error
-    end.
-
-load_raw_fp16_linear(Header, Name) ->
+%% Load a linear's raw HF bytes plus a Marlin dtype flag (0 = fp16, 1 = bf16).
+%% No transpose, no dtype conversion here: the packer handles both via flags.
+with_raw_marlin_dtype(Header, Name, Fun) ->
     case viva_tensor_safetensors_ffi:read_tensor_raw(Header, Name) of
-        {ok, <<"F16">>, Bin} -> {ok, Bin};
-        {ok, <<"BF16">>, Bin} -> {ok, Bin};
+        {ok, <<"F16">>, Bin} -> Fun(Bin, 0);
+        {ok, <<"BF16">>, Bin} -> Fun(Bin, 1);
         {ok, Dtype, _Bin} -> {error, {unsupported_dtype, Dtype}};
         Error -> Error
     end.
 
-bf16_binary_to_fp16_binary(Bin) ->
-    <<<<(fp16_encode(bf16_to_float(U))):16/unsigned-little>> || <<U:16/unsigned-little>> <= Bin>>.
-
-with_marlin_pack_from_safetensors(Header, Name, OutF, InF, Fun) ->
-    case load_marlin_linear(Header, Name, OutF, InF) of
-        {ok, Linear} ->
-            with_marlin_pack(
-                maps:get(weight, Linear),
-                maps:get(scales, Linear),
-                InF,
-                OutF,
-                Fun
-            );
-        {error, _} = Error ->
-            Error
-    end.
-
-with_marlin_linear(Header, Name, OutF, InF, Fun) ->
-    case load_marlin_linear(Header, Name, OutF, InF) of
-        {ok, Linear} -> Fun(Linear);
-        {error, _} = Error -> Error
-    end.
-
-load_marlin_linear(Header, Name, OutF, InF) ->
-    case load_linear_fp16_transposed(Header, Name, OutF, InF) of
-        {ok, WeightFp16} ->
-            {ok, #{
-                weight => WeightFp16,
-                scales => compute_marlin_scales(WeightFp16, InF, OutF, ?MARLIN_GROUPSIZE)
-            }};
-        {error, _} = Error ->
-            Error
-    end.
-
-with_marlin_pack(WeightFp16, ScalesFp16, K, N, Fun) ->
-    case quantize_and_pack(WeightFp16, ScalesFp16, K, N) of
+%% Pack one HF-native [out=OutF, in=InF] linear into a Marlin resource.
+marlin_pack_hf(WeightHf, InF, OutF, Dtype, Fun) ->
+    Scales = compute_marlin_scales_hf(WeightHf, InF, OutF, ?MARLIN_GROUPSIZE, Dtype),
+    case quantize_and_pack_hf(WeightHf, Scales, InF, OutF, Dtype) of
         {ok, Handle} -> Fun(Handle);
         {error, _} = Error -> Error
     end.
 
-quantize_and_pack(WeightFp16, ScalesFp16, K, N) ->
-    case K rem ?MARLIN_GROUPSIZE =:= 0 andalso N rem 256 =:= 0 of
+marlin_pack_hf_named(Header, Name, InF, OutF, Fun) ->
+    with_raw_marlin_dtype(Header, Name, fun(Bin, Dtype) ->
+        marlin_pack_hf(Bin, InF, OutF, Dtype, Fun)
+    end).
+
+quantize_and_pack_hf(WeightHf, Scales, InF, OutF, Dtype) ->
+    case InF rem ?MARLIN_GROUPSIZE =:= 0 andalso OutF rem 256 =:= 0 of
         true ->
             try
                 normalize_marlin_pack_result(
                     viva_tensor_zig:marlin_w4a16_prepack(
-                        WeightFp16,
-                        ScalesFp16,
-                        K,
-                        N,
-                        ?MARLIN_GROUPSIZE
+                        WeightHf, Scales, InF, OutF, ?MARLIN_GROUPSIZE, 1, Dtype
                     )
                 )
             catch
                 Class:Reason:Stack -> {error, {marlin_prepack_failed, Class, Reason, Stack}}
             end;
         false ->
-            {error, {invalid_marlin_shape, K, N, ?MARLIN_GROUPSIZE}}
+            {error, {invalid_marlin_shape, InF, OutF, ?MARLIN_GROUPSIZE}}
     end.
+
+%% Scales for a HF-native [out, in] weight viewed as Marlin B = [K = in, N = out],
+%% grouped along K (in). Dtype 0 = fp16, 1 = bf16.
+compute_marlin_scales_hf(WeightHf, K, N, Groupsize, Dtype) ->
+    case K * N =< ?MARLIN_EXACT_SCALE_MAX_ELEMS of
+        true -> compute_marlin_scales_hf_exact(WeightHf, K, N, Groupsize, Dtype);
+        false -> compute_marlin_scales_hf_sampled(WeightHf, K, N, Groupsize, Dtype)
+    end.
+
+compute_marlin_scales_hf_exact(WeightHf, K, N, Groupsize, Dtype) ->
+    Groups = K div Groupsize,
+    iolist_to_binary([
+        [
+            <<
+                (fp16_encode(
+                    marlin_scale_for_column_hf(WeightHf, G, Col, K, Groupsize, Dtype)
+                )):16/unsigned-little
+            >>
+         || Col <- lists:seq(0, N - 1)
+        ]
+     || G <- lists:seq(0, Groups - 1)
+    ]).
+
+marlin_scale_for_column_hf(WeightHf, Group, Col, K, Groupsize, Dtype) ->
+    MaxAbs = marlin_group_col_max_abs_hf(
+        WeightHf, Group * Groupsize, Groupsize, Col, K, Dtype, 0.0
+    ),
+    Scale0 = MaxAbs / 7.0,
+    case Scale0 < ?MARLIN_MIN_SCALE of
+        true -> ?MARLIN_MIN_SCALE;
+        false -> Scale0
+    end.
+
+%% HF-native element [out = Col, in = Row] lives at offset Col * K + Row.
+marlin_group_col_max_abs_hf(_WeightHf, _Row, 0, _Col, _K, _Dtype, Acc) ->
+    Acc;
+marlin_group_col_max_abs_hf(WeightHf, Row, Remaining, Col, K, Dtype, Acc) ->
+    <<U:16/unsigned-little>> = binary_part(WeightHf, (Col * K + Row) * 2, 2),
+    V = abs_float(marlin_decode_half(U, Dtype)),
+    marlin_group_col_max_abs_hf(WeightHf, Row + 1, Remaining - 1, Col, K, Dtype, max(Acc, V)).
+
+compute_marlin_scales_hf_sampled(WeightHf, K, N, Groupsize, Dtype) ->
+    Groups = K div Groupsize,
+    SampleElems = min(?MARLIN_SCALE_SAMPLE_ELEMS, K * N),
+    MaxAbs = sampled_half_max_abs(WeightHf, SampleElems, Dtype, 0.0),
+    Scale0 = MaxAbs / 7.0,
+    Scale =
+        case Scale0 < ?MARLIN_MIN_SCALE of
+            true -> ?MARLIN_MIN_SCALE;
+            false -> Scale0
+        end,
+    binary:copy(<<(fp16_encode(Scale)):16/unsigned-little>>, Groups * N).
+
+sampled_half_max_abs(_WeightHf, 0, _Dtype, Acc) ->
+    Acc;
+sampled_half_max_abs(WeightHf, Remaining, Dtype, Acc) ->
+    Offset = (?MARLIN_SCALE_SAMPLE_ELEMS - Remaining) * 2,
+    <<U:16/unsigned-little>> = binary_part(WeightHf, Offset, 2),
+    sampled_half_max_abs(
+        WeightHf, Remaining - 1, Dtype, max(Acc, abs_float(marlin_decode_half(U, Dtype)))
+    ).
+
+marlin_decode_half(U, 0) -> fp16_to_float(U);
+marlin_decode_half(U, 1) -> bf16_to_float(U).
 
 normalize_marlin_pack_result({ok, Resource}) when is_reference(Resource) ->
     {ok, Resource};
@@ -1472,102 +1488,6 @@ normalize_marlin_pack_result(Resource) when is_reference(Resource) ->
     {ok, Resource};
 normalize_marlin_pack_result(Other) ->
     {error, {unexpected_marlin_prepack_result, Other}}.
-
-load_linear_fp16_transposed(Header, Name, OutF, InF) ->
-    case viva_tensor_safetensors_ffi:read_tensor_raw(Header, Name) of
-        {ok, Dtype, Bin} ->
-            transpose_raw_to_fp16(Dtype, Bin, OutF, InF);
-        Error ->
-            Error
-    end.
-
-transpose_raw_to_fp16(Dtype, Bin, OutF, InF) when is_binary(Bin) ->
-    ExpectedBytes = OutF * InF * 2,
-    case byte_size(Bin) of
-        ExpectedBytes ->
-            {ok,
-                iolist_to_binary([
-                    transpose_fp16_row(Dtype, Bin, K, OutF, InF)
-                 || K <- lists:seq(0, InF - 1)
-                ])};
-        _ ->
-            {error, {size_mismatch, Dtype, byte_size(Bin), ExpectedBytes}}
-    end.
-
-transpose_fp16_row(<<"F16">>, Bin, K, OutF, InF) ->
-    [binary_part(Bin, (N * InF + K) * 2, 2) || N <- lists:seq(0, OutF - 1)];
-transpose_fp16_row(<<"BF16">>, Bin, K, OutF, InF) ->
-    [
-        begin
-            <<U:16/unsigned-little>> = binary_part(Bin, (N * InF + K) * 2, 2),
-            <<(fp16_encode(bf16_to_float(U))):16/unsigned-little>>
-        end
-     || N <- lists:seq(0, OutF - 1)
-    ];
-transpose_fp16_row(Dtype, _Bin, _K, _OutF, _InF) ->
-    error({unsupported_dtype, Dtype}).
-
-concat_fp16_columns(Parts, Rows) ->
-    BytesPerHalf = 2,
-    iolist_to_binary([
-        [
-            binary_part(Bin, Row * Cols * BytesPerHalf, Cols * BytesPerHalf)
-         || {Bin, Cols} <- Parts
-        ]
-     || Row <- lists:seq(0, Rows - 1)
-    ]).
-
-compute_marlin_scales(WeightFp16, K, N, Groupsize) ->
-    case K * N =< ?MARLIN_EXACT_SCALE_MAX_ELEMS of
-        true -> compute_marlin_scales_exact(WeightFp16, K, N, Groupsize);
-        false -> compute_marlin_scales_sampled(WeightFp16, K, N, Groupsize)
-    end.
-
-compute_marlin_scales_exact(WeightFp16, K, N, Groupsize) ->
-    Groups = K div Groupsize,
-    iolist_to_binary([
-        [
-            <<
-                (fp16_encode(marlin_scale_for_column(WeightFp16, G, Col, N, Groupsize))):16/unsigned-little
-            >>
-         || Col <- lists:seq(0, N - 1)
-        ]
-     || G <- lists:seq(0, Groups - 1)
-    ]).
-
-compute_marlin_scales_sampled(WeightFp16, K, N, Groupsize) ->
-    Groups = K div Groupsize,
-    SampleElems = min(?MARLIN_SCALE_SAMPLE_ELEMS, K * N),
-    MaxAbs = sampled_fp16_max_abs(WeightFp16, SampleElems, 0.0),
-    Scale0 = MaxAbs / 7.0,
-    Scale =
-        case Scale0 < ?MARLIN_MIN_SCALE of
-            true -> ?MARLIN_MIN_SCALE;
-            false -> Scale0
-        end,
-    binary:copy(<<(fp16_encode(Scale)):16/unsigned-little>>, Groups * N).
-
-sampled_fp16_max_abs(_WeightFp16, 0, Acc) ->
-    Acc;
-sampled_fp16_max_abs(WeightFp16, Remaining, Acc) ->
-    Offset = (?MARLIN_SCALE_SAMPLE_ELEMS - Remaining) * 2,
-    <<H:16/unsigned-little>> = binary_part(WeightFp16, Offset, 2),
-    sampled_fp16_max_abs(WeightFp16, Remaining - 1, max(Acc, abs_float(fp16_to_float(H)))).
-
-marlin_scale_for_column(WeightFp16, Group, Col, N, Groupsize) ->
-    MaxAbs = marlin_group_col_max_abs(WeightFp16, Group * Groupsize, Groupsize, Col, N, 0.0),
-    Scale0 = MaxAbs / 7.0,
-    case Scale0 < ?MARLIN_MIN_SCALE of
-        true -> ?MARLIN_MIN_SCALE;
-        false -> Scale0
-    end.
-
-marlin_group_col_max_abs(_WeightFp16, _Row, 0, _Col, _N, Acc) ->
-    Acc;
-marlin_group_col_max_abs(WeightFp16, Row, Remaining, Col, N, Acc) ->
-    <<H:16/unsigned-little>> = binary_part(WeightFp16, (Row * N + Col) * 2, 2),
-    V = abs_float(fp16_to_float(H)),
-    marlin_group_col_max_abs(WeightFp16, Row + 1, Remaining - 1, Col, N, max(Acc, V)).
 
 bf16_to_float(U) ->
     <<F:32/float-little>> = <<0:16/unsigned-little, U:16/unsigned-little>>,
@@ -1847,6 +1767,20 @@ weight_format_atom(<<"marlin_w4a16">>) -> marlin_w4a16;
 weight_format_atom("fp8_w8a16") -> fp8_w8a16;
 weight_format_atom("marlin_w4a16") -> marlin_w4a16;
 weight_format_atom(_) -> invalid_weight_format.
+
+%% Marlin W4A16 decode is experimental: the loader layout is correct, but the
+%% marlin_cuda kernel numerics do not yet match the packer, so generation
+%% produces incorrect tokens. Reject it with a clear error instead of emitting
+%% garbage. FP8 W8A16 is the supported (and faster, for single-user) path.
+ensure_generatable_weight_format(marlin_w4a16) ->
+    error(
+        {unsupported_weight_format, <<
+            "marlin_w4a16 generation is experimental and currently produces "
+            "incorrect output (kernel numerics); use fp8_w8a16"
+        >>}
+    );
+ensure_generatable_weight_format(_) ->
+    ok.
 
 generate_batch_timeout(Opts) when is_map(Opts) ->
     opt(Opts, timeout, 60000);

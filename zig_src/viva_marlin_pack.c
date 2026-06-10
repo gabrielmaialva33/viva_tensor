@@ -163,6 +163,24 @@ static uint16_t viva_fp32_to_fp16(float x) {
     return (uint16_t)(sign | ((uint32_t)exp << 10) | half_mant);
 }
 
+static float viva_bf16_to_fp32(uint16_t b) {
+    uint32_t bits = (uint32_t)b << 16;
+    float f;
+    memcpy(&f, &bits, sizeof(f));
+    return f;
+}
+
+/* Read one weight element honoring layout + dtype, return fp16 bits. */
+static uint16_t viva_pack_weight_at(const uint16_t *w, int k, int n, int K, int N,
+                                    int weight_layout, int weight_dtype) {
+    uint16_t raw = (weight_layout == 1) ? w[(size_t)n * (size_t)K + (size_t)k]
+                                        : w[(size_t)k * (size_t)N + (size_t)n];
+    if (weight_dtype == 1) {
+        return viva_fp32_to_fp16(viva_bf16_to_fp32(raw));
+    }
+    return raw;
+}
+
 static int viva_round_nearest_even(float x) {
     float base = floorf(x);
     float frac = x - base;
@@ -206,7 +224,7 @@ static uint16_t viva_scale_at_flat(const uint16_t *s_fp16, int groups, int N, in
 }
 
 int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int N, int groupsize,
-                     uint32_t *out_B, uint16_t *out_s) {
+                     int weight_layout, int weight_dtype, uint32_t *out_B, uint16_t *out_s) {
     int effective_groupsize;
     int groups;
     uint8_t *w_q;
@@ -234,6 +252,29 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
         return viva_marlin_pack_error(VIVA_MARLIN_PACK_ERR_ALLOC);
     }
 
+    /* layout==1 (HF-native) feeds the packer raw, un-tuned scales (the Erlang
+     * side only samples a prefix). Recompute a single true global symmetric
+     * scale here from every element so large channels are not clipped. Uniform
+     * scales also sidestep the grouped-scale permutation entirely. */
+    uint16_t uniform_scale_h = 0;
+    if (weight_layout == 1) {
+        float maxabs = 0.0f;
+        size_t total = (size_t)K * (size_t)N;
+        for (size_t i = 0; i < total; i++) {
+            uint16_t raw = w_fp16[i];
+            float v = (weight_dtype == 1) ? viva_bf16_to_fp32(raw) : viva_fp16_to_fp32(raw);
+            float a = v < 0.0f ? -v : v;
+            if (a > maxabs) {
+                maxabs = a;
+            }
+        }
+        float scale = maxabs / 7.0f;
+        if (!(scale > 1.0e-4f)) {
+            scale = 1.0e-4f;
+        }
+        uniform_scale_h = viva_fp32_to_fp16(scale);
+    }
+
     for (k = 0; k < K; k++) {
         int group = k / effective_groupsize;
         int k_in_group = k - group * effective_groupsize;
@@ -241,7 +282,10 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
             uint16_t scale_h;
             int rc;
 
-            if (effective_groupsize != K) {
+            if (weight_layout == 1) {
+                scale_h = uniform_scale_h;
+                (void)k_in_group;
+            } else if (effective_groupsize != K) {
                 int col = group * N + n;
                 scale_h = viva_scale_at_flat(s_fp16, groups, N, col);
                 (void)k_in_group;
@@ -249,7 +293,9 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
                 scale_h = s_fp16[n];
             }
 
-            rc = viva_quantize_w4(w_fp16[k * N + n], scale_h, &w_q[k * N + n]);
+            rc = viva_quantize_w4(
+                viva_pack_weight_at(w_fp16, k, n, K, N, weight_layout, weight_dtype), scale_h,
+                &w_q[k * N + n]);
             if (rc != 0) {
                 free(w_q);
                 return rc;
@@ -257,7 +303,13 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
         }
     }
 
-    if (effective_groupsize != K) {
+    if (weight_layout == 1) {
+        int total = groups * N;
+        int i;
+        for (i = 0; i < total; i++) {
+            out_s[i] = uniform_scale_h;
+        }
+    } else if (effective_groupsize != K) {
         int total = groups * N;
         int i;
         for (i = 0; i < total; i++) {

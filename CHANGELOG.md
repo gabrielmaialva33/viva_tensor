@@ -4,6 +4,25 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed — Marlin W4A16 weight layout (partial; generation still gated)
+
+- **Root-caused the `marlin_w4a16` all-zeros output to a loader layout bug.**
+  Marlin computes `C[M,out] = A[M,in] · B[in,out]`, so the packer needs the
+  weight transposed to `[in, out]` with `K = in, N = out`. The loader fed the
+  raw HF `[out, in]` weight with `K`/`N` swapped, so the QKV output width was
+  `in` instead of `out` and every projection collapsed to zeros.
+- `viva_marlin_pack` gained `weight_layout` (transpose-on-read for HF-native
+  `[out, in]`) and `weight_dtype` (fp16/bf16) flags, plus a true global
+  symmetric scale, so the prepack no longer pays a per-element Erlang transpose
+  and bf16 models convert in C. New `marlin_w4a16_prepack/7` NIF; arity 5 kept.
+- **Generation with `marlin_w4a16` is now gated behind a clear error.** With the
+  layout fixed the GEMM produces real values but still-incorrect tokens — the
+  remaining gap is `marlin_cuda` kernel numerics not matching the (byte-exact)
+  packer. Until that is resolved, `generate` with `marlin_w4a16` returns
+  *"experimental and currently produces incorrect output (kernel numerics); use
+  fp8_w8a16"* instead of emitting garbage. FP8 W8A16 stays the supported path
+  (and is faster for single-user decode).
+
 ### Added — reject unsupported architectures up front
 
 - **LayerNorm-based decoders (Phi, GPT-2, Falcon, StableLM, …) now fail to

@@ -288,6 +288,7 @@
     %% Marlin W4A16 GEMM bench (M,N,K,Groupsize,Iters)
     marlin_w4a16_bench/5,
     marlin_w4a16_prepack/5,
+    marlin_w4a16_prepack/7,
     marlin_w4a16_get_b_bytes/1,
     marlin_w4a16_normalize_prepack_result/1
 ]).
@@ -938,6 +939,8 @@ cusparselt_fp16_sparse_bench(_M, _N, _K, _Iters) -> erlang:nif_error(nif_not_loa
 cutlass_int4_sparse_bench(_M, _N, _K, _Iters, _Config, _SplitK) -> erlang:nif_error(nif_not_loaded).
 marlin_w4a16_bench(_M, _N, _K, _Groupsize, _Iters) -> erlang:nif_error(nif_not_loaded).
 marlin_w4a16_prepack(_W, _S, _K, _N, _Group) -> erlang:nif_error(nif_not_loaded).
+marlin_w4a16_prepack(_W, _S, _K, _N, _Group, _Layout, _Dtype) ->
+    erlang:nif_error(nif_not_loaded).
 marlin_w4a16_get_b_bytes(_Resource) -> erlang:nif_error(nif_not_loaded).
 
 marlin_w4a16_normalize_prepack_result({error, Reason, Code}) when is_integer(Code) ->

@@ -221,12 +221,13 @@ extern "C" ERL_NIF_TERM viva_marlin_w4a16_bench_nif(ErlNifEnv *env, int argc,
 
 extern "C" ERL_NIF_TERM viva_marlin_w4a16_prepack_nif(ErlNifEnv *env, int argc,
                                                       const ERL_NIF_TERM argv[]) {
-    if (argc != 5)
+    if (argc != 5 && argc != 7)
         return marlin_error_code(env, "bad_arity", -1);
 
     ErlNifBinary w_bin;
     ErlNifBinary s_bin;
     int K = 0, N = 0, groupsize = 0;
+    int weight_layout = 0, weight_dtype = 0;
     if (!enif_inspect_binary(env, argv[0], &w_bin))
         return marlin_error_code(env, "invalid_weight_binary", -2);
     if (!enif_inspect_binary(env, argv[1], &s_bin))
@@ -234,6 +235,14 @@ extern "C" ERL_NIF_TERM viva_marlin_w4a16_prepack_nif(ErlNifEnv *env, int argc,
     if (!enif_get_int(env, argv[2], &K) || !enif_get_int(env, argv[3], &N) ||
         !enif_get_int(env, argv[4], &groupsize))
         return marlin_error_code(env, "invalid_dimensions", -4);
+    if (argc == 7) {
+        if (!enif_get_int(env, argv[5], &weight_layout) ||
+            !enif_get_int(env, argv[6], &weight_dtype))
+            return marlin_error_code(env, "invalid_layout", -11);
+        if ((weight_layout != 0 && weight_layout != 1) ||
+            (weight_dtype != 0 && weight_dtype != 1))
+            return marlin_error_code(env, "invalid_layout", -12);
+    }
     if (K <= 0 || N <= 0)
         return marlin_error_code(env, "invalid_dimensions", -5);
     if (groupsize != -1 && (groupsize <= 0 || K % groupsize != 0))
@@ -261,7 +270,7 @@ extern "C" ERL_NIF_TERM viva_marlin_w4a16_prepack_nif(ErlNifEnv *env, int argc,
     }
 
     int pack_rc = viva_marlin_pack((const uint16_t *)w_bin.data, (const uint16_t *)s_bin.data, K, N,
-                                   groupsize, out_B, out_s);
+                                   groupsize, weight_layout, weight_dtype, out_B, out_s);
     if (pack_rc != 0) {
         free(out_B);
         free(out_s);
