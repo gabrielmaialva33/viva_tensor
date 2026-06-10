@@ -15,6 +15,18 @@ All notable changes to this project will be documented in this file.
   (the 7B was effectively un-loadable interactively before). The remaining
   ceiling is the ~7.5× scaling of the quantize/transpose kernels themselves.
 
+### Fixed — memory-aware load concurrency (unblocks 7B)
+
+- **Layer-build concurrency is now capped by available memory, not just core
+  count.** Each concurrent layer holds its seven linear weights in FP32 until
+  concat+prepack, so peak host scratch is ~`Limit * per-layer-fp32-bytes`. At
+  full scheduler concurrency a 7B (~0.8 GB/layer) needed ~26 GB of scratch and
+  thrashed/OOM'd — Llama-2-7B was un-loadable. The limit is now
+  `min(schedulers, num_layers, 40%-of-MemAvailable / per-layer-bytes)`.
+- **Result:** Llama-2-7B loads in ~64s (was >280s / hung) and generates
+  correctly ("The capital of France is" → "Paris. It is located in the
+  northern central part..."). The 1B is unaffected (limit still 16, ~7.8s).
+
 ### Fixed — FP8 E4M3 encode saturation (numerical correctness)
 
 - **The FP8 E4M3 encoder saturated the entire top binade `[256, 448)` to

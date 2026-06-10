@@ -1108,13 +1108,48 @@ shape2(Header, Name) ->
     {ok, #{shape := [A, B]}} = viva_tensor_safetensors_ffi:tensor_info(Header, Name),
     {A, B}.
 
+%% Concurrency for the parallel layer build, capped by BOTH the dirty-CPU
+%% scheduler count AND available memory. Each concurrent layer holds its seven
+%% linear weights in FP32 simultaneously (until concat+prepack frees them), so
+%% peak host scratch is roughly Limit * per-layer-fp32-bytes. At full scheduler
+%% concurrency a 7B (hidden 4096, ffn 11008 -> ~0.8 GB/layer) would need ~26 GB
+%% of scratch and thrash/OOM; a 1B (~0.24 GB/layer) is unaffected.
+load_concurrency_limit(Config, NumLayers) ->
+    Schedulers = erlang:system_info(dirty_cpu_schedulers),
+    PerLayer = layer_fp32_scratch_bytes(Config),
+    Budget = trunc(available_mem_bytes() * 0.40),
+    ByMem = max(1, Budget div max(1, PerLayer)),
+    max(1, min(NumLayers, min(Schedulers, ByMem))).
+
+%% Peak FP32 host scratch for one layer: q,o (H*H) + k,v (H*Kv) + gate,up
+%% (H*Ffn) + down (Ffn*H), 4 bytes each, plus the same again for the bf16->fp32
+%% staging buffer that briefly coexists.
+layer_fp32_scratch_bytes(Config) ->
+    H = maps:get(hidden_size, Config),
+    Kv = maps:get(kv_dim, Config),
+    Ffn = maps:get(ffn_size, Config),
+    Elems = 2 * H * H + 2 * H * Kv + 3 * H * Ffn,
+    Elems * 4 * 2.
+
+%% MemAvailable from /proc/meminfo (Linux); 8 GB fallback elsewhere.
+available_mem_bytes() ->
+    case file:read_file("/proc/meminfo") of
+        {ok, Bin} ->
+            case re:run(Bin, "MemAvailable:\\s+([0-9]+) kB", [{capture, [1], list}]) of
+                {match, [Kb]} -> list_to_integer(Kb) * 1024;
+                _ -> 8 * 1024 * 1024 * 1024
+            end;
+        _ ->
+            8 * 1024 * 1024 * 1024
+    end.
+
 %% Build transformer layers concurrently. The per-tensor bf16->fp32 +
 %% transpose + FP8 quantize is CPU-bound and dominates load time; running
 %% layers across dirty CPU schedulers cuts wall time roughly by the core
 %% count. Concurrency is capped at the dirty-CPU scheduler count so peak host
 %% scratch (the FP32 staging buffers) stays bounded for large models.
 parallel_build_layers(Header, Config, NumLayers) ->
-    Limit = max(1, min(NumLayers, erlang:system_info(dirty_cpu_schedulers))),
+    Limit = load_concurrency_limit(Config, NumLayers),
     Indices = lists:seq(0, NumLayers - 1),
     lists:append([
         pmap_ordered(fun(I) -> build_layer_blocked(Header, I, Config) end, Chunk)
