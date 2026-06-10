@@ -69,7 +69,7 @@ static inline uint8_t swiglu_float_to_fp8_e4m3(float val) {
     int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
     uint32_t f32_mant = bits & 0x7FFFFF;
 
-    if (f32_exp >= 8)
+    if (f32_exp >= 9) /* >=512 overflows; [256,448) is representable */
         return (uint8_t)((sign << 7) | 0x7E);
     if (f32_exp < -9)
         return (uint8_t)(sign << 7);
@@ -88,7 +88,7 @@ static inline uint8_t swiglu_float_to_fp8_e4m3(float val) {
                 e_exp += 1;
             }
         }
-        if (e_exp >= 15)
+        if (e_exp > 15 || (e_exp == 15 && e_mant >= 7))
             return (uint8_t)((sign << 7) | 0x7E);
     } else {
         int32_t shift = -6 - f32_exp;

@@ -77,8 +77,10 @@ static inline uint8_t float_to_fp8_e4m3(float val) {
     int32_t f32_exp = (int32_t)((bits >> 23) & 0xFF) - 127;
     uint32_t f32_mant = bits & 0x7FFFFF;
 
-    /* Saturate ±inf and very large values. */
-    if (f32_exp >= 8) {
+    /* Saturate values above the E4M3 finite range. Max finite is 448 =
+       1.75*2^8, so the [256,448) binade (f32_exp == 8) is representable and
+       must NOT be saturated here; only f32_exp >= 9 (>= 512) overflows. */
+    if (f32_exp >= 9) {
         return (uint8_t)((sign << 7) | 0x7E); /* ±448, the max finite. */
     }
     /* Flush subnormals + values that would underflow E4M3. */
@@ -103,8 +105,9 @@ static inline uint8_t float_to_fp8_e4m3(float val) {
                 e4m3_exp += 1;
             }
         }
-        if (e4m3_exp >= 15) {
-            /* Overflow after rounding -> saturate. */
+        /* stored exp 15 is valid for mantissa 0..6 (256..448); only mant 7
+           (the NaN slot) or a carry past exp 15 overflows. */
+        if (e4m3_exp > 15 || (e4m3_exp == 15 && e4m3_mant >= 7)) {
             return (uint8_t)((sign << 7) | 0x7E);
         }
     } else {

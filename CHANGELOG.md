@@ -4,6 +4,22 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed — FP8 E4M3 encode saturation (numerical correctness)
+
+- **The FP8 E4M3 encoder saturated the entire top binade `[256, 448)` to
+  448.** The check `if (f32_exp >= 8) return ±448` (and the matching
+  `e_exp >= 15` guard) treated any value with unbiased exponent 8 as
+  overflow, but E4M3's max finite is `448 = 1.75·2^8`, so `[256, 448)` is
+  representable (stored exp 15, mantissa 0..6). Large quantized weights
+  were rounded up to 448, giving ~25% error on affected GEMV outputs.
+- Fixed in all three encoders (`nif_prepack_fp8.c`, `nif_linear_fp8.c`,
+  `nif_linear_swiglu_fp8.cu`): saturate only at `f32_exp >= 9` (≥512) or a
+  post-rounding carry past the NaN slot.
+- **Impact:** the W8A16 forward now matches the HuggingFace `transformers`
+  fp32 argmax on Llama-3.2-1B (`"The capital of France is"` → `Paris`,
+  was `a`). Every FP8 path is more accurate; the bug previously degraded
+  all models but only flipped argmax on the more sensitive ones.
+
 ### Fixed — Llama-3 / Llama-3.x inference
 
 - **`rope_scaling: "llama3"` is now applied.** The loader only read
