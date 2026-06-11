@@ -1385,7 +1385,11 @@ with_raw_marlin_dtype(Header, Name, Fun) ->
 
 %% Pack one HF-native [out=OutF, in=InF] linear into a Marlin resource.
 marlin_pack_hf(WeightHf, InF, OutF, Dtype, Fun) ->
-    Scales = compute_marlin_scales_hf(WeightHf, InF, OutF, ?MARLIN_GROUPSIZE, Dtype),
+    %% The C packer computes proper per-group symmetric scales internally for
+    %% weight_layout=1; the NIF only size-checks this buffer, so a correctly
+    %% sized zero placeholder is all that is needed here.
+    Groups = InF div ?MARLIN_GROUPSIZE,
+    Scales = binary:copy(<<0, 0>>, Groups * OutF),
     case quantize_and_pack_hf(WeightHf, Scales, InF, OutF, Dtype) of
         {ok, Handle} -> Fun(Handle);
         {error, _} = Error -> Error
@@ -1412,70 +1416,6 @@ quantize_and_pack_hf(WeightHf, Scales, InF, OutF, Dtype) ->
             {error, {invalid_marlin_shape, InF, OutF, ?MARLIN_GROUPSIZE}}
     end.
 
-%% Scales for a HF-native [out, in] weight viewed as Marlin B = [K = in, N = out],
-%% grouped along K (in). Dtype 0 = fp16, 1 = bf16.
-compute_marlin_scales_hf(WeightHf, K, N, Groupsize, Dtype) ->
-    case K * N =< ?MARLIN_EXACT_SCALE_MAX_ELEMS of
-        true -> compute_marlin_scales_hf_exact(WeightHf, K, N, Groupsize, Dtype);
-        false -> compute_marlin_scales_hf_sampled(WeightHf, K, N, Groupsize, Dtype)
-    end.
-
-compute_marlin_scales_hf_exact(WeightHf, K, N, Groupsize, Dtype) ->
-    Groups = K div Groupsize,
-    iolist_to_binary([
-        [
-            <<
-                (fp16_encode(
-                    marlin_scale_for_column_hf(WeightHf, G, Col, K, Groupsize, Dtype)
-                )):16/unsigned-little
-            >>
-         || Col <- lists:seq(0, N - 1)
-        ]
-     || G <- lists:seq(0, Groups - 1)
-    ]).
-
-marlin_scale_for_column_hf(WeightHf, Group, Col, K, Groupsize, Dtype) ->
-    MaxAbs = marlin_group_col_max_abs_hf(
-        WeightHf, Group * Groupsize, Groupsize, Col, K, Dtype, 0.0
-    ),
-    Scale0 = MaxAbs / 7.0,
-    case Scale0 < ?MARLIN_MIN_SCALE of
-        true -> ?MARLIN_MIN_SCALE;
-        false -> Scale0
-    end.
-
-%% HF-native element [out = Col, in = Row] lives at offset Col * K + Row.
-marlin_group_col_max_abs_hf(_WeightHf, _Row, 0, _Col, _K, _Dtype, Acc) ->
-    Acc;
-marlin_group_col_max_abs_hf(WeightHf, Row, Remaining, Col, K, Dtype, Acc) ->
-    <<U:16/unsigned-little>> = binary_part(WeightHf, (Col * K + Row) * 2, 2),
-    V = abs_float(marlin_decode_half(U, Dtype)),
-    marlin_group_col_max_abs_hf(WeightHf, Row + 1, Remaining - 1, Col, K, Dtype, max(Acc, V)).
-
-compute_marlin_scales_hf_sampled(WeightHf, K, N, Groupsize, Dtype) ->
-    Groups = K div Groupsize,
-    SampleElems = min(?MARLIN_SCALE_SAMPLE_ELEMS, K * N),
-    MaxAbs = sampled_half_max_abs(WeightHf, SampleElems, Dtype, 0.0),
-    Scale0 = MaxAbs / 7.0,
-    Scale =
-        case Scale0 < ?MARLIN_MIN_SCALE of
-            true -> ?MARLIN_MIN_SCALE;
-            false -> Scale0
-        end,
-    binary:copy(<<(fp16_encode(Scale)):16/unsigned-little>>, Groups * N).
-
-sampled_half_max_abs(_WeightHf, 0, _Dtype, Acc) ->
-    Acc;
-sampled_half_max_abs(WeightHf, Remaining, Dtype, Acc) ->
-    Offset = (?MARLIN_SCALE_SAMPLE_ELEMS - Remaining) * 2,
-    <<U:16/unsigned-little>> = binary_part(WeightHf, Offset, 2),
-    sampled_half_max_abs(
-        WeightHf, Remaining - 1, Dtype, max(Acc, abs_float(marlin_decode_half(U, Dtype)))
-    ).
-
-marlin_decode_half(U, 0) -> fp16_to_float(U);
-marlin_decode_half(U, 1) -> bf16_to_float(U).
-
 normalize_marlin_pack_result({ok, Resource}) when is_reference(Resource) ->
     {ok, Resource};
 normalize_marlin_pack_result({error, Reason, Code}) when is_integer(Code) ->
@@ -1486,84 +1426,6 @@ normalize_marlin_pack_result(Resource) when is_reference(Resource) ->
     {ok, Resource};
 normalize_marlin_pack_result(Other) ->
     {error, {unexpected_marlin_prepack_result, Other}}.
-
-bf16_to_float(U) ->
-    <<F:32/float-little>> = <<0:16/unsigned-little, U:16/unsigned-little>>,
-    F.
-
-fp16_to_float(H) ->
-    Sign = (H bsr 15) band 1,
-    Exp = (H bsr 10) band 16#1F,
-    Frac = H band 16#3FF,
-    V =
-        case Exp of
-            0 when Frac =:= 0 -> 0.0;
-            0 -> (Frac / 1024.0) * math:pow(2.0, -14.0);
-            16#1F when Frac =:= 0 -> 1.7976931348623157e308;
-            16#1F -> 0.0;
-            _ -> (1.0 + Frac / 1024.0) * math:pow(2.0, float(Exp - 15))
-        end,
-    case Sign of
-        0 -> V;
-        1 -> -V
-    end.
-
-fp16_encode(F) when is_float(F) ->
-    <<S:1, E:8, M:23>> = <<F:32/float-big>>,
-    case E of
-        0 ->
-            S bsl 15;
-        255 ->
-            (S bsl 15) bor (16#1F bsl 10) bor
-                (case M of
-                    0 -> 0;
-                    _ -> 1
-                end);
-        _ ->
-            UnbiasedE = E - 127,
-            case UnbiasedE of
-                X when X < -24 ->
-                    S bsl 15;
-                X when X < -14 ->
-                    MantFull = M bor 16#800000,
-                    Shift = -1 - X,
-                    (S bsl 15) bor (MantFull bsr Shift);
-                X when X > 15 ->
-                    (S bsl 15) bor (16#1F bsl 10);
-                X ->
-                    Eh = X + 15,
-                    Mh = M bsr 13,
-                    Round = (M bsr 12) band 1,
-                    Sticky =
-                        case M band 16#FFF of
-                            0 -> 0;
-                            _ -> 1
-                        end,
-                    {Mh2, Eh2} =
-                        case Round of
-                            0 ->
-                                {Mh, Eh};
-                            1 when Sticky =:= 1 ->
-                                fp16_round_mantissa(Mh, Eh);
-                            1 when (Mh band 1) =:= 1 ->
-                                fp16_round_mantissa(Mh, Eh);
-                            1 ->
-                                {Mh, Eh}
-                        end,
-                    (S bsl 15) bor (Eh2 bsl 10) bor Mh2
-            end
-    end;
-fp16_encode(0) ->
-    0;
-fp16_encode(F) when is_integer(F) ->
-    fp16_encode(float(F)).
-
-fp16_round_mantissa(Mh, Eh) ->
-    Mh1 = Mh + 1,
-    case Mh1 of
-        1024 -> {0, Eh + 1};
-        _ -> {Mh1, Eh}
-    end.
 
 abs_float(V) when V < 0.0 -> -V;
 abs_float(V) -> V.
