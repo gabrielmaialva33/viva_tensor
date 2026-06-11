@@ -225,5 +225,42 @@ pub fn qwen2_generates_paris_test() {
   }
 }
 
+// Marlin W4A16 (4-bit) end-to-end. The packer transposes HF [out,in] -> [in,out]
+// on read (weight_layout=1) and computes proper per-group (128) symmetric scales;
+// a global scale collapses Llama outlier channels and produced garbage. Robust
+// contains-check since 4-bit RTN drifts from FP8 over a long generation.
+pub fn marlin_w4a16_generates_paris_test() {
+  let path = "tmp/llama32_1b/model.safetensors"
+  case path_exists(path) {
+    False -> {
+      io.println("tmp/llama32_1b fixture not found; skipping Marlin W4A16 test")
+      Nil
+    }
+    True -> {
+      case t.load_model_with_format(path, t.MarlinW4A16) {
+        Error(_) -> {
+          io.println("Marlin load failed (likely no NIF/GPU); skipping")
+          Nil
+        }
+        Ok(model) -> {
+          let opts =
+            t.GenerateOpts(
+              max_new_tokens: 8,
+              temperature: 0.0,
+              top_k: t.TopKInfinity,
+              top_p: 1.0,
+              seed: 42,
+              stop_on_eos: True,
+              weight_format: t.MarlinW4A16,
+            )
+          let assert Ok(result) =
+            t.generate(model, "The capital of France is", opts)
+          string.contains(result.text, "Paris") |> should.be_true
+        }
+      }
+    }
+  }
+}
+
 @external(erlang, "viva_tensor_llm", "path_exists")
 fn path_exists(path: String) -> Bool

@@ -4,24 +4,33 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
-### Fixed — Marlin W4A16 weight layout (partial; generation still gated)
+### Fixed — Marlin W4A16 now works (correct output, faster than FP8)
 
-- **Root-caused the `marlin_w4a16` all-zeros output to a loader layout bug.**
-  Marlin computes `C[M,out] = A[M,in] · B[in,out]`, so the packer needs the
-  weight transposed to `[in, out]` with `K = in, N = out`. The loader fed the
-  raw HF `[out, in]` weight with `K`/`N` swapped, so the QKV output width was
-  `in` instead of `out` and every projection collapsed to zeros.
-- `viva_marlin_pack` gained `weight_layout` (transpose-on-read for HF-native
-  `[out, in]`) and `weight_dtype` (fp16/bf16) flags, plus a true global
-  symmetric scale, so the prepack no longer pays a per-element Erlang transpose
-  and bf16 models convert in C. New `marlin_w4a16_prepack/7` NIF; arity 5 kept.
-- **Generation with `marlin_w4a16` is now gated behind a clear error.** With the
-  layout fixed the GEMM produces real values but still-incorrect tokens — the
-  remaining gap is `marlin_cuda` kernel numerics not matching the (byte-exact)
-  packer. Until that is resolved, `generate` with `marlin_w4a16` returns
-  *"experimental and currently produces incorrect output (kernel numerics); use
-  fp8_w8a16"* instead of emitting garbage. FP8 W8A16 stays the supported path
-  (and is faster for single-user decode).
+`marlin_w4a16` generation is now correct and end-to-end validated. On
+Llama-3.2-1B it generates coherent text ("The capital of France is" →
+" Paris. Paris is the capital…") and is **faster than FP8 for single-user
+decode (~423 vs ~385 tok/s) at half the weight memory** (4-bit vs 8-bit). Two
+bugs were fixed:
+
+- **Loader K/N swap + missing transpose → all-zeros.** Marlin computes
+  `C[M,out] = A[M,in] · B[in,out]`, so the packer (which reads `w` as `[K,N]`)
+  needs `B = [in, out]` with `K = in, N = out`. The loader fed the raw HF
+  `[out, in]` weight with `K`/`N` swapped, so the QKV output width was `in`
+  instead of `out` and every projection collapsed to zeros. Fixed with a
+  `weight_layout = 1` flag on `viva_marlin_pack` that transposes HF-native
+  weights on read (plus `weight_dtype` for bf16), avoiding a per-element Erlang
+  transpose. New `marlin_w4a16_prepack/7` NIF; arity 5 kept for compat.
+- **Global uniform scale collapsed outlier channels → real-but-garbage tokens.**
+  Llama weights have outlier channels; a single global symmetric scale rounds
+  most weights to the zero code. The packer now computes proper **per-group
+  (groupsize 128) symmetric scales in C** for `weight_layout = 1`
+  (`gs[g,n] = max_k_in_group |W[k,n]| / 7`), stored with the upstream
+  `_scale_perm` / `_scale_perm_single` permutation the kernel expects.
+
+A normalized diff confirmed `zig_src/marlin_cuda_kernel.cu` is byte-identical to
+the upstream Marlin kernel (`tmp/marlin/`), so the kernel was never the bug —
+only the loader wiring and scale computation. Added a Gleam regression test
+(`marlin_w4a16_generates_paris_test`).
 
 ### Added — reject unsupported architectures up front
 

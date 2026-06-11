@@ -85,7 +85,6 @@ generate(Handle, Prompt0, GenOpts0) when
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         Prompt = to_binary(Prompt0),
         GenOpts = generation_options(GenOpts0),
-        ok = ensure_generatable_weight_format(maps:get(weight_format, GenOpts)),
         case maps:get(temperature, GenOpts) of
             Temp when Temp =< 0.0 ->
                 generate_argmax(Handle, Prompt, GenOpts);
@@ -101,7 +100,6 @@ generate_batch(Handle, Prompts, GenOpts0) when is_list(Prompts) ->
     try
         true = maps:get(viva_tensor_llm_handle, Handle, false),
         GenOpts = generation_options(GenOpts0),
-        ok = ensure_generatable_weight_format(maps:get(weight_format, GenOpts)),
         case maps:get(temperature, GenOpts) of
             Temp when Temp =< 0.0 ->
                 generate_batch_native(Handle, Prompts, GenOpts);
@@ -1767,20 +1765,6 @@ weight_format_atom(<<"marlin_w4a16">>) -> marlin_w4a16;
 weight_format_atom("fp8_w8a16") -> fp8_w8a16;
 weight_format_atom("marlin_w4a16") -> marlin_w4a16;
 weight_format_atom(_) -> invalid_weight_format.
-
-%% Marlin W4A16 decode is experimental: the loader layout is correct, but the
-%% marlin_cuda kernel numerics do not yet match the packer, so generation
-%% produces incorrect tokens. Reject it with a clear error instead of emitting
-%% garbage. FP8 W8A16 is the supported (and faster, for single-user) path.
-ensure_generatable_weight_format(marlin_w4a16) ->
-    error(
-        {unsupported_weight_format, <<
-            "marlin_w4a16 generation is experimental and currently produces "
-            "incorrect output (kernel numerics); use fp8_w8a16"
-        >>}
-    );
-ensure_generatable_weight_format(_) ->
-    ok.
 
 generate_batch_timeout(Opts) when is_map(Opts) ->
     opt(Opts, timeout, 60000);

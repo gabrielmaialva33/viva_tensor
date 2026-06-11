@@ -252,27 +252,38 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
         return viva_marlin_pack_error(VIVA_MARLIN_PACK_ERR_ALLOC);
     }
 
-    /* layout==1 (HF-native) feeds the packer raw, un-tuned scales (the Erlang
-     * side only samples a prefix). Recompute a single true global symmetric
-     * scale here from every element so large channels are not clipped. Uniform
-     * scales also sidestep the grouped-scale permutation entirely. */
-    uint16_t uniform_scale_h = 0;
+    /* layout==1 (HF-native): the Erlang-side scales are unusable (sampled/global
+     * and in a format that does not match the kernel). Recompute proper symmetric
+     * per-group scales here, in fp16, from the (transposed-on-read) weight:
+     *   gs[g, n] = max_k_in_group |W[k, n]| / 7,  group g along K (in-features).
+     * A single global scale collapses outlier-dominated channels to zero, which
+     * is what wrecked Marlin output; per-group (groupsize=128) preserves range. */
+    uint16_t *gs = NULL;
     if (weight_layout == 1) {
-        float maxabs = 0.0f;
-        size_t total = (size_t)K * (size_t)N;
-        for (size_t i = 0; i < total; i++) {
-            uint16_t raw = w_fp16[i];
-            float v = (weight_dtype == 1) ? viva_bf16_to_fp32(raw) : viva_fp16_to_fp32(raw);
-            float a = v < 0.0f ? -v : v;
-            if (a > maxabs) {
-                maxabs = a;
+        gs = (uint16_t *)malloc((size_t)groups * (size_t)N * sizeof(uint16_t));
+        if (!gs) {
+            free(w_q);
+            return viva_marlin_pack_error(VIVA_MARLIN_PACK_ERR_ALLOC);
+        }
+        for (int g = 0; g < groups; g++) {
+            int kbase = g * effective_groupsize;
+            for (n = 0; n < N; n++) {
+                float maxabs = 0.0f;
+                for (int kk = 0; kk < effective_groupsize; kk++) {
+                    uint16_t wh = viva_pack_weight_at(w_fp16, kbase + kk, n, K, N, 1, weight_dtype);
+                    float v = viva_fp16_to_fp32(wh);
+                    float a = v < 0.0f ? -v : v;
+                    if (a > maxabs) {
+                        maxabs = a;
+                    }
+                }
+                float scale = maxabs / 7.0f;
+                if (!(scale > 1.0e-4f)) {
+                    scale = 1.0e-4f;
+                }
+                gs[(size_t)g * (size_t)N + n] = viva_fp32_to_fp16(scale);
             }
         }
-        float scale = maxabs / 7.0f;
-        if (!(scale > 1.0e-4f)) {
-            scale = 1.0e-4f;
-        }
-        uniform_scale_h = viva_fp32_to_fp16(scale);
     }
 
     for (k = 0; k < K; k++) {
@@ -283,7 +294,7 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
             int rc;
 
             if (weight_layout == 1) {
-                scale_h = uniform_scale_h;
+                scale_h = gs[(size_t)group * (size_t)N + n];
                 (void)k_in_group;
             } else if (effective_groupsize != K) {
                 int col = group * N + n;
@@ -298,17 +309,30 @@ int viva_marlin_pack(const uint16_t *w_fp16, const uint16_t *s_fp16, int K, int 
                 &w_q[k * N + n]);
             if (rc != 0) {
                 free(w_q);
+                free(gs);
                 return rc;
             }
         }
     }
 
     if (weight_layout == 1) {
-        int total = groups * N;
-        int i;
-        for (i = 0; i < total; i++) {
-            out_s[i] = uniform_scale_h;
+        if (effective_groupsize != K) {
+            int total = groups * N;
+            int i;
+            for (i = 0; i < total; i++) {
+                int chunk = i / 64;
+                int within = i - chunk * 64;
+                out_s[i] = gs[chunk * 64 + kScalePerm[within]];
+            }
+        } else {
+            int i;
+            for (i = 0; i < N; i++) {
+                int chunk = i / 32;
+                int within = i - chunk * 32;
+                out_s[i] = gs[chunk * 32 + kScalePermSingle[within]];
+            }
         }
+        free(gs);
     } else if (effective_groupsize != K) {
         int total = groups * N;
         int i;
