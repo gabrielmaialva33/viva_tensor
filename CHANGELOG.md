@@ -4,6 +4,17 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — INT4 2:4 sparse vs dense throughput benchmark
+
+- New `gleam run -m viva_tensor/bench/sparse_vs_dense` compares the (already
+  validated) CUTLASS INT4 2:4 sparse Tensor-Op GEMM against dense Marlin W4A16
+  at LLM matmul shapes. On an RTX 4090 the sparse path reaches ~1.3-1.4k TOPS
+  effective (near the int4-sparse peak), 4.8-10x over dense 4-bit at batch
+  shapes — confirming the sparse *compute* is already near-peak. Reaching usable
+  sparse *inference* still needs a device-resident fused path (the primitive is
+  host-I/O) and SparseGPT-quality 2:4 pruning (magnitude pruning degrades
+  accuracy); it does not need a new kernel.
+
 ### Fixed — Marlin W4A16 now works (correct output, faster than FP8)
 
 `marlin_w4a16` generation is now correct and end-to-end validated. On
