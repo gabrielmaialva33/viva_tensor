@@ -840,6 +840,7 @@ NIF_FUNC_DECL(nt_linear_fp8_w8a16);
 NIF_FUNC_DECL(nt_linear_gelu_fp8);
 NIF_FUNC_DECL(nt_prepack_int8_sparse);
 NIF_FUNC_DECL(nt_prepack_int4_sparse);
+NIF_FUNC_DECL(nt_prepack_int4_sparse_pair_4_8);
 NIF_FUNC_DECL(nt_linear_int8_sparse);
 NIF_FUNC_DECL(nt_linear_int4_sparse);
 NIF_FUNC_DECL(nt_linear_swiglu_fp8_nif);

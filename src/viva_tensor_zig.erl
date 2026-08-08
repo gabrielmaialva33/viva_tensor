@@ -259,6 +259,7 @@
     nt_linear_gelu_fp8/4,
     nt_prepack_int8_sparse/2,
     nt_prepack_int4_sparse/2,
+    nt_prepack_int4_sparse_pair_4_8/3,
     nt_linear_int8_sparse/3,
     nt_linear_int4_sparse/3,
     nt_linear_swiglu_fp8/5,
@@ -818,6 +819,8 @@ nt_linear_fp8_w8a16(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_gelu_fp8(_Input, _Packed, _Bias, _Epilogue) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_int8_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
 nt_prepack_int4_sparse(_Weight, _Shape) -> erlang:nif_error(nif_not_loaded).
+nt_prepack_int4_sparse_pair_4_8(_Weight, _Shape, _Mask) ->
+    erlang:nif_error(nif_not_loaded).
 nt_linear_int8_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_int4_sparse(_Input, _Packed, _Bias) -> erlang:nif_error(nif_not_loaded).
 nt_linear_swiglu_fp8(_InputData, _InputShape, _GateW, _UpW, _Bias) ->

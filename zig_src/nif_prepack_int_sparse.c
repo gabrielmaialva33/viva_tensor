@@ -1,13 +1,14 @@
 /**
- * nif_prepack_int_sparse.c — Prepack FP32 weights into INT8 / INT4 2:4 sparse format.
+ * nif_prepack_int_sparse.c — Prepack FP32 weights into INT8 2:4 / INT4 pair-4:8 format.
  *
  * Exposes:
  *   nt_prepack_int8_sparse(WeightBin, [InFeatures, OutFeatures]) -> {ok, PackedWeight}
  *   nt_prepack_int4_sparse(WeightBin, [InFeatures, OutFeatures]) -> {ok, PackedWeight}
+ *   nt_prepack_int4_sparse_pair_4_8(WeightBin, Shape, MaskBin) -> {ok, PackedWeight}
  *
- * Both quantize per-output-channel (absmax / qmax), apply 2:4 magnitude pruning
- * along the K axis (groups of 4 contiguous K elements per row of the row-major
- * [out_features, in_features] CUTLASS layout), then upload to device.
+ * INT8 applies scalar 2:4 magnitude pruning. INT4 keeps two adjacent pairs per
+ * 8 K lanes, either selected by magnitude or supplied by an authoritative mask,
+ * then uploads the matching compressed values and metadata to the device.
  *
  * INT8 path: also builds a cuSPARSELt plan + compressed buffer, suitable for
  *            cuSPARSELt-based forward (winner ≥ 8192²). When K is not divisible
@@ -31,6 +32,7 @@
 
 #include <stdalign.h>
 #include "viva_nif.h"
+#include "nif_packed_weight.h"
 
 /* Sparse layout info exposed by zig_src/cuda_int_sparse_run.cu — used to
  * size the ElementE metadata buffer correctly regardless of CUTLASS
@@ -43,51 +45,6 @@ extern void cutlass_int4_sparse_run_info(int *sparse, int *elem_per_e, int *size
 #include <cuda_runtime.h>
 #include <cusparseLt.h>
 #endif
-
-/* =========================================================================
- * PackedWeight type — duplicated here as a forward-compatible definition.
- *
- * Agent A owns the canonical definition in nif_packed_weight.c. We define it
- * in the same memory layout so the two sources agree (the struct is opaque
- * to BEAM; only the resource pointer crosses the boundary).
- *
- * If agent A's header is checked into viva_nif.h before us, the typedef
- * here will collide. To stay forward-compatible the file uses include guards
- * around the definition and exposes only the *extern* declarations of the
- * helpers as fallbacks.
- * ========================================================================= */
-
-#ifndef VIVA_PACKED_WEIGHT_DEFINED
-#define VIVA_PACKED_WEIGHT_DEFINED
-
-typedef enum {
-    PW_FP8 = 0,
-    PW_INT8_SPARSE = 1,
-    PW_INT4_SPARSE = 2,
-} PackedWeightDType;
-
-typedef struct {
-    PackedWeightDType dtype;
-    void *d_weight; /* quantized + (for INT4) packed weight buffer  */
-    size_t weight_bytes;
-    void *d_metadata; /* 2:4 metadata buffer (E)                       */
-    size_t metadata_bytes;
-    void *d_scales; /* per-output-channel FP32 dequant scales        */
-    size_t scales_count;
-    int in_features;
-    int out_features;
-    void *cusparselt_plan; /* cusparseLtMatmulPlan_t* or NULL               */
-    void *d_compressed;    /* cuSPARSELt compressed buffer or NULL          */
-} PackedWeight;
-
-#endif /* VIVA_PACKED_WEIGHT_DEFINED */
-
-/* Helpers expected from nif_packed_weight.c (agent A). Declared weak so the
- * linker will accept a missing symbol on platforms that support it — if you
- * see "undefined reference to make_packed_weight_term" at link time, agent A
- * has not landed yet. */
-extern ErlNifResourceType *PACKED_WEIGHT_RES;
-ERL_NIF_TERM make_packed_weight_term(ErlNifEnv *env, PackedWeight *w);
 
 /* =========================================================================
  * Helpers
@@ -106,30 +63,14 @@ static inline int parse_in_out(ErlNifEnv *env, ERL_NIF_TERM list_term, int *in_f
     return 1;
 }
 
-/* Free helper that releases any partially-initialised PackedWeight on the
- * error path. */
-static void free_packed_weight(PackedWeight *w) {
 #ifndef _WIN32
-    if (!w)
-        return;
-    if (w->d_weight)
-        cudaFree(w->d_weight);
-    if (w->d_metadata)
-        cudaFree(w->d_metadata);
-    if (w->d_scales)
-        cudaFree(w->d_scales);
-    if (w->d_compressed)
-        cudaFree(w->d_compressed);
-    if (w->cusparselt_plan) {
-        cusparseLtMatmulPlanDestroy((cusparseLtMatmulPlan_t *)w->cusparselt_plan);
-        free(w->cusparselt_plan);
-    }
-#else
-    (void)w;
-#endif
-}
 
-#ifndef _WIN32
+static void destroy_cusparselt_plan(void *opaque_plan) {
+    if (!opaque_plan)
+        return;
+    cusparseLtMatmulPlanDestroy((cusparseLtMatmulPlan_t *)opaque_plan);
+    free(opaque_plan);
+}
 
 /* Round-half-to-even-ish saturating int8 quantization with clamping. */
 static inline int8_t f32_to_int8_sat(float v, float inv_scale) {
@@ -324,13 +265,12 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     }
 
     /* Allocate the PackedWeight resource. */
-    PackedWeight *pw = (PackedWeight *)enif_alloc_resource(PACKED_WEIGHT_RES, sizeof(PackedWeight));
+    PackedWeight *pw = alloc_packed_weight();
     if (!pw) {
         free(h_scales);
         free(h_quant);
         return make_error(env, "resource_alloc_failed");
     }
-    memset(pw, 0, sizeof(*pw));
     pw->dtype = PW_INT8_SPARSE;
     pw->in_features = in_features;
     pw->out_features = out_features;
@@ -487,6 +427,7 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
             cusparseLtMatmulPlanDestroy(&plan);
             goto plan_fail;
         }
+        pw->compressed_bytes = compressed_size;
         void *d_compress_buf = NULL;
         cerr = cudaMalloc(&d_compress_buf, compressed_buf_size);
         if (cerr != cudaSuccess) {
@@ -517,6 +458,7 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
         }
         memcpy(held_plan, &plan, sizeof(plan));
         pw->cusparselt_plan = (void *)held_plan;
+        pw->plan_destroy = destroy_cusparselt_plan;
 
         /* Note: matA..matD descriptors are owned by the plan internally in
          * cuSPARSELt; we don't destroy them here. The handle itself is
@@ -538,39 +480,55 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     return enif_make_tuple2(env, enif_make_atom(env, "ok"), term);
 
 cuda_fail:
-    free_packed_weight(pw);
     enif_release_resource(pw);
     free(h_scales);
     free(h_quant);
     return make_error(env, "cuda_alloc_failed");
 }
 
-/* =========================================================================
- * INT4 2:4 sparse prepack
- *
- * Layout: row-major [out_features, in_features]; every 8-int4 K chunk keeps
- * two adjacent int4 pairs, packs those four values into two bytes, and writes
- * one metadata nibble.
- *
- *   in_features must be divisible by 128 to match the m16n8k128 sparse MMA
- *   tile used by the runtime launcher.
- *
- * After sparse-pair pruning, the "packed sparse A" buffer has size
- *   out_features * (in_features / 2 / 2) bytes  (kSparse=2 halves K, nibbles halve again)
- *
- * One 32-bit ElementE covers 64 logical INT4 positions as 8 metadata nibbles.
- * ========================================================================= */
-ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
-    (void)argc;
-    if (!cuda_available())
-        return make_error(env, "cuda_unavailable");
+/* Decode one authoritative pair-4:8 mask byte. Each bit names one scalar K
+ * lane; valid masks keep exactly two complete adjacent pairs. */
+static int decode_pair48_lane_mask(uint8_t lane_mask, int *keep_pair0, int *keep_pair1) {
+    int kept[2] = {-1, -1};
+    int count = 0;
+    for (int pair = 0; pair < 4; ++pair) {
+        uint8_t pair_bits = (lane_mask >> (pair * 2)) & 0x3u;
+        if (pair_bits == 0x3u) {
+            if (count >= 2)
+                return 0;
+            kept[count++] = pair;
+        } else if (pair_bits != 0) {
+            return 0;
+        }
+    }
+    if (count != 2)
+        return 0;
+    *keep_pair0 = kept[0];
+    *keep_pair1 = kept[1];
+    return 1;
+}
 
+/* =========================================================================
+ * INT4 pair-4:8 sparse prepack
+ *
+ * The public weight is row-major [in_features, out_features]. Internally A is
+ * materialised as [out_features, in_features]. Every 8-int4 K chunk keeps two
+ * adjacent pairs, packs those four values into two bytes, and writes one
+ * metadata nibble.
+ *
+ * strict_mask, when present, is [out_features, in_features / 8] with one byte
+ * per group. Bit j marks logical lane j as kept. It is authoritative: this
+ * path validates and preserves it instead of selecting pairs by magnitude.
+ * ========================================================================= */
+static ERL_NIF_TERM prepack_int4_sparse_impl(ErlNifEnv *env, ERL_NIF_TERM weight_term,
+                                             ERL_NIF_TERM shape_term,
+                                             const ErlNifBinary *strict_mask) {
     ErlNifBinary weight_bin;
-    if (!enif_inspect_binary(env, argv[0], &weight_bin))
+    if (!enif_inspect_binary(env, weight_term, &weight_bin))
         return make_error(env, "weight_not_binary");
 
     int in_features, out_features;
-    if (!parse_in_out(env, argv[1], &in_features, &out_features))
+    if (!parse_in_out(env, shape_term, &in_features, &out_features))
         return make_error(env, "bad_shape_arg");
 
     size_t expected = (size_t)in_features * (size_t)out_features * sizeof(float);
@@ -582,21 +540,69 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (in_features % 128 != 0)
         return make_error(env, "in_features_not_mul_128");
 
+    size_t mask_groups_per_row = (size_t)in_features / 8;
+    size_t mask_total = (size_t)out_features * mask_groups_per_row;
+    if (strict_mask && strict_mask->size != mask_total)
+        return make_error(env, "pair48_mask_size_mismatch");
+
+    if (strict_mask) {
+        for (size_t idx = 0; idx < mask_total; ++idx) {
+            int keep_pair0, keep_pair1;
+            if (!decode_pair48_lane_mask(strict_mask->data[idx], &keep_pair0, &keep_pair1)) {
+                char reason[128];
+                size_t row = idx / mask_groups_per_row;
+                size_t group = idx % mask_groups_per_row;
+                snprintf(reason, sizeof(reason), "invalid_pair48_mask_at_row_%zu_group_%zu", row,
+                         group);
+                return make_error(env, reason);
+            }
+        }
+    }
+
+    if (!cuda_available())
+        return make_error(env, "cuda_unavailable");
+
     const float *W = (const float *)weight_bin.data;
 
-    /* Host scratch. */
+    /* Host scratch. h_lane_masks is used for both legacy magnitude selection
+     * and the strict explicit-mask path so metadata never has to infer kept
+     * pairs from quantized zeros. */
     float *h_scales = (float *)malloc((size_t)out_features * sizeof(float));
     int8_t *h_quant = (int8_t *)malloc((size_t)out_features * (size_t)in_features);
-    if (!h_scales || !h_quant) {
+    uint8_t *h_lane_masks = (uint8_t *)malloc(mask_total);
+    if (!h_scales || !h_quant || !h_lane_masks) {
         free(h_scales);
         free(h_quant);
+        free(h_lane_masks);
         return make_error(env, "host_alloc_failed");
     }
 
-    /* Per-output-channel absmax → scale (INT4 qmax = 7). */
+    if (strict_mask) {
+        memcpy(h_lane_masks, strict_mask->data, mask_total);
+    } else {
+        for (int o = 0; o < out_features; ++o) {
+            uint8_t *mask_row = h_lane_masks + (size_t)o * mask_groups_per_row;
+            for (int k = 0; k < in_features; k += 8) {
+                float group[8];
+                for (int j = 0; j < 8; ++j)
+                    group[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
+                int keep_pair0, keep_pair1;
+                top2_pairs_of_8(group, &keep_pair0, &keep_pair1);
+                mask_row[k / 8] =
+                    (uint8_t)((0x3u << (keep_pair0 * 2)) | (0x3u << (keep_pair1 * 2)));
+            }
+        }
+    }
+
+    /* Per-output-channel absmax → scale (INT4 qmax = 7). The strict path
+     * only considers lanes selected by the authoritative mask; a discarded
+     * outlier must not collapse the usable INT4 range. */
     for (int o = 0; o < out_features; ++o) {
         float amax = 0.0f;
+        const uint8_t *mask_row = h_lane_masks + (size_t)o * mask_groups_per_row;
         for (int k = 0; k < in_features; ++k) {
+            if (strict_mask && !(mask_row[k / 8] & (1u << (k % 8))))
+                continue;
             float a = fabsf(W[(size_t)k * (size_t)out_features + (size_t)o]);
             if (a > amax)
                 amax = a;
@@ -604,28 +610,18 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
         h_scales[o] = (amax > 0.0f) ? (amax / 7.0f) : 1.0f;
     }
 
-    /* Quantize + sparse-pair prune. h_quant holds int8 in range [-7, 7].
-     * CUTLASS INT4 sparse metadata indexes 2-int4 pairs, not individual
-     * scalar int4 lanes, so the pruning unit is 2 kept pairs per 8 values. */
+    /* Quantize exactly the selected lanes. h_quant holds one signed int4
+     * value per int8 cell until the compressed packing step. */
     for (int o = 0; o < out_features; ++o) {
         int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
+        const uint8_t *mask_row = h_lane_masks + (size_t)o * mask_groups_per_row;
         float inv_scale = 1.0f / h_scales[o];
-        for (int k = 0; k < in_features; k += 8) {
-            float group[8];
-            for (int j = 0; j < 8; ++j) {
-                group[j] = W[(size_t)(k + j) * (size_t)out_features + (size_t)o];
-            }
-            int keep_pair0, keep_pair1;
-            top2_pairs_of_8(group, &keep_pair0, &keep_pair1);
-            for (int pair = 0; pair < 4; ++pair) {
-                for (int lane = 0; lane < 2; ++lane) {
-                    int j = pair * 2 + lane;
-                    if (pair == keep_pair0 || pair == keep_pair1) {
-                        qrow[k + j] = f32_to_int4_sat(group[j], inv_scale);
-                    } else {
-                        qrow[k + j] = 0;
-                    }
-                }
+        for (int k = 0; k < in_features; ++k) {
+            if (mask_row[k / 8] & (1u << (k % 8))) {
+                float value = W[(size_t)k * (size_t)out_features + (size_t)o];
+                qrow[k] = f32_to_int4_sat(value, inv_scale);
+            } else {
+                qrow[k] = 0;
             }
         }
     }
@@ -642,6 +638,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (int4_sizeof_e != (int)sizeof(uint32_t)) {
         free(h_scales);
         free(h_quant);
+        free(h_lane_masks);
         return make_error(env, "unexpected_int4_elemente_size");
     }
     size_t meta_units_per_row = (size_t)in_features / (size_t)(int4_sparse * int4_elems_per_e);
@@ -651,42 +648,25 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (!h_meta) {
         free(h_scales);
         free(h_quant);
+        free(h_lane_masks);
         return make_error(env, "host_alloc_failed");
     }
     memset(h_meta, 0, meta_total);
 
-    /* Derive metadata from h_quant directly (row-major, already pruned in the
-     * quant loop). Re-reading W here in column-major was a bug: it picked
-     * different pairs than the ones actually preserved in h_quant. */
+    /* Derive metadata from the authoritative lane masks. Inferring it from
+     * quantized zeros loses the distinction between a discarded lane and a
+     * selected weight that legitimately quantizes to zero. */
     for (int o = 0; o < out_features; ++o) {
-        const int8_t *qrow = h_quant + (size_t)o * (size_t)in_features;
+        const uint8_t *mask_row = h_lane_masks + (size_t)o * mask_groups_per_row;
         uint32_t *meta_row = (uint32_t *)(h_meta + (size_t)o * meta_bytes_per_row);
         for (int k = 0; k < in_features; k += 8) {
-            int kept[2] = {-1, -1};
-            int p = 0;
-            for (int pair = 0; pair < 4 && p < 2; ++pair) {
-                if (qrow[k + pair * 2] != 0 || qrow[k + pair * 2 + 1] != 0) {
-                    kept[p++] = pair;
-                }
-            }
-            /* If a row is entirely zero (rare, all-equal-magnitude block),
-             * fall back to pairs 0 and 2 — matches top2_pairs_of_8 default. */
-            if (p == 0) {
-                kept[0] = 0;
-                kept[1] = 2;
-            } else if (p == 1) {
-                kept[1] = (kept[0] == 0) ? 2 : 0;
-                if (kept[0] > kept[1]) {
-                    int t = kept[0];
-                    kept[0] = kept[1];
-                    kept[1] = t;
-                }
-            }
+            int keep_pair0, keep_pair1;
+            (void)decode_pair48_lane_mask(mask_row[k / 8], &keep_pair0, &keep_pair1);
 
             size_t group = (size_t)k / 8;
             size_t word = group / 8;
             size_t nibble = group % 8;
-            uint32_t e = (uint32_t)(kept[0] | (kept[1] << 2));
+            uint32_t e = (uint32_t)(keep_pair0 | (keep_pair1 << 2));
             meta_row[word] |= e << (nibble * 4);
         }
     }
@@ -697,6 +677,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     if (!h_packed) {
         free(h_scales);
         free(h_quant);
+        free(h_lane_masks);
         free(h_meta);
         return make_error(env, "host_alloc_failed");
     }
@@ -727,15 +708,15 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     }
 
     /* Allocate PackedWeight resource. */
-    PackedWeight *pw = (PackedWeight *)enif_alloc_resource(PACKED_WEIGHT_RES, sizeof(PackedWeight));
+    PackedWeight *pw = alloc_packed_weight();
     if (!pw) {
         free(h_scales);
         free(h_quant);
+        free(h_lane_masks);
         free(h_packed);
         free(h_meta);
         return make_error(env, "resource_alloc_failed");
     }
-    memset(pw, 0, sizeof(*pw));
     pw->dtype = PW_INT4_SPARSE;
     pw->in_features = in_features;
     pw->out_features = out_features;
@@ -785,6 +766,7 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 
     free(h_scales);
     free(h_quant);
+    free(h_lane_masks);
     free(h_packed);
     free(h_meta);
 
@@ -792,13 +774,26 @@ ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
     return enif_make_tuple2(env, enif_make_atom(env, "ok"), term);
 
 cuda_fail4:
-    free_packed_weight(pw);
     enif_release_resource(pw);
     free(h_scales);
     free(h_quant);
+    free(h_lane_masks);
     free(h_packed);
     free(h_meta);
     return make_error(env, "cuda_alloc_failed");
+}
+
+ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    return prepack_int4_sparse_impl(env, argv[0], argv[1], NULL);
+}
+
+ERL_NIF_TERM nt_prepack_int4_sparse_pair_4_8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    ErlNifBinary mask_bin;
+    if (!enif_inspect_binary(env, argv[2], &mask_bin))
+        return make_error(env, "pair48_mask_not_binary");
+    return prepack_int4_sparse_impl(env, argv[0], argv[1], &mask_bin);
 }
 
 #else /* _WIN32 — CUDA is Linux-only in this codebase. */
@@ -810,6 +805,12 @@ ERL_NIF_TERM nt_prepack_int8_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM
 }
 
 ERL_NIF_TERM nt_prepack_int4_sparse(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
+    (void)argc;
+    (void)argv;
+    return make_error(env, "cuda_unavailable_on_windows");
+}
+
+ERL_NIF_TERM nt_prepack_int4_sparse_pair_4_8(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]) {
     (void)argc;
     (void)argv;
     return make_error(env, "cuda_unavailable_on_windows");

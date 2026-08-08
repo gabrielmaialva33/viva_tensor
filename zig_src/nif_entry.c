@@ -393,6 +393,8 @@ static ErlNifFunc nif_funcs[] = {
     {"nt_linear_gelu_fp8", 4, nt_linear_gelu_fp8, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_prepack_int8_sparse", 2, nt_prepack_int8_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_prepack_int4_sparse", 2, nt_prepack_int4_sparse, ERL_NIF_DIRTY_JOB_CPU_BOUND},
+    {"nt_prepack_int4_sparse_pair_4_8", 3, nt_prepack_int4_sparse_pair_4_8,
+     ERL_NIF_DIRTY_JOB_CPU_BOUND},
     {"nt_linear_int8_sparse", 3, nt_linear_int8_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_int4_sparse", 3, nt_linear_int4_sparse, ERL_NIF_DIRTY_JOB_IO_BOUND},
     {"nt_linear_swiglu_fp8", 5, nt_linear_swiglu_fp8_nif, ERL_NIF_DIRTY_JOB_IO_BOUND},

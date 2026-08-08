@@ -5750,7 +5750,7 @@ pub type PackedWeightFp8 =
 pub type PackedWeightInt8Sparse =
   native_inference.PackedWeightInt8Sparse
 
-/// INT4 2:4 structured-sparse prepacked weight handle.
+/// INT4 pair-4:8 structured-sparse prepacked weight handle.
 pub type PackedWeightInt4Sparse =
   native_inference.PackedWeightInt4Sparse
 
@@ -5768,12 +5768,23 @@ pub fn prepack_int8_sparse_24_weight(
   native_inference.prepack_int8_sparse_24_weight(weight)
 }
 
-/// Quantize + 2:4-prune a weight into the INT4 sparse layout (the
-/// highest-TFLOPS inference path on Ada SM89).
+/// Quantize + magnitude-prune a weight into CUTLASS' INT4 pair-4:8 layout.
 pub fn prepack_int4_sparse_24_weight(
   weight: Tensor,
 ) -> Result(PackedWeightInt4Sparse, TensorError) {
   native_inference.prepack_int4_sparse_24_weight(weight)
+}
+
+/// Quantize an already-pruned weight with an authoritative pair-4:8 mask.
+///
+/// The mask has one byte per `[out_features, in_features / 8]` group. Each
+/// byte must keep exactly two complete adjacent pairs; the prepack never
+/// silently replaces it with a magnitude-selected mask.
+pub fn prepack_int4_sparse_pair_4_8_weight(
+  weight: Tensor,
+  pair_mask: BitArray,
+) -> Result(PackedWeightInt4Sparse, TensorError) {
+  native_inference.prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)
 }
 
 /// Pack a `[K, N]` weight tensor and `[groups, N]` scales tensor for Marlin W4A16.

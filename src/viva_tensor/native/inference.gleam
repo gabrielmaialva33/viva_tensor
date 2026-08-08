@@ -38,6 +38,7 @@
 //// produce `[B, out_features]`. The prepacked weight conceptually
 //// represents a `[in_features, out_features]` matrix.
 
+import gleam/bit_array
 import gleam/dynamic.{type Dynamic}
 import gleam/option.{type Option, None, Some}
 import viva_tensor/core/error.{type TensorError, DimensionError}
@@ -77,7 +78,7 @@ pub opaque type PackedWeightInt8Sparse {
   )
 }
 
-/// INT4 2:4 structured-sparse prepacked weight (CUTLASS backend).
+/// INT4 pair-4:8 structured-sparse prepacked weight (CUTLASS backend).
 pub opaque type PackedWeightInt4Sparse {
   PackedWeightInt4Sparse(
     handle: Dynamic,
@@ -162,9 +163,9 @@ pub fn prepack_int8_sparse_24_weight(
   }
 }
 
-/// Quantize + 2:4-prune a weight into INT4 with structured sparsity,
-/// layout matching the CUTLASS INT4 sparse kernel (winner at 1074 TFLOPS
-/// @ 4096²). This is the highest-throughput inference path on Ada SM89.
+/// Quantize + magnitude-prune a weight into the pair-4:8 layout required by
+/// CUTLASS INT4 sparse MMA. Kept lanes are chosen as two adjacent pairs in
+/// every 8-value K group.
 pub fn prepack_int4_sparse_24_weight(
   weight: Tensor,
 ) -> Result(PackedWeightInt4Sparse, TensorError) {
@@ -194,6 +195,65 @@ pub fn prepack_int4_sparse_24_weight(
     other ->
       Error(DimensionError(
         "prepack_int4_sparse_24_weight: expected 2-D weight, got "
+        <> shape_string(other),
+      ))
+  }
+}
+
+/// Quantize a weight using an authoritative pair-4:8 sparsity mask.
+///
+/// Unlike `prepack_int4_sparse_24_weight`, this function never chooses a new
+/// mask by magnitude. `pair_mask` is laid out as `[out_features, in_features / 8]`
+/// with one byte per K group; bit `j` keeps lane `j`. Every byte must keep
+/// exactly two complete adjacent pairs. The weight remains in the public
+/// `[in_features, out_features]` tensor convention.
+pub fn prepack_int4_sparse_pair_4_8_weight(
+  weight: Tensor,
+  pair_mask: BitArray,
+) -> Result(PackedWeightInt4Sparse, TensorError) {
+  case tensor.shape(weight) {
+    [in_f, _out_f] if in_f % 128 != 0 ->
+      Error(DimensionError(
+        "prepack_int4_sparse_pair_4_8_weight: in_features must be divisible by 128",
+      ))
+    [in_f, out_f] -> {
+      let expected_mask_bytes = out_f * { in_f / 8 }
+      let actual_mask_bytes = bit_array.byte_size(pair_mask)
+      case actual_mask_bytes == expected_mask_bytes {
+        False ->
+          Error(DimensionError(
+            "prepack_int4_sparse_pair_4_8_weight: expected "
+            <> int_to_string(expected_mask_bytes)
+            <> " mask bytes, got "
+            <> int_to_string(actual_mask_bytes),
+          ))
+        True ->
+          case
+            nt_prepack_int4_sparse_pair_4_8(
+              floats_to_fp32_binary(tensor.to_list(weight)),
+              [in_f, out_f],
+              pair_mask,
+            )
+          {
+            Ok(handle) ->
+              Ok(
+                PackedWeightInt4Sparse(
+                  handle: handle,
+                  in_features: in_f,
+                  out_features: out_f,
+                  channel_scales: [],
+                ),
+              )
+            Error(reason) ->
+              Error(DimensionError(
+                "prepack_int4_sparse_pair_4_8_weight failed: " <> reason,
+              ))
+          }
+      }
+    }
+    other ->
+      Error(DimensionError(
+        "prepack_int4_sparse_pair_4_8_weight: expected 2-D weight, got "
         <> shape_string(other),
       ))
   }
@@ -501,6 +561,13 @@ fn nt_prepack_int8_sparse(
 fn nt_prepack_int4_sparse(
   data: BitArray,
   shape: List(Int),
+) -> Result(Dynamic, String)
+
+@external(erlang, "viva_tensor_zig", "nt_prepack_int4_sparse_pair_4_8")
+fn nt_prepack_int4_sparse_pair_4_8(
+  data: BitArray,
+  shape: List(Int),
+  pair_mask: BitArray,
 ) -> Result(Dynamic, String)
 
 // Helper: FP32 floats -> FP16 binary (cuBLASLt activation format).
