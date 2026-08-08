@@ -20,6 +20,7 @@ import viva_tensor as t
 | [`viva_tensor/bench/legacy/`](viva_tensor/bench/legacy/)   | Older benchmark modules superseded by the current set — kept for reproducibility but not wired into Makefile targets. |
 | [`viva_tensor/examples/`](viva_tensor/examples/)           | Runnable examples and demos for maintainers.                          |
 | `viva_tensor/benchmark.gleam`                              | Shared benchmark helpers used by the modules above.                   |
+| `sparsegpt_2_4.py`                                         | SparseGPT scalar-2:4 probe plus pair-4:8 pruning/export for the CUTLASS INT4 path. |
 
 ## Current benchmark set (`viva_tensor/bench/`)
 
