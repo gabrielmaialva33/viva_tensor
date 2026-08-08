@@ -1,7 +1,7 @@
 //// Numerical validation suite for the high-level inference API.
 ////
 //// Strategy: prepack a deterministic random weight in each low-precision
-//// layout (FP8, INT8 sparse, INT4 sparse), run the corresponding `linear_*`
+//// layout (FP8, INT8 sparse, INT4 pair-4:8), run the corresponding `linear_*`
 //// kernel, and compare the output to a reference FP32 `viva_tensor.matmul`
 //// using the relative L2 error:
 ////
@@ -24,7 +24,7 @@
 ////
 ////   - FP8 E4M3 dense  : < 2.0%   (per-tensor quantization, FP16 accum)
 ////   - INT8 2:4 sparse : < 4.0%   (per-channel + 50% pruned weights)
-////   - INT4 2:4 sparse : < 10.0%  (4-bit + 50% pruned)
+////   - INT4 pair-4:8   : < 65.0%  (4-bit + 50% pair-pruned)
 ////   - GELU FP8        : < 3.0%   (FP8 input + GELU rounding)
 ////   - SwiGLU FP8      : < 65.0%  (two FP8 GEMMs + silu nonlinearity)
 ////
@@ -37,6 +37,7 @@ import gleam/float
 import gleam/int
 import gleam/list
 import gleam/option.{None}
+import gleam/string
 import gleeunit
 import gleeunit/should
 import viva_tensor as t
@@ -78,6 +79,9 @@ fn rescue_call_tensor(
   f: fn() -> Result(t.Tensor, t.TensorError),
 ) -> CallResult(Result(t.Tensor, t.TensorError))
 
+@external(erlang, "binary", "copy")
+fn binary_copy(pattern: BitArray, count: Int) -> BitArray
+
 // ---------------------------------------------------------------------------
 // Tolerance constants — rationale in the module doc
 // ---------------------------------------------------------------------------
@@ -93,7 +97,7 @@ const fp8_l2_tolerance: Float = 0.6
 
 const int8_sparse_l2_tolerance: Float = 0.04
 
-// INT4 2:4 sparse vs dense FP32 reference on random uniform weights has an
+// INT4 pair-4:8 sparse vs dense FP32 reference on random uniform weights has an
 // intrinsic noise floor: keeping 50% of K-terms causes ~30% magnitude loss
 // (√(K/2)/√K = 0.707), and INT4 quantization adds ~5-10% on top. Empirically
 // measured 0.55 on (128, 256, 256) — set bound at 0.65 for headroom. Real
@@ -228,6 +232,35 @@ fn make_fixture(
     in_features: in_features,
     out_features: out_features,
   )
+}
+
+fn pair48_outlier_weight_data(
+  in_features: Int,
+  out_features: Int,
+) -> List(Float) {
+  pair48_outlier_weight_loop(in_features * out_features, out_features, 0, [])
+}
+
+fn pair48_outlier_weight_loop(
+  remaining: Int,
+  out_features: Int,
+  index: Int,
+  acc: List(Float),
+) -> List(Float) {
+  case remaining {
+    0 -> list.reverse(acc)
+    _ -> {
+      let k_lane = { index / out_features } % 8
+      let value = case k_lane < 4 {
+        True -> 1.0
+        False -> 100.0
+      }
+      pair48_outlier_weight_loop(remaining - 1, out_features, index + 1, [
+        value,
+        ..acc
+      ])
+    }
+  }
 }
 
 /// Compute reference SwiGLU output: `silu(input @ gate) * (input @ up)`.
@@ -395,6 +428,76 @@ pub fn linear_int4_sparse_numerical_within_band_test() {
         }
       }
     }
+  }
+}
+
+pub fn prepack_int4_pair48_rejects_scalar_2_4_mask_test() {
+  let in_features = 128
+  let out_features = 256
+  let assert Ok(weight) =
+    t.matrix(
+      in_features,
+      out_features,
+      list.repeat(1.0, in_features * out_features),
+    )
+  // 0x55 keeps scalar lanes 0,2,4,6. It is valid scalar 4:8 but not two
+  // complete adjacent pairs, so the INT4 hardware layout must reject it.
+  let scalar_mask = binary_copy(<<0x55>>, out_features * { in_features / 8 })
+  case
+    rescue_call_int4(fn() {
+      t.prepack_int4_sparse_pair_4_8_weight(weight, scalar_mask)
+    })
+  {
+    CallErr -> Nil
+    CallOk(Ok(_)) -> should.fail()
+    CallOk(Error(reason)) ->
+      tensor_error.to_string(reason)
+      |> string.contains("invalid_pair48_mask_at_row_0_group_0")
+      |> should.be_true
+  }
+}
+
+pub fn linear_int4_pair48_preserves_authoritative_mask_test() {
+  let batch = 128
+  let in_features = 256
+  let out_features = 256
+  let assert Ok(input) =
+    t.matrix(batch, in_features, list.repeat(1.0, batch * in_features))
+  let assert Ok(weight) =
+    t.matrix(
+      in_features,
+      out_features,
+      pair48_outlier_weight_data(in_features, out_features),
+    )
+  // 0x0f keeps lanes 0..3. The discarded lanes contain 100x outliers: if
+  // prepack silently re-selects by magnitude or includes them in the scale,
+  // this test returns ~12800 or 0 instead of the exact masked result 128.
+  let pair_mask = binary_copy(<<0x0f>>, out_features * { in_features / 8 })
+  case
+    rescue_call_int4(fn() {
+      t.prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)
+    })
+  {
+    CallErr -> Nil
+    CallOk(Error(reason)) -> {
+      let message = tensor_error.to_string(reason)
+      case string.contains(message, "cuda_unavailable") {
+        True -> Nil
+        False -> message |> should.equal("ok")
+      }
+    }
+    CallOk(Ok(packed)) ->
+      case t.linear_int4_sparse(input, packed, None) {
+        Error(reason) -> tensor_error.to_string(reason) |> should.equal("ok")
+        Ok(output) -> {
+          let max_error =
+            t.to_list(output)
+            |> list.fold(0.0, fn(current, value) {
+              float.max(current, float.absolute_value(value -. 128.0))
+            })
+          should.be_true(max_error <. 0.1)
+        }
+      }
   }
 }
 

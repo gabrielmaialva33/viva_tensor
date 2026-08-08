@@ -14,6 +14,7 @@
 ////
 //// Numerical correctness is in `inference_numerical_test.gleam`.
 
+import gleam/list
 import gleam/option.{None}
 import gleeunit
 import gleeunit/should
@@ -67,6 +68,13 @@ fn try_prepack_int4(
   rescue_call_int4(fn() { t.prepack_int4_sparse_24_weight(w) })
 }
 
+fn try_prepack_int4_pair48(
+  w: t.Tensor,
+  mask: BitArray,
+) -> CallResult(Result(t.PackedWeightInt4Sparse, TensorError)) {
+  rescue_call_int4(fn() { t.prepack_int4_sparse_pair_4_8_weight(w, mask) })
+}
+
 // ---------------------------------------------------------------------------
 // Prepack rejects non-2D weights with a Gleam-side `DimensionError`
 //
@@ -95,6 +103,15 @@ pub fn prepack_int8_sparse_rejects_3d_weight_test() {
 pub fn prepack_int4_sparse_rejects_1d_weight_test() {
   let w = t.from_list([1.0, 2.0, 3.0])
   case try_prepack_int4(w) {
+    CallOk(Error(_)) -> Nil
+    CallOk(Ok(_)) -> should.fail()
+    CallErr -> should.fail()
+  }
+}
+
+pub fn prepack_int4_pair48_rejects_wrong_mask_size_test() {
+  let assert Ok(w) = t.matrix(128, 1, list.repeat(0.0, 128))
+  case try_prepack_int4_pair48(w, <<>>) {
     CallOk(Error(_)) -> Nil
     CallOk(Ok(_)) -> should.fail()
     CallErr -> should.fail()
@@ -167,6 +184,7 @@ pub fn facade_reexports_compile_test() {
   let _ = try_prepack_fp8(w)
   let _ = try_prepack_int8(w)
   let _ = try_prepack_int4(w)
+  let _ = try_prepack_int4_pair48(w, <<>>)
   let _ = None
   Nil
 }
