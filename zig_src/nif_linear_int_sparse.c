@@ -23,40 +23,12 @@
 
 #include <stdalign.h>
 #include "viva_nif.h"
+#include "nif_packed_weight.h"
 
 #ifndef _WIN32
 #include <cuda_runtime.h>
 #include <cusparseLt.h>
 #endif
-
-/* Pull in the same PackedWeight definition the prepack file uses.
- * Both files include the same guarded typedef; agent A's nif_packed_weight.c
- * provides the canonical version. */
-#ifndef VIVA_PACKED_WEIGHT_DEFINED
-#define VIVA_PACKED_WEIGHT_DEFINED
-
-typedef enum {
-    PW_FP8 = 0,
-    PW_INT8_SPARSE = 1,
-    PW_INT4_SPARSE = 2,
-} PackedWeightDType;
-
-typedef struct {
-    PackedWeightDType dtype;
-    void *d_weight;
-    size_t weight_bytes;
-    void *d_metadata;
-    size_t metadata_bytes;
-    void *d_scales;
-    size_t scales_count;
-    int in_features;
-    int out_features;
-    void *cusparselt_plan;
-    void *d_compressed;
-} PackedWeight;
-#endif
-
-extern ErlNifResourceType *PACKED_WEIGHT_RES;
 
 /* CUTLASS run entrypoints from cuda_int_sparse_run.cu */
 #ifndef _WIN32
