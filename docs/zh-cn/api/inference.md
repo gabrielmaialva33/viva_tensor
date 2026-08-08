@@ -1,6 +1,6 @@
 # 推理 API
 
-`viva_tensor` 为 FP8 dense、INT8 2:4 sparse、INT4 2:4 sparse 以及 fused SwiGLU FFN
+`viva_tensor` 为 FP8 dense、INT8 2:4 sparse、INT4 相邻对 4:8 sparse 以及 fused SwiGLU FFN
 暴露稳定推理表面。所有路径都使用相同的不透明 `PackedWeight*` handle 类型，因此调用方可以在模型层级混合 dtype。
 
 ```gleam
@@ -20,7 +20,7 @@ import viva_tensor as t
 | :--------------------------- | :------------------------------ | :----------------------------------- |
 | `PackedWeightFp8`            | `nt_prepack_fp8` / `_blocked`   | `linear_fp8`, `linear_fp8_w8a16`, `linear_gelu_fp8`, `linear_swiglu_fp8` |
 | `PackedWeightInt8Sparse`     | `nt_prepack_int8_sparse`        | `linear_int8_sparse`                 |
-| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse`        | `linear_int4_sparse`                 |
+| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse` / `_pair_4_8` | `linear_int4_sparse`          |
 
 Handles 是引用计数的 Erlang resources；当 BEAM GC 回收 handle 时，device buffer 会被释放。
 调用方代码不应直接调用 `cudaFree`，因为没有公共 release API。
@@ -81,16 +81,26 @@ Magnitude-pruned 2:4 weight 以 cuSPARSELt 的 compressed format 存储。
 在 Ada SM89 上运行约 ~1320 TOPS。Per-channel weight scale + per-row input scale，
 在 int32 GEMM accumulator 后于 host 上 dequant。
 
-## INT4 2:4 sparse (CUTLASS Sm80)
+## INT4 相邻对 4:8 sparse (CUTLASS Sm80)
 
 ```gleam
 let assert Ok(packed) = t.prepack_int4_sparse_24_weight(weight)
 let assert Ok(out)    = t.linear_int4_sparse(input, packed, bias)
 ```
 
-INT4 magnitude pruning + CUTLASS m16n8k128 sparse Tensor Op。Host prepack 会写出 kernel
-所期望的 `ColumnMajorInterleaved<2>` layout 中的 ElementE metadata；正确性通过内置
-`cutlass_int4_sparse_self_test` 验证。运行约 ~1854 TOPS。
+上面的便捷 prepack 会在 K 轴每 8 个值中按 magnitude 选择两个完整的相邻 pair。
+对于 SparseGPT pruning 后的 weight，应传入其 authoritative mask：
+
+```gleam
+let assert Ok(packed) =
+  t.prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)
+```
+
+`pair_mask` 的 shape 为 `[out_features, in_features / 8]`，每组编码为一个 byte；
+每个 byte 必须恰好保留两个完整的相邻 pair。Strict path 会拒绝 scalar 2:4 mask，
+并且不会重新 pruning。运行 `dev/sparsegpt_2_4.py export-pair48` 会生成 pruned
+HuggingFace checkpoint、mask safetensors 和 manifest。Host prepack 会写出
+`ColumnMajorInterleaved<2>` layout 中的 CUTLASS ElementE metadata。运行约 ~1854 TOPS。
 
 ## Sampling
 

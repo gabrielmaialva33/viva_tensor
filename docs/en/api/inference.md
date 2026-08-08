@@ -1,7 +1,7 @@
 # Inference API
 
 `viva_tensor` exposes a stable inference surface for FP8 dense, INT8 2:4
-sparse, INT4 2:4 sparse, and the fused SwiGLU FFN. The same opaque
+sparse, INT4 adjacent-pair 4:8 sparse, and the fused SwiGLU FFN. The same opaque
 `PackedWeight*` handle types are used across all paths so callers can mix
 dtypes at the model level.
 
@@ -24,7 +24,7 @@ per-block) scale buffer that the matching `linear_*` call expects.
 | :--------------------------- | :------------------------------ | :----------------------------------- |
 | `PackedWeightFp8`            | `nt_prepack_fp8` / `_blocked`   | `linear_fp8`, `linear_fp8_w8a16`, `linear_gelu_fp8`, `linear_swiglu_fp8` |
 | `PackedWeightInt8Sparse`     | `nt_prepack_int8_sparse`        | `linear_int8_sparse`                 |
-| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse`        | `linear_int4_sparse`                 |
+| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse` / `_pair_4_8` | `linear_int4_sparse`          |
 
 Handles are reference-counted Erlang resources; the device buffer is
 released when the BEAM GC's the handle. Caller code should NOT call
@@ -91,17 +91,28 @@ Magnitude-pruned 2:4 weight stored in cuSPARSELt's compressed format.
 Runs ~1320 TOPS on Ada SM89. Per-channel weight scale + per-row input
 scale, dequanted on host after the int32 GEMM accumulator.
 
-## INT4 2:4 sparse (CUTLASS Sm80)
+## INT4 adjacent-pair 4:8 sparse (CUTLASS Sm80)
 
 ```gleam
 let assert Ok(packed) = t.prepack_int4_sparse_24_weight(weight)
 let assert Ok(out)    = t.linear_int4_sparse(input, packed, bias)
 ```
 
-INT4 magnitude pruning + CUTLASS m16n8k128 sparse Tensor Op. The host
-prepack writes the ElementE metadata in `ColumnMajorInterleaved<2>`
-layout that the kernel expects; correctness is validated via a built-in
-`cutlass_int4_sparse_self_test`. Runs ~1854 TOPS.
+The convenience prepack above selects two adjacent weight pairs by magnitude
+inside every 8-value K group. For a SparseGPT-pruned weight, pass its
+authoritative mask instead:
+
+```gleam
+let assert Ok(packed) =
+  t.prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)
+```
+
+`pair_mask` has shape `[out_features, in_features / 8]` encoded as one byte per
+group; each byte must keep exactly two complete adjacent pairs. The strict path
+rejects scalar 2:4 masks and never re-prunes. Running
+`dev/sparsegpt_2_4.py export-pair48` produces the pruned HuggingFace checkpoint,
+mask safetensors, and manifest. The host prepack writes CUTLASS ElementE metadata in
+`ColumnMajorInterleaved<2>` layout. Runs ~1854 TOPS.
 
 ## Sampling
 

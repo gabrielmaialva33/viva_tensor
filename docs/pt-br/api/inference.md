@@ -1,9 +1,9 @@
 # API de Inferência
 
 `viva_tensor` expõe uma superfície estável de inferência pra FP8 dense, INT8
-2:4 sparse, INT4 2:4 sparse e a FFN SwiGLU fundida. Os mesmos tipos opacos de
-handle `PackedWeight*` são usados em todos os caminhos pra callers poderem
-misturar dtypes no nível do modelo.
+2:4 sparse, INT4 4:8 em pares adjacentes e a FFN SwiGLU fundida. Os mesmos tipos
+opacos de handle `PackedWeight*` são usados em todos os caminhos pra callers
+poderem misturar dtypes no nível do modelo.
 
 ```gleam
 import viva_tensor as t
@@ -24,7 +24,7 @@ per-channel (ou per-block) que a chamada `linear_*` correspondente espera.
 | :--------------------------- | :------------------------------ | :----------------------------------------------------------------------- |
 | `PackedWeightFp8`            | `nt_prepack_fp8` / `_blocked`   | `linear_fp8`, `linear_fp8_w8a16`, `linear_gelu_fp8`, `linear_swiglu_fp8` |
 | `PackedWeightInt8Sparse`     | `nt_prepack_int8_sparse`        | `linear_int8_sparse`                                                     |
-| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse`        | `linear_int4_sparse`                                                     |
+| `PackedWeightInt4Sparse`     | `nt_prepack_int4_sparse` / `_pair_4_8` | `linear_int4_sparse`                                              |
 
 Handles são recursos Erlang reference-counted; o buffer do device é liberado
 quando o GC do BEAM coleta o handle. Código chamador NÃO deve chamar
@@ -92,17 +92,28 @@ Peso 2:4 podado por magnitude armazenado no formato comprimido do
 cuSPARSELt. Roda ~1320 TOPS em Ada SM89. Scale de peso per-channel + scale
 de input per-row, dequantizado no host após o acumulador int32 do GEMM.
 
-## INT4 2:4 sparse (CUTLASS Sm80)
+## INT4 4:8 em pares adjacentes (CUTLASS Sm80)
 
 ```gleam
 let assert Ok(packed) = t.prepack_int4_sparse_24_weight(weight)
 let assert Ok(out)    = t.linear_int4_sparse(input, packed, bias)
 ```
 
-Poda INT4 por magnitude + Tensor Op sparse CUTLASS m16n8k128. O prepack no
-host escreve o metadata ElementE no layout `ColumnMajorInterleaved<2>` que o
-kernel espera; correctness é validada via `cutlass_int4_sparse_self_test`
-built-in. Roda ~1854 TOPS.
+O prepack de conveniência acima escolhe por magnitude dois pares adjacentes
+dentro de cada grupo de 8 pesos no eixo K. Pra um peso podado por SparseGPT,
+passe o mask autoritativo:
+
+```gleam
+let assert Ok(packed) =
+  t.prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)
+```
+
+`pair_mask` tem shape `[out_features, in_features / 8]`, com um byte por grupo;
+cada byte precisa manter exatamente dois pares adjacentes completos. O caminho
+estrito rejeita masks 2:4 escalares e nunca repoda o peso. O comando
+`dev/sparsegpt_2_4.py export-pair48` gera o checkpoint HuggingFace podado, o
+safetensors de masks e o manifesto. O prepack no host escreve o metadata
+ElementE no layout `ColumnMajorInterleaved<2>`. Roda ~1854 TOPS.
 
 ## Sampling
 

@@ -4,6 +4,32 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added — SparseGPT pair-4:8 export for the INT4 sparse kernel
+
+- `dev/sparsegpt_2_4.py` now supports the adjacent-pair 4:8 structure that
+  CUTLASS INT4 sparse MMA actually consumes. `export-pair48` writes the pruned
+  HuggingFace checkpoint, an authoritative `viva_pair48_masks.safetensors`,
+  and a machine-readable manifest instead of leaving prepack to silently pick
+  a different magnitude mask.
+- New public `prepack_int4_sparse_pair_4_8_weight(weight, pair_mask)` validates
+  that every 8-lane K group contains exactly two complete adjacent pairs and
+  preserves that mask through quantization, packing, and ElementE metadata.
+  The legacy magnitude convenience API remains available.
+- Added numerical coverage with discarded 100x outliers, proving that neither
+  mask selection nor scale calculation leaks discarded lanes into the result.
+- The Llama-3.2-1B quality gate measures WikiText-2 perplexity `80.217` versus
+  ~`33.2` for scalar SparseGPT 2:4 and ~`13.2` dense. The export is therefore
+  explicitly experimental; the artifact contract is complete, but model
+  quality is not yet production-ready.
+
+### Fixed — sparse PackedWeight resource ABI
+
+- INT8/INT4 prepack and linear NIFs now use the canonical
+  `nif_packed_weight.h` definition. Their stale private struct omitted newer
+  fields, so the BEAM resource destructor could interpret dimensions as CUDA
+  pointers and segfault during GC. cuSPARSELt plan destruction now also uses
+  the resource's canonical deleter contract.
+
 ### Added — INT4 2:4 sparse vs dense throughput benchmark
 
 - New `gleam run -m viva_tensor/bench/sparse_vs_dense` compares the (already

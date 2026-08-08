@@ -34,7 +34,7 @@
 ## 🎯 Overview
 
 A tensor library for Gleam on the BEAM. Provides a pure-Gleam tensor API
-for portability, an inference API for FP8 / INT4-2:4 / INT8-2:4 sparse
+for portability, an inference API for FP8 / INT4 pair-4:8 / INT8-2:4 sparse
 linear layers, and a public LLM `ModelHandle` API for Llama-family
 HuggingFace checkpoints.
 
@@ -131,7 +131,7 @@ The pure-Gleam path needs only Gleam + Erlang/OTP.
 | `zig_src/cuda_block_forward.cu`     | RMSNorm, RoPE, GQA flash attn, SiLU, residual     |
 | `zig_src/nif_forward_block.c`       | Decode-step orchestration, CUDA Graph capture     |
 | `zig_src/cuda_fp8_cutlass.cu`       | CUTLASS FP8 dense GEMM                            |
-| `zig_src/nif_prepack_int_sparse.c`  | INT4 / INT8 2:4 sparse weight prepack             |
+| `zig_src/nif_prepack_int_sparse.c`  | INT4 pair-4:8 / INT8 2:4 sparse weight prepack    |
 
 </details>
 
@@ -165,7 +165,7 @@ The pure-Gleam path needs only Gleam + Erlang/OTP.
 | Kernel                                  | Peak performance    | Backend          |
 | :-------------------------------------- | ------------------: | :--------------- |
 | INT8 2:4 sparse (cuSPARSELt)            | `1320 TOPS`         | cuSPARSELt       |
-| INT4 2:4 sparse (CUTLASS Sm80)          | `1854 TOPS`         | CUTLASS          |
+| INT4 pair-4:8 sparse (CUTLASS Sm80)     | `1854 TOPS`         | CUTLASS          |
 | FP8 dense (CUTLASS E4M3 W8A8)           | `~660 TFLOPS`       | CUTLASS          |
 | FP8 W8A16 blocked GEMV (custom)         | decode-optimized    | hand-tuned CUDA  |
 
